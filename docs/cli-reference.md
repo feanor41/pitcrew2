@@ -1,12 +1,13 @@
 # PitCrew CLI reference
 
-PitCrew exposes one runtime command, two global flags, and exactly 16 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `tui` and `principles`, two global flags, and exactly 16 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
 ## Quick path
 
 ```sh
 pitcrew workflow new --goal "Ship the change" --actor daimon
 pitcrew workflow show --workflow-id wf-<24hex>
+pitcrew tui
 pitcrew principles
 ```
 
@@ -16,6 +17,7 @@ A planned workflow normally progresses through exploration, specification, desig
 
 | Command | Required inputs |
 |---|---|
+| `tui` | None; extra arguments are rejected. |
 | `workflow new` | `--goal <text> --actor <label>` |
 | `workflow show` | `--workflow-id <wf-id>` |
 | `workflow explore` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
@@ -34,6 +36,10 @@ A planned workflow normally progresses through exploration, specification, desig
 | `workflow unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
 
 Global `--help` and `--version` are flags, not commands. `principles [--json]` prints the embedded maxims as exact text or a raw structured JSON array.
+
+## Read-only terminal inspection
+
+`pitcrew tui` runs the embedded visual inspector in the current process. It reads only `<project>/.pitcrew/state.db`; it does not initialize a repository, run migrations, mutate workflow state, or invoke another executable. An uninitialized project shows `No PitCrew repository is initialized for this project.` and remains unchanged. Use Arrow or Vim keys to navigate, `/` to search, and `q` to exit.
 
 ## JSON input files
 

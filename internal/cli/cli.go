@@ -14,9 +14,11 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/envelope"
 	"github.com/fmazzalomo/pitcrew/internal/evidence"
 	"github.com/fmazzalomo/pitcrew/internal/handles"
+	"github.com/fmazzalomo/pitcrew/internal/history"
 	"github.com/fmazzalomo/pitcrew/internal/maxims"
 	"github.com/fmazzalomo/pitcrew/internal/plan"
 	"github.com/fmazzalomo/pitcrew/internal/store"
+	"github.com/fmazzalomo/pitcrew/internal/tui"
 	"github.com/fmazzalomo/pitcrew/internal/workflow"
 )
 
@@ -28,12 +30,14 @@ var (
 )
 
 type Dependencies struct {
+	Stdin       io.Reader
 	Stdout      io.Writer
 	Stderr      io.Writer
 	ProjectRoot string
 	Version     string
 	Now         func() time.Time
 	Entropy     io.Reader
+	TUIRunner   func(string, io.Reader, io.Writer) error
 }
 
 type stageArtifactInput struct {
@@ -62,6 +66,11 @@ func Run(args []string, deps Dependencies) int {
 		return int(envelope.OK)
 	}
 	switch args[0] {
+	case "tui":
+		if len(args) != 1 {
+			return fail(deps, ErrUsage, "usage: pitcrew tui")
+		}
+		return runTUI(deps)
 	case "principles":
 		return runPrinciples(args[1:], deps)
 	case "workflow":
@@ -69,6 +78,42 @@ func Run(args []string, deps Dependencies) int {
 	default:
 		return fail(deps, ErrUsage, fmt.Sprintf("unknown command %q", args[0]))
 	}
+}
+
+func runTUI(deps Dependencies) int {
+	runner := deps.TUIRunner
+	if runner == nil {
+		runner = runEmbeddedTUI
+	}
+	if err := runner(deps.ProjectRoot, deps.Stdin, deps.Stdout); err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return int(envelope.OK)
+}
+
+func runEmbeddedTUI(root string, input io.Reader, output io.Writer) error {
+	opened, err := store.OpenReadOnly(context.Background(), root)
+	if err != nil {
+		return tui.Run(tui.New(failedHistory{err}), input, output)
+	}
+	if opened.State == store.Uninitialized {
+		return tui.Run(tui.New(failedHistory{tui.ErrUninitialized}), input, output)
+	}
+	defer opened.Store.Close()
+	return tui.Run(tui.New(history.New(opened.Store)), input, output)
+}
+
+type failedHistory struct{ err error }
+
+func (f failedHistory) List(context.Context) ([]history.Workflow, error) { return nil, f.err }
+func (f failedHistory) Detail(context.Context, string) (history.Detail, error) {
+	return history.Detail{}, f.err
+}
+func (f failedHistory) Search(context.Context, string) ([]history.SearchResult, error) {
+	return nil, f.err
+}
+func (f failedHistory) Resolve(context.Context, history.SearchResult) (history.Resolution, error) {
+	return history.Resolution{}, f.err
 }
 
 func runPrinciples(args []string, deps Dependencies) int {
@@ -518,6 +563,7 @@ func writeHelp(w io.Writer, body string) {
 const rootHelp = `Usage: pitcrew <command> [options]
 
 Commands:
+  tui
   principles
   workflow new|show|explore|spec|design|plan|approve-plan
   workflow list-ready-units|begin-implementation|complete|abandon

@@ -13,7 +13,8 @@ PitCrew is a local control plane for one person, one machine, and one project pe
 
 - Local subprocess and project-local `.pitcrew/state.db` only.
 - No HTTP, RPC, daemon, shared cache, multi-tenancy, or cross-project registry.
-- No embedded TUI, `internal/daimon`, `internal/installer`, or v1 migration. Daimon is an external agent role, never a Unix daemon or control-plane component.
+- The embedded TUI is available only as exact command `pitcrew tui`: same process, project-local, and read-only. It never initializes a project, runs a subprocess, or has a separate binary.
+- No `internal/daimon`, `internal/installer`, or v1 migration. Daimon is an external agent role, never a Unix daemon or control-plane component.
 - Production claims use opaque handle files only. Never use or invent `--claim-token` or `--emit-plain-token`.
 - Never retry a CAS failure blindly. Inspect the workflow and decide from its current revision.
 
