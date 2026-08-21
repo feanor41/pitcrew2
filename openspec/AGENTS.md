@@ -77,9 +77,9 @@ justified explicitly in its own OpenSpec proposal.
 
 ## What is NOT in this repository
 
-- **No embedded TUI.** `pitcrew` is a pure CLI binary. The TUI is a separate
-  binary (`pitcrew-tui`) that consumes `pitcrew` as a subprocess and parses
-  JSON. The TUI is its own OpenSpec change (`add-pitcrew-tui`).
+- **No separate TUI binary.** The read-only TUI is embedded in `pitcrew` and
+  invoked only as `pitcrew tui`. It opens the project-local store in the same
+  process, never initializes state, and never invokes `pitcrew` as a subprocess.
 - **No `internal/installer` package.** The runtime installer is an external
   POSIX shell script (`scripts/install-templates.sh`).
 - **No `internal/daimon` package.** Daimon is an external LLM agent role, not a Unix daemon or control-plane

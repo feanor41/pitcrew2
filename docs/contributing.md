@@ -38,6 +38,7 @@ A work unit targets at most 400 authored changed lines and 60 review minutes. Wh
 - One SQLite connection; no daemon, IPC, network, shared cache, or remote API.
 - `MAXIMS.md` is canonical. Change it only through its own OpenSpec change.
 - The command surface is closed. Adding a command or flag requires an OpenSpec change.
+- `pitcrew tui` is the only visual entry point. Keep it same-process, project-local, read-only, non-initializing, and free of self-subprocesses.
 - Large command payloads travel only through strict, no-follow `--input-file` JSON.
 - Production claims remain opaque. Never add a raw-token input or output path.
 - Implementer and Reviewer actor labels remain distinct collision metadata, not authentication.
@@ -60,4 +61,6 @@ Before an overwrite migration, preserve any custom instructions needed from lega
 
 ## Scope changes
 
-Proposals involving HTTP, RPC, authentication, multi-user state, cross-project coordination, an embedded TUI, v1 migration, `internal/daimon`, or `internal/installer` require a separate explicit OpenSpec change. Daimon is an external agent role, not a Unix daemon or control-plane package. Do not smuggle architectural expansion into an implementation patch.
+Proposals involving HTTP, RPC, authentication, multi-user state, cross-project coordination, TUI mutation or a separate TUI process, v1 migration, `internal/daimon`, or `internal/installer` require a separate explicit OpenSpec change. Daimon is an external agent role, not a Unix daemon or control-plane package. Do not smuggle architectural expansion into an implementation patch.
+
+For TUI routing changes, test exact `tui` dispatch and rejected extras with an injected runner, then build `cmd/pitcrew` and exercise an uninitialized temporary project through a real PTY. The PTY check must observe the guidance, send `q`, exit successfully, and leave the temporary project empty.
