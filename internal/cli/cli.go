@@ -408,7 +408,7 @@ func runUnitReview(args []string, deps Dependencies) int {
 			next = "workflow claim-unit"
 		}
 		if outcome.PlanRevisionRequired {
-			next = "master revise plan"
+			next = "daimon revise plan"
 		}
 		return writeSuccess(deps, map[string]any{"unit_id": review.UnitID, "unit_revision": outcome.NextRevision, "plan_revision_required": outcome.PlanRevisionRequired}, next)
 	})
