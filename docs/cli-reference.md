@@ -5,7 +5,7 @@ PitCrew exposes one runtime command, two global flags, and exactly 16 `workflow`
 ## Quick path
 
 ```sh
-pitcrew workflow new --goal "Ship the change" --actor master
+pitcrew workflow new --goal "Ship the change" --actor daimon
 pitcrew workflow show --workflow-id wf-<24hex>
 pitcrew principles
 ```
@@ -97,7 +97,7 @@ Corrections:
 {"verdict":"corrections","summary":"Boundary missing","findings":"Add the expiry case","plan_impact":"inside"}
 ```
 
-Outside-plan corrections use `"plan_impact":"outside"` and signal that the Master must revise the plan through a new OpenSpec change.
+Outside-plan corrections use `"plan_impact":"outside"` and return `daimon revise plan`, requiring Daimon to revise the plan through a new OpenSpec change.
 
 ## Envelopes and exit codes
 
