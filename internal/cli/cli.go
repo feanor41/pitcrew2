@@ -1,0 +1,537 @@
+package cli
+
+import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/fmazzalomo/pitcrew/internal/envelope"
+	"github.com/fmazzalomo/pitcrew/internal/evidence"
+	"github.com/fmazzalomo/pitcrew/internal/handles"
+	"github.com/fmazzalomo/pitcrew/internal/maxims"
+	"github.com/fmazzalomo/pitcrew/internal/plan"
+	"github.com/fmazzalomo/pitcrew/internal/store"
+	"github.com/fmazzalomo/pitcrew/internal/workflow"
+)
+
+const helpEpilogue = "Read the four maxims of the harness: pitcrew principles."
+
+var (
+	ErrUsage = errors.New("invalid command usage")
+	ErrState = errors.New("invalid command state")
+)
+
+type Dependencies struct {
+	Stdout      io.Writer
+	Stderr      io.Writer
+	ProjectRoot string
+	Version     string
+	Now         func() time.Time
+	Entropy     io.Reader
+}
+
+type stageArtifactInput struct {
+	Content string `json:"content"`
+}
+type reviewInput struct {
+	Verdict    *evidence.Verdict    `json:"verdict"`
+	Summary    *string              `json:"summary"`
+	Findings   *string              `json:"findings"`
+	PlanImpact *evidence.PlanImpact `json:"plan_impact,omitempty"`
+}
+
+func Run(args []string, deps Dependencies) int {
+	if deps.Now == nil {
+		deps.Now = time.Now
+	}
+	if deps.Entropy == nil {
+		deps.Entropy = rand.Reader
+	}
+	if len(args) == 0 || equalArgs(args, "--help") {
+		writeHelp(deps.Stdout, rootHelp)
+		return int(envelope.OK)
+	}
+	if equalArgs(args, "--version") {
+		fmt.Fprintf(deps.Stdout, "pitcrew %s\n", deps.Version)
+		return int(envelope.OK)
+	}
+	switch args[0] {
+	case "principles":
+		return runPrinciples(args[1:], deps)
+	case "workflow":
+		return runWorkflow(args[1:], deps)
+	default:
+		return fail(deps, ErrUsage, fmt.Sprintf("unknown command %q", args[0]))
+	}
+}
+
+func runPrinciples(args []string, deps Dependencies) int {
+	if len(args) == 0 {
+		if _, err := io.WriteString(deps.Stdout, maxims.Text()); err != nil {
+			return fail(deps, err, err.Error())
+		}
+		return 0
+	}
+	if equalArgs(args, "--help") {
+		writeHelp(deps.Stdout, principlesHelp)
+		return 0
+	}
+	if !equalArgs(args, "--json") {
+		return fail(deps, ErrUsage, "usage: pitcrew principles [--json]")
+	}
+	items, err := maxims.Structured()
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if err = json.NewEncoder(deps.Stdout).Encode(items); err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return 0
+}
+
+var workflowCommands = map[string]bool{"new": true, "show": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
+
+func runWorkflow(args []string, deps Dependencies) int {
+	if equalArgs(args, "--help") {
+		writeHelp(deps.Stdout, workflowHelp)
+		return 0
+	}
+	if len(args) == 0 {
+		return fail(deps, ErrUsage, "workflow subcommand is required")
+	}
+	command, rest := args[0], args[1:]
+	if !workflowCommands[command] {
+		return fail(deps, ErrUsage, fmt.Sprintf("unknown workflow subcommand %q", command))
+	}
+	if equalArgs(rest, "--help") {
+		writeHelp(deps.Stdout, "Usage: pitcrew workflow "+command+" [options]\n")
+		return 0
+	}
+	switch command {
+	case "new":
+		return runWorkflowNew(rest, deps)
+	case "show":
+		return runWorkflowShow(rest, deps)
+	case "explore", "spec", "design":
+		return runStage(command, rest, deps)
+	case "plan":
+		return runPlan(rest, deps)
+	case "approve-plan":
+		return runApprovePlan(rest, deps)
+	case "list-ready-units":
+		return runReady(rest, deps)
+	case "begin-implementation", "complete":
+		return runTransition(command, rest, deps)
+	case "abandon":
+		return runAbandon(rest, deps)
+	case "claim-unit", "recover-unit-claim":
+		return runClaim(command, rest, deps)
+	case "unit-tdd":
+		return runUnitTDD(rest, deps)
+	case "unit-review":
+		return runUnitReview(rest, deps)
+	case "unit-complete":
+		return runUnitComplete(rest, deps)
+	default:
+		return fail(deps, ErrUsage, "unsupported command")
+	}
+}
+
+func runWorkflowNew(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--goal", "--actor"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		created, err := workflow.New(s, deps.Now).Create(context.Background(), values.one("--goal"), values.one("--actor"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": created}, "workflow explore")
+	})
+}
+func runWorkflowShow(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		svc := workflow.New(s, deps.Now)
+		current, err := svc.Get(context.Background(), values.one("--workflow-id"))
+		if err != nil {
+			return err
+		}
+		artifacts, err := svc.Artifacts(context.Background(), current.ID)
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": current, "artifacts": artifacts}, nextAction(current.State))
+	})
+}
+func runStage(command string, args []string, deps Dependencies) int {
+	values, revision, input, err := workflowInput(args)
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	kind := map[string]string{"explore": "exploration", "spec": "specification", "design": "design"}[command]
+	event := map[string]workflow.EventType{"explore": workflow.Explore, "spec": workflow.Specify, "design": workflow.Design}[command]
+	if strings.TrimSpace(input.Content) == "" {
+		return fail(deps, ErrState, "artifact content is required")
+	}
+	return withStore(deps, func(s *store.Store) error {
+		current, err := workflow.New(s, deps.Now).RecordArtifact(context.Background(), values.one("--workflow-id"), revision, event, kind, input.Content, values.one("--actor"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": current}, nextAction(current.State))
+	})
+}
+func workflowInput(args []string) (flagValues, int64, stageArtifactInput, error) {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--revision", "--actor", "--input-file"}})
+	if err != nil {
+		return nil, 0, stageArtifactInput{}, err
+	}
+	revision, err := values.int64("--revision")
+	if err != nil {
+		return nil, 0, stageArtifactInput{}, err
+	}
+	input, err := decodeInputFile[stageArtifactInput](values.one("--input-file"))
+	return values, revision, input, err
+}
+
+func runPlan(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--revision", "--actor", "--input-file"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	revision, err := values.int64("--revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input, err := decodeInputFile[plan.Plan](values.one("--input-file"))
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if err = plan.Validate(input); err != nil {
+		return fail(deps, ErrState, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		current, err := plan.NewService(s, deps.Now).Submit(context.Background(), values.one("--workflow-id"), revision, values.one("--actor"), input)
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": current, "plan": input}, "workflow approve-plan")
+	})
+}
+func runApprovePlan(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--revision", "--actor"}, repeatable: []string{"--approve-exception"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	revision, err := values.int64("--revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		current, err := plan.NewService(s, deps.Now).Approve(context.Background(), values.one("--workflow-id"), revision, values.one("--actor"), values.all("--approve-exception"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": current}, "workflow begin-implementation")
+	})
+}
+func runReady(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		units, err := plan.NewService(s, deps.Now).Ready(context.Background(), values.one("--workflow-id"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"units": units}, "workflow claim-unit")
+	})
+}
+func runTransition(command string, args []string, deps Dependencies) int {
+	values, revision, err := mutationFlags(args, nil)
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	event := workflow.BeginImplementation
+	if command == "complete" {
+		event = workflow.Complete
+	}
+	return withStore(deps, func(s *store.Store) error {
+		current, err := workflow.New(s, deps.Now).Transition(context.Background(), values.one("--workflow-id"), revision, event, values.one("--actor"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": current}, nextAction(current.State))
+	})
+}
+func runAbandon(args []string, deps Dependencies) int {
+	values, revision, err := mutationFlags(args, []string{"--reason"})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		current, err := workflow.New(s, deps.Now).Abandon(context.Background(), values.one("--workflow-id"), revision, values.one("--actor"), values.one("--reason"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": current}, "none")
+	})
+}
+func mutationFlags(args []string, extra []string) (flagValues, int64, error) {
+	required := append([]string{"--workflow-id", "--revision", "--actor"}, extra...)
+	values, err := parseFlags(args, flagRules{required: required})
+	if err != nil {
+		return nil, 0, err
+	}
+	revision, err := values.int64("--revision")
+	return values, revision, err
+}
+
+func runClaim(command string, args []string, deps Dependencies) int {
+	rules := flagRules{required: []string{"--workflow-id", "--unit-id", "--revision", "--actor", "--handle-dir"}}
+	if command == "claim-unit" {
+		rules.boolean = []string{"--print-claim-handle-secret-once"}
+	}
+	values, err := parseFlags(args, rules)
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	revision, err := values.int64("--revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		manager := handles.New(s, deps.Now, deps.Entropy)
+		var result handles.IssueResult
+		var err error
+		if command == "recover-unit-claim" {
+			result, err = manager.RecoverAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
+		} else if values.one("--print-claim-handle-secret-once") != "" {
+			result, err = manager.IssueDebugAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
+		} else {
+			result, err = manager.IssueAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
+		}
+		if err != nil {
+			return err
+		}
+		data := map[string]any{}
+		if result.Secret != "" {
+			data["claim_secret"] = result.Secret
+		} else {
+			data["handle_path"] = result.Path
+		}
+		return writeSuccess(deps, data, "workflow unit-tdd")
+	})
+}
+func unitValues(args []string, withInput bool) (flagValues, int64, error) {
+	required := []string{"--workflow-id", "--unit-id", "--revision", "--actor", "--claim-handle"}
+	if withInput {
+		required = append(required, "--input-file")
+	}
+	values, err := parseFlags(args, flagRules{required: required})
+	if err != nil {
+		return nil, 0, err
+	}
+	revision, err := values.int64("--revision")
+	return values, revision, err
+}
+func runUnitTDD(args []string, deps Dependencies) int {
+	values, revision, err := unitValues(args, true)
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input, err := decodeInputFile[evidence.TDDRecord](values.one("--input-file"))
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if err = input.Validate(); err != nil {
+		return fail(deps, ErrState, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		manager := handles.New(s, deps.Now, deps.Entropy)
+		ctx := context.Background()
+		service := evidence.New(s, deps.Now)
+		if _, err := manager.UseForMutation(ctx, values.one("--claim-handle"), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), handles.TDD, func(tx *sql.Tx, _ handles.Handle) error {
+			return service.RecordTDDAsTx(ctx, tx, values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), input)
+		}); err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"unit_id": values.one("--unit-id"), "unit_revision": revision, "state": "reviewing"}, "workflow unit-review")
+	})
+}
+func runUnitReview(args []string, deps Dependencies) int {
+	values, revision, err := unitValues(args, true)
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input, err := decodeInputFile[reviewInput](values.one("--input-file"))
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if input.Verdict == nil || input.Summary == nil || input.Findings == nil {
+		return fail(deps, ErrState, "review requires verdict, summary, and findings")
+	}
+	review := evidence.Review{WorkflowID: values.one("--workflow-id"), UnitID: values.one("--unit-id"), Revision: revision, Actor: values.one("--actor"), Verdict: *input.Verdict, Summary: *input.Summary, Findings: *input.Findings}
+	if input.PlanImpact != nil {
+		review.PlanImpact = *input.PlanImpact
+	}
+	if err := review.Validate(); err != nil {
+		return fail(deps, ErrState, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		manager := handles.New(s, deps.Now, deps.Entropy)
+		ctx := context.Background()
+		service := evidence.New(s, deps.Now)
+		var outcome evidence.ReviewOutcome
+		_, err := manager.UseForMutation(ctx, values.one("--claim-handle"), review.WorkflowID, review.UnitID, revision, review.Actor, handles.Review, func(tx *sql.Tx, _ handles.Handle) error {
+			var mutationErr error
+			outcome, mutationErr = service.RecordReviewTx(ctx, tx, review)
+			return mutationErr
+		})
+		if err != nil {
+			return err
+		}
+		next := "workflow unit-complete"
+		if review.Verdict == evidence.Corrections {
+			next = "workflow claim-unit"
+		}
+		if outcome.PlanRevisionRequired {
+			next = "master revise plan"
+		}
+		return writeSuccess(deps, map[string]any{"unit_id": review.UnitID, "unit_revision": outcome.NextRevision, "plan_revision_required": outcome.PlanRevisionRequired}, next)
+	})
+}
+func runUnitComplete(args []string, deps Dependencies) int {
+	values, revision, err := unitValues(args, false)
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		ctx := context.Background()
+		manager := handles.New(s, deps.Now, deps.Entropy)
+		wf, err := workflow.New(s, deps.Now).Get(ctx, values.one("--workflow-id"))
+		if err != nil {
+			return err
+		}
+		service := evidence.New(s, deps.Now)
+		if _, err = manager.UseForMutation(ctx, values.one("--claim-handle"), wf.ID, values.one("--unit-id"), revision, values.one("--actor"), handles.Complete, func(tx *sql.Tx, handle handles.Handle) error {
+			return service.CompleteUnitWithClaimTx(ctx, tx, wf.ID, values.one("--unit-id"), handle.ClaimID, revision, wf.Revision, values.one("--actor"))
+		}); err != nil {
+			return err
+		}
+		wf, err = workflow.New(s, deps.Now).Get(ctx, wf.ID)
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": wf, "unit_id": values.one("--unit-id"), "unit_revision": revision, "state": "done"}, nextAction(wf.State))
+	})
+}
+
+func withStore(deps Dependencies, action func(*store.Store) error) int {
+	s, err := store.Open(context.Background(), deps.ProjectRoot)
+	if err == nil {
+		defer s.Close()
+		err = action(s)
+	}
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return 0
+}
+func writeSuccess(deps Dependencies, data any, next string) error {
+	return envelope.WriteSuccess(deps.Stdout, data, nil, next)
+}
+func classify(err error) envelope.ExitCode {
+	switch {
+	case errors.Is(err, ErrUsage):
+		return envelope.Usage
+	case errors.Is(err, store.ErrCASMismatch):
+		return envelope.CAS
+	case errors.Is(err, handles.ErrInvalid), errors.Is(err, handles.ErrExpired), errors.Is(err, handles.ErrUnsafePath), errors.Is(err, handles.ErrUnsafePermissions), errors.Is(err, evidence.ErrInvalidHandle):
+		return envelope.Handle
+	case errors.Is(err, ErrState), errors.Is(err, sql.ErrNoRows), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
+		return envelope.State
+	default:
+		return envelope.Internal
+	}
+}
+func fail(deps Dependencies, err error, message string) int {
+	code := classify(err)
+	_ = envelope.WriteFailure(deps.Stderr, code, message)
+	return int(code)
+}
+func equalArgs(got []string, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+func nextAction(state workflow.State) string {
+	switch state {
+	case workflow.Draft:
+		return "workflow explore"
+	case workflow.Exploring:
+		return "workflow spec"
+	case workflow.Specifying:
+		return "workflow design"
+	case workflow.Designing:
+		return "workflow plan"
+	case workflow.Planning:
+		return "workflow approve-plan"
+	case workflow.PlanApproved:
+		return "workflow begin-implementation"
+	case workflow.Implementing:
+		return "workflow list-ready-units"
+	case workflow.ReadyToComplete:
+		return "workflow complete"
+	case workflow.Completed, workflow.Abandoned:
+		return "none"
+	default:
+		return "workflow show"
+	}
+}
+func writeHelp(w io.Writer, body string) {
+	fmt.Fprint(w, body)
+	if !strings.HasSuffix(body, "\n") {
+		fmt.Fprintln(w)
+	}
+	fmt.Fprintln(w, helpEpilogue)
+}
+
+const rootHelp = `Usage: pitcrew <command> [options]
+
+Commands:
+  principles
+  workflow new|show|explore|spec|design|plan|approve-plan
+  workflow list-ready-units|begin-implementation|complete|abandon
+  workflow claim-unit|recover-unit-claim|unit-tdd|unit-review|unit-complete
+
+Global options:
+  --help
+  --version
+`
+const workflowHelp = `Usage: pitcrew workflow <subcommand> [options]
+
+Commands: new, show, explore, spec, design, plan, approve-plan, list-ready-units,
+  begin-implementation, complete, abandon, claim-unit, recover-unit-claim,
+  unit-tdd, unit-review, unit-complete
+`
+const principlesHelp = `Usage: pitcrew principles [--json]
+`
