@@ -9,6 +9,16 @@ trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_file() { [ -f "$1" ] || fail "missing file $1"; }
+assert_absent() { [ ! -e "$1" ] && [ ! -L "$1" ] || fail "unexpected path $1"; }
+snapshot() { find "$1" -type f -exec cksum {} \; | sort > "$2"; }
+assert_no_temps() { find "$1" -name '.pitcrew-install.*' -o -name '.*.md.new.*' | grep . >/dev/null && fail "installer temporary remains in $1" || :; }
+roles='daimon explorer specifier designer task-planner implementer reviewer archivist'
+assert_role_set() {
+  for role in $roles; do assert_file "$1/$role.md"; done
+  assert_file "$1/agent-contract.md"
+  [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 9 ] || fail "unexpected prompt set in $1"
+  assert_absent "$1/master.md"
+}
 
 sh -n "$INSTALLER" || fail "installer is not POSIX-shell parseable"
 
@@ -24,7 +34,7 @@ done
 codex=$TMP_ROOT/codex
 CODEX_HOME=$codex sh "$INSTALLER"
 target=$codex/prompts
-roles='master explorer specifier designer task-planner implementer reviewer archivist'
+assert_role_set "$target"
 for role in $roles; do
   file=$target/$role.md
   assert_file "$file"
@@ -32,46 +42,101 @@ for role in $roles; do
   second=$(sed -n '2p' "$file")
   [ "$first" = 'Internalize the four maxims below. They are your operating system.' ] || fail "$role prefix line 1"
   [ "$second" = 'Every decision you make is subordinate to them.' ] || fail "$role prefix line 2"
-  grep -F 'You do not return your output to the Master. You call the control plane yourself. The Master only learns that you finished.' "$file" >/dev/null || fail "$role hand-off reminder"
+  grep -F 'Return only a one-line completion status to Daimon, the sole coordinator and user contact.' "$file" >/dev/null || fail "$role hand-off reminder"
   maxim_lines=$(wc -l < "$ROOT/MAXIMS.md" | tr -d ' ')
   sed -n "3,$((maxim_lines + 2))p" "$file" > "$TMP_ROOT/$role.maxims"
   cmp "$ROOT/MAXIMS.md" "$TMP_ROOT/$role.maxims" || fail "$role maxims drift"
+done
+for contract in 'sole bridge between the user and sub-agents' 'Adapt expression to the user' truthful incisive goal-directed outcome-first 'resistant to cheerleading' 'not a Unix daemon' 'authorization identity' 'internal orchestrator'; do
+  grep -F "$contract" "$target/daimon.md" >/dev/null || fail "Daimon contract omitted $contract"
 done
 assert_file "$target/agent-contract.md"
 for prohibited in '--claim-token' '--emit-plain-token' '--print-claim-handle-secret-once' 'same identity' 'CAS'; do
   grep -F -- "$prohibited" "$target/agent-contract.md" >/dev/null || fail "contract omitted $prohibited"
 done
 
-find "$target" -type f -exec cksum {} \; | sort > "$TMP_ROOT/before.cksum"
+snapshot "$target" "$TMP_ROOT/before.cksum"
 CODEX_HOME=$codex sh "$INSTALLER"
-find "$target" -type f -exec cksum {} \; | sort > "$TMP_ROOT/after.cksum"
+snapshot "$target" "$TMP_ROOT/after.cksum"
 cmp "$TMP_ROOT/before.cksum" "$TMP_ROOT/after.cksum" || fail "reinstall changed bytes"
 
 printf 'custom explorer\n' > "$target/explorer.md"
 CODEX_HOME=$codex sh "$INSTALLER"
-grep -F 'custom explorer' "$target/explorer.md" >/dev/null && fail "non-Master fragment was not refreshed"
+grep -F 'custom explorer' "$target/explorer.md" >/dev/null && fail "ordinary fragment was not refreshed"
 
 printf 'custom master\n' > "$target/master.md"
-find "$target" -type f -exec cksum {} \; | sort > "$TMP_ROOT/custom.cksum"
+snapshot "$target" "$TMP_ROOT/custom.cksum"
 if CODEX_HOME=$codex sh "$INSTALLER" >"$TMP_ROOT/refuse.out" 2>"$TMP_ROOT/refuse.err"; then
-  fail "custom master overwritten without --overwrite"
+  fail "legacy master accepted without --overwrite"
 fi
 grep -F 'custom master' "$target/master.md" >/dev/null || fail "custom master was changed"
-find "$target" -type f -exec cksum {} \; | sort > "$TMP_ROOT/refused.cksum"
+snapshot "$target" "$TMP_ROOT/refused.cksum"
 cmp "$TMP_ROOT/custom.cksum" "$TMP_ROOT/refused.cksum" || fail "refused install changed files"
-CODEX_HOME=$codex sh "$INSTALLER" --overwrite
-grep -F 'custom master' "$target/master.md" >/dev/null && fail "--overwrite did not replace master"
+grep -F -- '--overwrite' "$TMP_ROOT/refuse.err" >/dev/null || fail 'legacy refusal omitted overwrite guidance'
+CODEX_HOME=$codex sh "$INSTALLER" --overwrite >"$TMP_ROOT/migrate.out" 2>"$TMP_ROOT/migrate.err"
+grep -F 'preserve desired custom text' "$TMP_ROOT/migrate.err" >/dev/null || fail 'overwrite warning omitted customization risk'
+assert_absent "$target/master.md"
+assert_file "$target/daimon.md"
 
-rollback=$TMP_ROOT/rollback
-mkdir -p "$rollback/prompts"
-printf 'previous master\n' > "$rollback/prompts/master.md"
-printf 'previous explorer\n' > "$rollback/prompts/explorer.md"
-if CODEX_HOME=$rollback PITCREW_TEST_FAIL_AFTER_WRITES=2 sh "$INSTALLER" --overwrite >"$TMP_ROOT/rollback.out" 2>"$TMP_ROOT/rollback.err"; then
-  fail "simulated partial failure succeeded"
-fi
-[ "$(cat "$rollback/prompts/master.md")" = 'previous master' ] || fail 'rollback did not restore master'
-[ "$(cat "$rollback/prompts/explorer.md")" = 'previous explorer' ] || fail 'rollback did not restore explorer'
-if find "$rollback/prompts" -type f -name '*.md' ! -name master.md ! -name explorer.md -print 2>/dev/null | grep . >/dev/null; then fail "partial install left generated files"; fi
+differ=$TMP_ROOT/differing-daimon
+CODEX_HOME=$differ sh "$INSTALLER" >/dev/null
+printf 'custom daimon\n' > "$differ/prompts/daimon.md"
+snapshot "$differ/prompts" "$TMP_ROOT/differ.before"
+if CODEX_HOME=$differ sh "$INSTALLER" >"$TMP_ROOT/differ.out" 2>"$TMP_ROOT/differ.err"; then fail 'custom Daimon accepted without overwrite'; fi
+snapshot "$differ/prompts" "$TMP_ROOT/differ.after"
+cmp "$TMP_ROOT/differ.before" "$TMP_ROOT/differ.after" || fail 'Daimon refusal changed files'
+
+for case_name in fail-remove signal-remove fail-writes signal-writes; do
+  rollback=$TMP_ROOT/rollback-$case_name
+  mkdir -p "$rollback/prompts"
+  printf 'previous master\n' > "$rollback/prompts/master.md"
+  printf 'previous daimon\n' > "$rollback/prompts/daimon.md"
+  printf 'previous explorer\n' > "$rollback/prompts/explorer.md"
+  snapshot "$rollback/prompts" "$TMP_ROOT/$case_name.before"
+  case $case_name in
+    fail-remove) injection=PITCREW_TEST_FAIL_AFTER_MASTER_REMOVAL=1 ;;
+    signal-remove) injection=PITCREW_TEST_SIGNAL_AFTER_MASTER_REMOVAL=1 ;;
+    fail-writes) injection=PITCREW_TEST_FAIL_AFTER_WRITES=2 ;;
+    signal-writes) injection=PITCREW_TEST_SIGNAL_AFTER_WRITES=2 ;;
+  esac
+  if env CODEX_HOME="$rollback" "$injection" sh "$INSTALLER" --overwrite >"$TMP_ROOT/$case_name.out" 2>"$TMP_ROOT/$case_name.err"; then fail "$case_name succeeded"; fi
+  snapshot "$rollback/prompts" "$TMP_ROOT/$case_name.after"
+  cmp "$TMP_ROOT/$case_name.before" "$TMP_ROOT/$case_name.after" || fail "$case_name did not restore all files"
+  assert_no_temps "$rollback"
+done
+
+order_home=$TMP_ROOT/rollback-order
+order_bin=$TMP_ROOT/rollback-order-bin
+mkdir -p "$order_home/prompts" "$order_bin"
+printf 'previous master\n' > "$order_home/prompts/master.md"
+printf 'previous daimon\n' > "$order_home/prompts/daimon.md"
+printf 'previous explorer\n' > "$order_home/prompts/explorer.md"
+cat > "$order_bin/cp" <<'EOF'
+#!/bin/sh
+source_path=$1
+if [ "$source_path" = -p ]; then source_path=$2; fi
+case $source_path in */backup.*) printf '%s\n' "${source_path##*/backup.}" >> "$ROLLBACK_ORDER_FILE" ;; esac
+exec /bin/cp "$@"
+EOF
+chmod 700 "$order_bin/cp"
+if PATH="$order_bin:$PATH" ROLLBACK_ORDER_FILE="$TMP_ROOT/rollback.order" CODEX_HOME="$order_home" PITCREW_TEST_FAIL_AFTER_WRITES=2 sh "$INSTALLER" --overwrite >"$TMP_ROOT/order.out" 2>"$TMP_ROOT/order.err"; then fail 'rollback-order injection succeeded'; fi
+printf '%s\n' explorer.md daimon.md master.md > "$TMP_ROOT/rollback.expected"
+cmp "$TMP_ROOT/rollback.expected" "$TMP_ROOT/rollback.order" || fail 'rollback did not compensate in reverse mutation order'
+
+empty=$TMP_ROOT/new-empty-target
+stage_tmp=$TMP_ROOT/private-stage
+mkdir -p "$stage_tmp"
+if TMPDIR=$stage_tmp CODEX_HOME=$empty PITCREW_TEST_FAIL_AFTER_WRITES=1 sh "$INSTALLER" >"$TMP_ROOT/empty.out" 2>"$TMP_ROOT/empty.err"; then fail 'new-target failure succeeded'; fi
+assert_absent "$empty/prompts"
+[ -z "$(find "$stage_tmp" -mindepth 1 -print)" ] || fail 'private stage was not cleaned'
+
+for kind in symlink directory; do
+  unsafe=$TMP_ROOT/unsafe-$kind
+  mkdir -p "$unsafe/prompts" "$unsafe/seed"
+  case $kind in symlink) ln -s "$unsafe/seed/value" "$unsafe/prompts/daimon.md" ;; directory) mkdir "$unsafe/prompts/reviewer.md" ;; esac
+  if CODEX_HOME=$unsafe sh "$INSTALLER" --overwrite >"$TMP_ROOT/$kind.out" 2>"$TMP_ROOT/$kind.err"; then fail "$kind coordinator accepted"; fi
+  assert_absent "$unsafe/prompts/explorer.md"
+done
 
 for runtime in opencode claude pi; do
   home=$TMP_ROOT/$runtime
@@ -81,9 +146,13 @@ for runtime in opencode claude pi; do
     claude) CLAUDE_CONFIG_DIR=$home sh "$INSTALLER"; installed=$home/prompts ;;
     pi) PI_AGENT_HOME=$home sh "$INSTALLER"; installed=$home/agents ;;
   esac
-  assert_file "$installed/master.md"
+  assert_role_set "$installed"
   assert_file "$installed/agent-contract.md"
 done
+
+spaced=$TMP_ROOT/'home with spaces'
+CODEX_HOME="$spaced" sh "$INSTALLER" >/dev/null
+assert_role_set "$spaced/prompts"
 
 for document in "$ROOT/AGENTS.md" "$ROOT/docs/cli-reference.md" "$ROOT/docs/contributing.md"; do
   assert_file "$document"
