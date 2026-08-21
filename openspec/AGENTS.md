@@ -135,12 +135,12 @@ user → Master → Explorer → Specifier → Designer → TaskPlanner
 
 | Role         | Subcommands                          |
 |--------------|---------------------------------------|
-| Master       | `new`, `show`, `approve-plan`, `complete` (optional) |
+| Master       | `new`, `show`, `approve-plan`, `abandon`, `complete` (optional) |
 | Explorer     | `explore`                             |
 | Specifier    | `spec`                                |
 | Designer     | `design`                              |
 | TaskPlanner  | `plan`                                |
-| Implementer  | `claim`, `unit-tdd`, `unit-complete`  |
+| Implementer  | `list-ready-units`, `claim`, `unit-tdd`, `unit-complete` |
 | Reviewer     | `unit-review`                         |
 | Archivist    | `complete`                            |
 
@@ -148,8 +148,9 @@ Hand-off contract:
 
 - Every role returns when it has called its assigned subcommand and received
   success.
-- Every role returns its output (the subcommand's JSON payload, including
-  the new revision) to the Master.
+- Every role returns only a one-line completion status containing the new
+  revision and `next_action`; artifact content and complete CLI payloads stay
+  in the control plane.
 - The Master is the only role that holds the long-lived workflow context.
 - The Implementer returns the handle path (not the handle contents) to the
   Master.
