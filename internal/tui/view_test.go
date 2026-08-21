@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -76,6 +77,41 @@ func TestViewStatesAndResize(t *testing.T) {
 	}
 }
 
+func TestViewDetailEvidenceIsFullyReachable(t *testing.T) {
+	content := "FIRST FRAGMENT\n" + strings.Repeat("界", 120) + "\nMIDDLE FRAGMENT\n" + strings.Repeat("界", 120) + "\nFINAL FRAGMENT"
+	model := Model{screen: DetailScreen, opened: history.Resolution{Detail: history.Detail{
+		Workflow: history.Workflow{ID: "wf", State: "implementation", Goal: "Inspect all evidence"},
+		Records:  []history.Record{{ID: "evidence:1", Kind: "evidence", Content: content}},
+	}}}
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	seenFirst, seenMiddle, seenFinal := false, false, false
+	for {
+		view := model.View().Content
+		seenFirst = seenFirst || strings.Contains(view, "FIRST FRAGMENT")
+		seenMiddle = seenMiddle || strings.Contains(view, "MIDDLE FRAGMENT")
+		seenFinal = seenFinal || strings.Contains(view, "FINAL FRAGMENT")
+		if strings.Count(view, "▶") != 1 {
+			t.Fatalf("focus marker count = %d:\n%s", strings.Count(view, "▶"), view)
+		}
+		for _, line := range strings.Split(view, "\n") {
+			if width := lipgloss.Width(line); width > 60 {
+				t.Fatalf("rendered line width %d exceeds 60: %q", width, line)
+			}
+		}
+		current, total := model.detailPosition()
+		if current == total {
+			if !strings.Contains(view, "line "+strconv.Itoa(total)+"/"+strconv.Itoa(total)) {
+				t.Fatalf("final position hint missing:\n%s", view)
+			}
+			break
+		}
+		model, _ = model.Update(textKey("j"))
+	}
+	if !seenFirst || !seenMiddle || !seenFinal {
+		t.Fatalf("reachable fragments: first=%v middle=%v final=%v", seenFirst, seenMiddle, seenFinal)
+	}
+}
+
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
 	path := filepath.Join("testdata", name+".golden")
@@ -107,8 +143,8 @@ func detailViewModel() Model {
 	return Model{screen: DetailScreen, opened: history.Resolution{Detail: history.Detail{
 		Workflow: history.Workflow{ID: "wf-alpha", Revision: 7, State: "implementation", Goal: "Ship read-only terminal inspection"},
 		Records: []history.Record{
-			{Kind: "proposal", Title: "Proposal", Content: "Embed a read-only TUI in the PitCrew CLI.", Revision: 2, At: "2026-08-21T10:00:00Z"},
-			{Kind: "review", Title: "approved", Content: "Store access preserves logical state.", UnitID: "wu-store", Revision: 1, At: "2026-08-21T12:30:00Z"},
+			{ID: "artifact:1", Kind: "proposal", Title: "Proposal", Content: "Embed a read-only TUI in the PitCrew CLI.", Revision: 2, At: "2026-08-21T10:00:00Z"},
+			{ID: "review:1", Kind: "review", Title: "approved", Content: "Store access preserves logical state.", UnitID: "wu-store", Revision: 1, At: "2026-08-21T12:30:00Z"},
 		},
 	}}}
 }
