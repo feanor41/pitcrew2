@@ -50,12 +50,14 @@ When changing `scripts/install-templates.sh`, prove all of these:
 - every supported runtime installs eight role fragments plus `agent-contract.md`;
 - every role contains the exact filesystem `MAXIMS.md` bytes and hand-off reminder;
 - a byte-identical reinstall is a no-op;
-- a customized Master is protected unless `--overwrite` is explicit;
+- an existing `master.md` or customized `daimon.md` is protected unless `--overwrite` is explicit;
 - a partial failure restores every touched file;
 - unsupported runtime detection names Codex, OpenCode, Claude Code, and Pi.
 
 Run `sh scripts/tests/run.sh` with `/bin/sh`, not Bash. If `shellcheck` is available, run it with shell dialect `sh` and resolve applicable findings.
 
+Before an overwrite migration, preserve any custom instructions needed from legacy `master.md`. The installer warns before the explicit destructive cutover to canonical `daimon.md`; arbitrary customization is not translated automatically.
+
 ## Scope changes
 
-Proposals involving HTTP, RPC, authentication, multi-user state, cross-project coordination, an embedded TUI, v1 migration, `internal/master`, or `internal/installer` require a separate explicit OpenSpec change. Do not smuggle architectural expansion into an implementation patch.
+Proposals involving HTTP, RPC, authentication, multi-user state, cross-project coordination, an embedded TUI, v1 migration, `internal/daimon`, or `internal/installer` require a separate explicit OpenSpec change. Daimon is an external agent role, not a Unix daemon or control-plane package. Do not smuggle architectural expansion into an implementation patch.

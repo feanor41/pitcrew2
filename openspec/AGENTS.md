@@ -82,8 +82,8 @@ justified explicitly in its own OpenSpec proposal.
   JSON. The TUI is its own OpenSpec change (`add-pitcrew-tui`).
 - **No `internal/installer` package.** The runtime installer is an external
   POSIX shell script (`scripts/install-templates.sh`).
-- **No `internal/master` package.** Agents (LLM subagents of the host
-  runtime) are the Master. They call `pitcrew` as a subprocess and decide
+- **No `internal/daimon` package.** Daimon is an external LLM agent role, not a Unix daemon or control-plane
+  component. Agents (LLM subagents of the host runtime) perform that role. They call `pitcrew` as a subprocess and decide
   the workflow choreography. The control plane does not orchestrate; the
   agents do.
 - **No v1 data migration.** v1 (`agent-controller` in `$PATH`) stays usable
@@ -93,15 +93,15 @@ justified explicitly in its own OpenSpec proposal.
 
 ## Orchestration model
 
-The control plane is a **shared memory**, not a Master proxy. Every role
-(Master, Explorer, Specifier, Designer, TaskPlanner, Implementer, Reviewer,
-Archivist) invokes the `pitcrew` CLI directly. The Master orchestrates by
+The control plane is a **shared memory**, not a Daimon proxy. Every role
+(Daimon, Explorer, Specifier, Designer, TaskPlanner, Implementer, Reviewer,
+Archivist) invokes the `pitcrew` CLI directly. Daimon orchestrates by
 sending short messages; it does not relay content.
 
 Two channels:
 
-- **Master ↔ role channel.** Workflow id, current revision, one-line
-  instruction (Master → role), one-line status (role → Master). No content.
+- **Daimon ↔ role channel.** Workflow id, current revision, one-line
+  instruction (Daimon → role), one-line status (role → Daimon). No content.
 - **Role ↔ control plane channel.** Full content. Role reads prior context
   via `workflow show`, writes artefact via its subcommand.
 
@@ -110,10 +110,10 @@ Consequences:
 - The CLI does NOT distinguish callers by identity. Every subcommand is
   available to every caller. Role-based authorization is enforced by prompt
   fragments, not by the CLI.
-- The Master is the only role that talks to the user. The Master is NOT
+- Daimon is the only role that talks to the user. The Daimon is NOT
   the only role that talks to the control plane.
 - The Implementer returns the handle **path** (not the handle contents) to
-  the Master. The Master passes the handle path to the Reviewer. The handle
+  Daimon. Daimon passes the handle path to the Reviewer. The handle
   contents never leave the Implementer or Reviewer.
 
 ---
@@ -124,8 +124,8 @@ Eight roles, each with a minimal subcommand surface. The canonical sequence
 (one unit at a time, in dependency order):
 
 ```
-user → Master → Explorer → Specifier → Designer → TaskPlanner
-      → Master approves
+user → Daimon → Explorer → Specifier → Designer → TaskPlanner
+      → Daimon approves
       → Implementer (claim + unit-tdd)
       → Reviewer (unit-review)
       → Implementer (unit-complete)
@@ -135,12 +135,12 @@ user → Master → Explorer → Specifier → Designer → TaskPlanner
 
 | Role         | Subcommands                          |
 |--------------|---------------------------------------|
-| Master       | `new`, `show`, `approve-plan`, `abandon`, `complete` (optional) |
+| Daimon       | `new`, `show`, `approve-plan`, `abandon`, `complete` (optional) |
 | Explorer     | `explore`                             |
 | Specifier    | `spec`                                |
 | Designer     | `design`                              |
 | TaskPlanner  | `plan`                                |
-| Implementer  | `list-ready-units`, `claim`, `unit-tdd`, `unit-complete` |
+| Implementer  | `list-ready-units`, `claim-unit`, `unit-tdd`, `unit-complete` |
 | Reviewer     | `unit-review`                         |
 | Archivist    | `complete`                            |
 
@@ -151,14 +151,14 @@ Hand-off contract:
 - Every role returns only a one-line completion status containing the new
   revision and `next_action`; artifact content and complete CLI payloads stay
   in the control plane.
-- The Master is the only role that holds the long-lived workflow context.
+- Daimon is the only role that holds the long-lived workflow context.
 - The Implementer returns the handle path (not the handle contents) to the
-  Master.
+  Daimon.
 
 Failure handling:
 
-- Exit code `3` or `4` → Master decides whether to retry after re-inspecting
+- Exit code `3` or `4` → Daimon decides whether to retry after re-inspecting
   (`workflow show`) or surface to the user.
-- Exit code `5` (handle error) → Master waits 5 minutes for expiry, then
+- Exit code `5` (handle error) → Daimon waits 5 minutes for expiry, then
   re-claims.
-- Master SHALL NOT retry blindly on CAS error; SHALL re-inspect first.
+- Daimon SHALL NOT retry blindly on CAS error; SHALL re-inspect first.
