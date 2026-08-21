@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,33 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ErrCASMismatch = errors.New("workflow revision mismatch")
+var (
+	ErrCASMismatch  = errors.New("workflow revision mismatch")
+	ErrInvalidState = errors.New("PitCrew state database is not a regular file")
+)
+
+type RepositoryState string
+
+const (
+	Uninitialized RepositoryState = "uninitialized"
+	Initialized   RepositoryState = "initialized"
+)
+
+type OpenReadOnlyResult struct {
+	State RepositoryState
+	Store *Store
+}
+
+type InvalidStateError struct {
+	Path string
+	Mode os.FileMode
+}
+
+func (e *InvalidStateError) Error() string {
+	return fmt.Sprintf("invalid PitCrew state database %q: mode %s", e.Path, e.Mode)
+}
+
+func (e *InvalidStateError) Unwrap() error { return ErrInvalidState }
 
 type Store struct {
 	db   *sql.DB
@@ -49,6 +76,45 @@ func Open(ctx context.Context, projectRoot string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func OpenReadOnly(ctx context.Context, projectRoot string) (OpenReadOnlyResult, error) {
+	path := filepath.Join(projectRoot, ".pitcrew", "state.db")
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return OpenReadOnlyResult{State: Uninitialized}, nil
+	}
+	if err != nil {
+		return OpenReadOnlyResult{}, fmt.Errorf("inspect PitCrew state database: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return OpenReadOnlyResult{}, &InvalidStateError{Path: path, Mode: info.Mode()}
+	}
+
+	uri := url.URL{Scheme: "file", Path: path}
+	query := uri.Query()
+	query.Set("mode", "ro")
+	uri.RawQuery = query.Encode()
+	db, err := sql.Open("sqlite", uri.String())
+	if err != nil {
+		return OpenReadOnlyResult{}, err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	closeOnError := func(err error) (OpenReadOnlyResult, error) {
+		_ = db.Close()
+		return OpenReadOnlyResult{}, err
+	}
+	if err := db.PingContext(ctx); err != nil {
+		return closeOnError(fmt.Errorf("open PitCrew state database read-only: %w", err))
+	}
+	for _, pragma := range []string{"query_only=ON", "foreign_keys=ON", "busy_timeout=5000"} {
+		if _, err := db.ExecContext(ctx, "PRAGMA "+pragma); err != nil {
+			return closeOnError(fmt.Errorf("apply read-only PRAGMA %s: %w", pragma, err))
+		}
+	}
+	s := &Store{db: db, path: path}
+	return OpenReadOnlyResult{State: Initialized, Store: s}, nil
 }
 
 func (s *Store) Path() string { return s.path }

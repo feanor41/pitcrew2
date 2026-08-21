@@ -2,11 +2,240 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestOpenReadOnlyMissingStateDoesNotCreateFilesystem(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "missing-project")
+
+	result, err := OpenReadOnly(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != Uninitialized || result.Store != nil {
+		t.Fatalf("result = %#v; want uninitialized without a store", result)
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("project root was created or cannot be inspected: %v", err)
+	}
+
+	root = t.TempDir()
+	result, err = OpenReadOnly(ctx, root)
+	if err != nil || result.State != Uninitialized || result.Store != nil {
+		t.Fatalf("existing empty root result = %#v, %v", result, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".pitcrew")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf(".pitcrew was created or cannot be inspected: %v", err)
+	}
+}
+
+func TestOpenReadOnlyRejectsNonRegularState(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(t *testing.T, path string)
+	}{
+		{name: "directory", setup: func(t *testing.T, path string) {
+			t.Helper()
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlink", setup: func(t *testing.T, path string) {
+			t.Helper()
+			target := filepath.Join(t.TempDir(), "target.db")
+			if err := os.WriteFile(target, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, ".pitcrew")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "state.db")
+			test.setup(t, path)
+
+			result, err := OpenReadOnly(context.Background(), root)
+			if result.Store != nil || !errors.Is(err, ErrInvalidState) {
+				t.Fatalf("result = %#v, error = %v; want invalid state", result, err)
+			}
+		})
+	}
+}
+
+func TestOpenReadOnlyPreservesLogicalStateAndRejectsMutation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	writable, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writable.DB().ExecContext(ctx, `INSERT INTO workflows(id, revision, state, goal, created_at, updated_at) VALUES('wf-read-only', 7, 'implementing', 'inspect safely', 'before', 'before')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	databasePath := filepath.Join(root, ".pitcrew", "state.db")
+	beforeLogical := logicalSnapshot(t, databasePath)
+	beforeFiles := treeSnapshot(t, root)
+	result, err := OpenReadOnly(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != Initialized || result.Store == nil {
+		t.Fatalf("result = %#v; want initialized store", result)
+	}
+	readOnly := result.Store
+	if readOnly.Path() != databasePath {
+		t.Fatalf("path = %q; want %q", readOnly.Path(), databasePath)
+	}
+	if got := readOnly.DB().Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("max open connections = %d; want 1", got)
+	}
+	for name, want := range map[string]string{"query_only": "1", "foreign_keys": "1", "busy_timeout": "5000"} {
+		var got string
+		if err := readOnly.DB().QueryRowContext(ctx, "PRAGMA "+name).Scan(&got); err != nil || got != want {
+			t.Fatalf("PRAGMA %s = %q, %v; want %q", name, got, err, want)
+		}
+	}
+	for _, statement := range []string{
+		`INSERT INTO workflows(id, revision, state, goal, created_at, updated_at) VALUES('forbidden', 1, 'draft', '', '', '')`,
+		`UPDATE workflows SET revision=8 WHERE id='wf-read-only'`,
+		`CREATE TABLE forbidden (id TEXT)`,
+	} {
+		if _, err := readOnly.DB().ExecContext(ctx, statement); err == nil {
+			t.Fatalf("read-only store accepted %q", statement)
+		}
+	}
+	if err := readOnly.ApplyMigrations(ctx, []Migration{{Version: 2, Name: "forbidden", SQL: `CREATE TABLE migrated (id TEXT)`}}); err == nil {
+		t.Fatal("read-only store accepted a migration")
+	}
+	if err := readOnly.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	afterLogical := logicalSnapshot(t, databasePath)
+	if !reflect.DeepEqual(afterLogical, beforeLogical) {
+		t.Fatalf("logical state changed\nbefore: %v\nafter:  %v", beforeLogical, afterLogical)
+	}
+	afterFiles := treeSnapshot(t, root)
+	assertOnlySQLiteSidecarsAdded(t, beforeFiles, afterFiles)
+}
+
+func logicalSnapshot(t *testing.T, path string) []string {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_master ORDER BY type, name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot []string
+	for rows.Next() {
+		var kind, name, table, statement string
+		if err := rows.Scan(&kind, &name, &table, &statement); err != nil {
+			t.Fatal(err)
+		}
+		snapshot = append(snapshot, fmt.Sprintf("schema:%s:%s:%s:%s", kind, name, table, statement))
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = db.Query(`SELECT id, revision, state, goal, created_at, updated_at FROM workflows ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, state, goal, created, updated string
+		var revision int64
+		if err := rows.Scan(&id, &revision, &state, &goal, &created, &updated); err != nil {
+			t.Fatal(err)
+		}
+		snapshot = append(snapshot, fmt.Sprintf("workflow:%s:%d:%s:%s:%s:%s", id, revision, state, goal, created, updated))
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, table)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range tables {
+		var count int
+		if err := db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		snapshot = append(snapshot, fmt.Sprintf("count:%s:%d", table, count))
+	}
+	return snapshot
+}
+
+func treeSnapshot(t *testing.T, root string) []string {
+	t.Helper()
+	var paths []string
+	if err := filepath.Walk(root, func(path string, _ os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, relative)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func assertOnlySQLiteSidecarsAdded(t *testing.T, before, after []string) {
+	t.Helper()
+	known := make(map[string]bool, len(before))
+	for _, path := range before {
+		known[path] = true
+	}
+	for _, path := range after {
+		if known[path] {
+			continue
+		}
+		if !strings.HasSuffix(path, "state.db-wal") && !strings.HasSuffix(path, "state.db-shm") {
+			t.Fatalf("unexpected path created by read-only open: %q", path)
+		}
+	}
+}
 
 func TestOpenCreatesLocalSchemaAndAppliesPragmas(t *testing.T) {
 	ctx := context.Background()
