@@ -70,8 +70,10 @@ Nine items, ordered by dependency.
 3. **Eight roles, thin Master.** Master orchestrates by sending short
    messages; roles call the CLI directly. The control plane is shared
    memory, not a Master proxy.
-4. **16 subcommands, closed list.** Tentative list frozen in `design.md`
-   § 1. No new subcommand without an OpenSpec change.
+4. **16 workflow subcommands, plus one runtime command.** The closed list is
+   frozen in `design.md` § 1. `pitcrew principles` is the sole runtime command;
+   `--version` and `--help` are global flags, not subcommands. No new command
+   without an OpenSpec change.
 5. **SQLite local store.** One writer per process, `<project>/.pitcrew/state.db`,
    CAS-by-revision, PRAGMAs as in `specs/event-store/spec.md`.
 6. **POSIX shell installer.** `scripts/install-templates.sh` writes one
