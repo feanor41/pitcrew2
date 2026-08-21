@@ -108,6 +108,57 @@ func TestModelAsyncResizeBackQuitAndHints(t *testing.T) {
 	}
 }
 
+func TestModelExactResultFocusSurvivesResize(t *testing.T) {
+	records := []history.Record{
+		{ID: "artifact:1", Kind: "artifact", UnitID: "wu", Revision: 1, Content: "first"},
+		{ID: "artifact:2", Kind: "artifact", UnitID: "wu", Revision: 1, Content: strings.Repeat("界", 80)},
+	}
+	for _, target := range records {
+		resolution := history.Resolution{Detail: history.Detail{Records: records}, Record: target}
+		model, _ := (Model{}).Update(detailLoadedMsg{resolution: resolution})
+		if model.detail.recordID != target.ID || model.detail.line != 0 {
+			t.Fatalf("exact result %q focus = %#v", target.ID, model.detail)
+		}
+	}
+	resolution := history.Resolution{Detail: history.Detail{Records: records}, Record: records[1]}
+	model, _ := (Model{}).Update(detailLoadedMsg{resolution: resolution})
+	for _, size := range []tea.WindowSizeMsg{{Width: 112, Height: 28}, {Width: 60, Height: 16}, {Width: 112, Height: 28}} {
+		model, _ = model.Update(size)
+		current, total := model.detailPosition()
+		if model.detail.recordID != "artifact:2" || current < 1 || current > total {
+			t.Fatalf("resize %dx%d lost exact focus: detail=%#v position=%d/%d", size.Width, size.Height, model.detail, current, total)
+		}
+	}
+}
+
+func TestModelDetailEvidenceArrowAndVimParityAndClamps(t *testing.T) {
+	base := Model{screen: DetailScreen, width: 60, height: 16, opened: history.Resolution{Detail: history.Detail{Records: []history.Record{
+		{ID: "one", Kind: "evidence", Content: strings.Repeat("alpha ", 24)},
+		{ID: "two", Kind: "review", Content: "omega"},
+	}}}}
+	base.reconcileDetail()
+	for _, pair := range [][2]tea.KeyPressMsg{{special(tea.KeyDown), textKey("j")}, {special(tea.KeyUp), textKey("k")}} {
+		arrow, _ := base.Update(pair[0])
+		vim, _ := base.Update(pair[1])
+		if !reflect.DeepEqual(arrow.detail, vim.detail) {
+			t.Fatalf("detail navigation differs: arrow=%#v vim=%#v", arrow.detail, vim.detail)
+		}
+		base = arrow
+	}
+	for range 100 {
+		base, _ = base.Update(textKey("k"))
+	}
+	if current, _ := base.detailPosition(); current != 1 {
+		t.Fatalf("upper clamp position = %d", current)
+	}
+	for range 100 {
+		base, _ = base.Update(textKey("j"))
+	}
+	if current, total := base.detailPosition(); current != total || base.detail.recordID != "two" {
+		t.Fatalf("lower clamp = %d/%d, record=%q", current, total, base.detail.recordID)
+	}
+}
+
 type fakeLoader struct {
 	detail     history.Detail
 	results    []history.SearchResult

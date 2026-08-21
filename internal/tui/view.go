@@ -41,7 +41,15 @@ func (m Model) footerHints() string {
 		return m.Hints()
 	}
 	if m.width < wideWidth {
+		if m.screen == DetailScreen {
+			current, total := m.detailPosition()
+			return fmt.Sprintf("↑/k ↓/j scroll • h back • line %d/%d • q quit", current, total)
+		}
 		return "↑/k ↓/j move • h back • l/enter open • / search • q quit"
+	}
+	if m.screen == DetailScreen {
+		current, total := m.detailPosition()
+		return fmt.Sprintf("↑/k ↓/j scroll • ←/h back • line %d/%d • / search • q quit", current, total)
 	}
 	return m.Hints()
 }
@@ -64,10 +72,14 @@ func (m Model) body(wide bool) string {
 	}
 	if wide {
 		left := flight.panel.Width(30).MaxHeight(m.height - 3).Render("STATUS RAIL\n" + m.rail())
-		right := flight.panel.Width(max(40, m.width-39)).MaxHeight(m.height - 3).Render("EVIDENCE CANVAS\n" + m.canvas())
+		right := flight.panel.Width(max(40, m.width-39)).Render("EVIDENCE CANVAS\n" + m.canvas())
 		return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 	}
-	return flight.panel.Width(max(40, m.width-4)).MaxHeight(m.height - 3).Render(m.singlePane())
+	panel := flight.panel.Width(max(40, m.width-4))
+	if m.screen != DetailScreen {
+		panel = panel.MaxHeight(m.height - 3)
+	}
+	return panel.Render(m.singlePane())
 }
 
 func statePanel(title, message string) string {
@@ -120,8 +132,12 @@ func (m Model) canvas() string {
 		return "Select a workflow to inspect its evidence."
 	}
 	lines := []string{flight.title.Render(detail.Workflow.Goal), statusLabel(detail.Workflow.State) + fmt.Sprintf("  %s  revision %d", detail.Workflow.ID, detail.Workflow.Revision), ""}
-	for _, record := range detail.Records {
-		lines = append(lines, recordLine(record))
+	m.reconcileDetail()
+	layout := m.evidenceLines()
+	current, _ := m.detailPosition()
+	end := min(len(layout), m.detail.top+m.evidenceHeight())
+	for i := m.detail.top; i < end; i++ {
+		lines = append(lines, focus(i == current-1)+layout[i].text)
 	}
 	if len(detail.Records) == 0 {
 		lines = append(lines, flight.muted.Render("No evidence recorded for this workflow."))
@@ -129,10 +145,55 @@ func (m Model) canvas() string {
 	return strings.Join(lines, "\n")
 }
 
-func recordLine(record history.Record) string {
-	identity := record.Kind
-	if record.UnitID != "" {
-		identity += " · " + record.UnitID
+type evidenceLine struct {
+	recordID string
+	local    int
+	text     string
+}
+
+func (m Model) evidenceLines() []evidenceLine {
+	return evidenceLayout(m.opened.Detail.Records, max(1, m.evidenceWidth()-2))
+}
+
+func (m Model) evidenceWidth() int {
+	if m.width >= wideWidth {
+		return max(40, m.width-39)
 	}
-	return fmt.Sprintf("• %s  r%d  %s\n  %s\n  %s", identity, record.Revision, record.Title, record.Content, flight.muted.Render(record.At))
+	return max(40, m.width-4)
+}
+
+func (m Model) evidenceHeight() int { return max(1, m.height-8) }
+
+func evidenceLayout(records []history.Record, width int) []evidenceLine {
+	var lines []evidenceLine
+	for _, record := range records {
+		identity := record.Kind
+		if record.UnitID != "" {
+			identity += " · " + record.UnitID
+		}
+		parts := []string{fmt.Sprintf("%s  r%d  %s", identity, record.Revision, record.Title)}
+		parts = append(parts, strings.Split(record.Content, "\n")...)
+		parts = append(parts, record.At)
+		local := 0
+		for _, part := range parts {
+			for _, wrapped := range wrapDisplay(part, width) {
+				lines = append(lines, evidenceLine{record.ID, local, wrapped})
+				local++
+			}
+		}
+	}
+	return lines
+}
+
+func wrapDisplay(text string, width int) []string {
+	lines, line, used := []string{}, "", 0
+	for _, r := range text {
+		cell := lipgloss.Width(string(r))
+		if used+cell > width && line != "" {
+			lines, line, used = append(lines, line), "", 0
+		}
+		line += string(r)
+		used += cell
+	}
+	return append(lines, line)
 }
