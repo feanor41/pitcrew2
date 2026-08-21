@@ -1,0 +1,56 @@
+package tui
+
+import tea "charm.land/bubbletea/v2"
+
+type action uint8
+
+const (
+	actionNone action = iota
+	actionUp
+	actionDown
+	actionBack
+	actionSelect
+	actionSearch
+	actionSubmit
+	actionCancel
+	actionDelete
+	actionQuit
+	actionText
+)
+
+func actionFor(key tea.KeyPressMsg, searchFocused bool) action {
+	stroke := key.Keystroke()
+	if stroke == "ctrl+c" {
+		return actionQuit
+	}
+	if searchFocused {
+		switch stroke {
+		case "enter":
+			return actionSubmit
+		case "esc":
+			return actionCancel
+		case "backspace":
+			return actionDelete
+		}
+		if key.Text != "" {
+			return actionText
+		}
+		return actionNone
+	}
+	switch stroke {
+	case "up", "k":
+		return actionUp
+	case "down", "j":
+		return actionDown
+	case "left", "h", "esc":
+		return actionBack
+	case "right", "l", "enter":
+		return actionSelect
+	case "/":
+		return actionSearch
+	case "q":
+		return actionQuit
+	default:
+		return actionNone
+	}
+}
