@@ -65,7 +65,7 @@ func TestUsageFailuresAreStderrOnlySingleLineAndLongFlagsOnly(t *testing.T) {
 
 func TestWorkflowNewAndShowUseEnvelopeAndProjectLocalStore(t *testing.T) {
 	root := t.TempDir()
-	created := runAt(t, root, "workflow", "new", "--goal", "ship safely", "--actor", "master")
+	created := runAt(t, root, "workflow", "new", "--goal", "ship safely", "--actor", "daimon")
 	if created.code != 0 || created.stderr != "" {
 		t.Fatalf("new=%#v", created)
 	}

@@ -43,7 +43,7 @@ bends.
 > **The harness is the usual path, not the only path.**
 
 For most work, invoke the control plane and let it record evidence. For trivial
-work (typo fixes, one-line edits, well-understood local refactors), the Master
+work (typo fixes, one-line edits, well-understood local refactors), the Daimon
 agent is invited to skip the harness when the process cost exceeds the process
 value.
 

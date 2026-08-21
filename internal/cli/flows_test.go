@@ -26,8 +26,8 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 	planBody := `{"summary":"one unit","scope":"internal","max_parallel_units":1,"work_units":[{"id":"` + unitID + `","description":"implement","scope":"internal/feature","areas":["internal/feature"],"depends_on":[],"estimated_changed_lines":100,"estimated_review_minutes":20}]}`
 	planFile := writeInput(t, root, "plan.json", planBody)
 	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "planner", "--input-file", planFile)))
-	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "approve-plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "master")))
-	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "begin-implementation", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "master")))
+	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "approve-plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon")))
+	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "begin-implementation", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon")))
 	ready := mustOK(t, runAt(t, root, "workflow", "list-ready-units", "--workflow-id", wfID))
 	if !strings.Contains(string(ready), unitID) {
 		t.Fatalf("ready=%s", ready)
@@ -79,7 +79,7 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	if badCAS.code != 4 {
 		t.Fatalf("CAS=%#v", badCAS)
 	}
-	abandoned := mustOK(t, runAt(t, root, "workflow", "abandon", "--workflow-id", wfID, "--revision", "1", "--actor", "master", "--reason", "superseded"))
+	abandoned := mustOK(t, runAt(t, root, "workflow", "abandon", "--workflow-id", wfID, "--revision", "1", "--actor", "daimon", "--reason", "superseded"))
 	if workflowState(t, abandoned) != "abandoned" {
 		t.Fatal(string(abandoned))
 	}
@@ -102,7 +102,7 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 		t.Fatalf("collision=%#v", collision)
 	}
 	correction := mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", handlePath, "--input-file", reviewFile))
-	if !strings.Contains(string(correction), `"unit_revision":2`) {
+	if !strings.Contains(string(correction), `"unit_revision":2`) || !strings.Contains(string(correction), `"next_action":"workflow claim-unit"`) {
 		t.Fatal(string(correction))
 	}
 	recovered := mustOK(t, runAt(t, root, "workflow", "recover-unit-claim", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--handle-dir", filepath.Join(root, "recovered")))
@@ -144,6 +144,44 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	}
 	if state != "revoked" || strings.Contains(hash, secret) {
 		t.Fatalf("debug persisted state=%s hash=%s", state, hash)
+	}
+}
+
+func TestOutsidePlanCorrectionNamesDaimonAsNextCoordinator(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, handlePath := setupReviewingUnit(t, root, "implementer")
+	reviewFile := writeInput(t, root, "outside-correction.json", `{"verdict":"corrections","summary":"plan change","findings":"split the unit","plan_impact":"outside"}`)
+	correction := mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", handlePath, "--input-file", reviewFile))
+	var response struct {
+		NextAction string `json:"next_action"`
+	}
+	if err := json.Unmarshal(correction, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.NextAction != "daimon revise plan" {
+		t.Fatalf("next_action=%q", response.NextAction)
+	}
+}
+
+func TestMasterRemainsAnOpaqueHistoricalActorLabel(t *testing.T) {
+	root := t.TempDir()
+	created := mustOK(t, runAt(t, root, "workflow", "new", "--goal", "preserve history", "--actor", "master"))
+	wfID, revision := workflowID(t, created), workflowRevision(t, created)
+	input := writeInput(t, root, "historical-actor.json", `{"content":"historical evidence"}`)
+	mustOK(t, runAt(t, root, "workflow", "explore", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "master", "--input-file", input))
+	shown := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	var response struct {
+		Data struct {
+			Artifacts []struct {
+				Actor string `json:"actor"`
+			} `json:"artifacts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(shown, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data.Artifacts) != 1 || response.Data.Artifacts[0].Actor != "master" {
+		t.Fatalf("artifacts=%#v", response.Data.Artifacts)
 	}
 }
 
@@ -278,7 +316,7 @@ func TestPlanApprovalGatesReadinessClaimsAndPersistsExplicitExceptions(t *testin
 	if _, err := os.Stat(handleDir); !os.IsNotExist(err) {
 		t.Fatalf("preapproval claim created handle directory: %v", err)
 	}
-	missingApproval := runAt(t, root, "workflow", "approve-plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "master")
+	missingApproval := runAt(t, root, "workflow", "approve-plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon")
 	if missingApproval.code != 3 || missingApproval.stdout != "" {
 		t.Fatalf("missing exception approval=%#v", missingApproval)
 	}
@@ -291,7 +329,7 @@ func TestPlanApprovalGatesReadinessClaimsAndPersistsExplicitExceptions(t *testin
 		t.Fatalf("failed approval changed workflow state=%s", state)
 	}
 
-	approved := mustOK(t, runAt(t, root, "workflow", "approve-plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "master", "--approve-exception", first))
+	approved := mustOK(t, runAt(t, root, "workflow", "approve-plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--approve-exception", first))
 	if state := workflowState(t, approved); state != "plan_approved" {
 		t.Fatalf("approved state=%s", state)
 	}
@@ -367,14 +405,14 @@ func storedClaim(t *testing.T, root, wfID, unitID string) (string, string) {
 
 func createWorkflow(t *testing.T, root string) (string, int64) {
 	t.Helper()
-	doc := mustOK(t, runAt(t, root, "workflow", "new", "--goal", "ship", "--actor", "master"))
+	doc := mustOK(t, runAt(t, root, "workflow", "new", "--goal", "ship", "--actor", "daimon"))
 	return workflowID(t, doc), workflowRevision(t, doc)
 }
 
 func setupImplementingUnit(t *testing.T, root string) (string, string, int64) {
 	t.Helper()
 	wfID, revision := createWorkflow(t, root)
-	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "begin-implementation", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "master")))
+	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "begin-implementation", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon")))
 	unitID := "wu-000000000000000000000001"
 	// The trivial implementation path has no plan, so seed its single unit through the durable schema seam.
 	s, err := store.Open(context.Background(), root)

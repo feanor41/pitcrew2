@@ -3,6 +3,7 @@ package maxims
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -37,5 +38,15 @@ func TestStructuredReturnsTheFourCanonicalMaxims(t *testing.T) {
 	var roundTrip []Maxim
 	if err := json.Unmarshal(encoded, &roundTrip); err != nil || len(roundTrip) != 4 {
 		t.Fatalf("JSON round trip = %#v, %v", roundTrip, err)
+	}
+}
+
+func TestCanonicalMaximsNameDaimonWithoutRewritingThePrinciples(t *testing.T) {
+	text := strings.Join(strings.Fields(Text()), " ")
+	if !strings.Contains(text, "the Daimon agent is invited to skip the harness") {
+		t.Fatal("canonical maxims do not assign the trivial-work decision to Daimon")
+	}
+	if strings.Contains(text, "the Master agent is invited to skip the harness") {
+		t.Fatal("canonical maxims retain the obsolete coordinator name")
 	}
 }
