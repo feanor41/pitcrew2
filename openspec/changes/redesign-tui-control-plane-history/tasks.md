@@ -31,9 +31,9 @@ First create the sole aggregate PR `feat/tui-history-redesign` → `main` (`48a1
 
 ## Phase 2: Transactional Activities
 
-- [ ] 2.1 **RED:** Test every action/safe subject; prove reads/failures add zero and injected ledger/commit failures roll back every transaction family, remove new handles, and restore prior bytes.
-- [ ] 2.2 **GREEN:** Implement typed `internal/activity.AppendTx`; wire workflow, plan, evidence, and handles so each successful mutation atomically commits exactly one linked activity.
-- [ ] 2.3 **REFACTOR:** Deduplicate construction; run matrices and exclude claim material or second activities.
+- [x] 2.1 **RED:** Test every action/safe subject; prove reads/failures add zero and injected ledger/commit failures roll back every transaction family, remove new handles, and restore prior bytes.
+- [x] 2.2 **GREEN:** Implement typed `internal/activity.AppendTx`; wire workflow, plan, evidence, and handles so each successful mutation atomically commits exactly one linked activity.
+- [x] 2.3 **REFACTOR:** Deduplicate construction; run matrices and exclude claim material or second activities.
 
 ## Phase 3: Typed History
 
