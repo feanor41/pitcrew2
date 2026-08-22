@@ -2,11 +2,113 @@ package history
 
 import (
 	"context"
+	"database/sql"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
+
+func TestServiceProjectsNamedGridAndExactActivityTimeline(t *testing.T) {
+	ctx := context.Background()
+	service := New(openHistory(t, true))
+	workflows, err := service.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join([]string{workflows[0].ID, workflows[1].ID, workflows[2].ID}, ","); got != "wf-active,wf-new,wf-old" {
+		t.Fatalf("created order = %s", got)
+	}
+	if workflows[0].Name != "Active delivery" || workflows[0].NameDerived {
+		t.Fatalf("persisted name = %q derived=%v", workflows[0].Name, workflows[0].NameDerived)
+	}
+	if workflows[1].Name != "new goal" || !workflows[1].NameDerived {
+		t.Fatalf("fallback name = %q derived=%v", workflows[1].Name, workflows[1].NameDerived)
+	}
+
+	detail, err := service.Detail(ctx, "wf-new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Workflow.Name != "new goal" || !detail.Workflow.NameDerived {
+		t.Fatalf("detail name = %q derived=%v", detail.Workflow.Name, detail.Workflow.NameDerived)
+	}
+	for i := 1; i < len(detail.Timeline); i++ {
+		if detail.Timeline[i-1].At > detail.Timeline[i].At {
+			t.Fatalf("timeline not chronological: %#v", detail.Timeline)
+		}
+	}
+	if sameTime := timelineEntry(detail.Timeline, "exploration"); sameTime.RecordID != "artifact:2" || !sameTime.Legacy {
+		t.Fatalf("same-time legacy record was suppressed: %#v", sameTime)
+	}
+	for _, want := range []struct {
+		action, actor, kind, subject string
+	}{
+		{"workflow_created", "daimon", "workflow", "wf-new"},
+		{"plan_submitted", "planner", "plan", "wf-new"},
+		{"unit_review_recorded", "reviewer", "review", "wu-new@3"},
+	} {
+		entry := timelineEntry(detail.Timeline, want.action)
+		if entry.Actor != want.actor || entry.SubjectKind != want.kind || entry.SubjectID != want.subject || entry.Legacy {
+			t.Errorf("timeline %s = %#v", want.action, entry)
+		}
+		resolved, err := service.ResolveActivity(ctx, entry)
+		if err != nil || resolved.Record.Kind != want.kind {
+			t.Errorf("ResolveActivity(%s) = %#v, %v", want.action, resolved, err)
+		}
+	}
+	workflowResult, _ := service.ResolveActivity(ctx, timelineEntry(detail.Timeline, "workflow_created"))
+	planResult, _ := service.ResolveActivity(ctx, timelineEntry(detail.Timeline, "plan_submitted"))
+	if workflowResult.Record.ID == planResult.Record.ID {
+		t.Fatalf("subject-kind collision resolved to same record: %q", workflowResult.Record.ID)
+	}
+	seenKinds := map[string]bool{}
+	for _, entry := range detail.Timeline {
+		resolved, err := service.ResolveActivity(ctx, entry)
+		if err != nil {
+			t.Fatalf("ResolveActivity(%#v): %v", entry, err)
+		}
+		seenKinds[resolved.Record.Kind] = true
+	}
+	for _, kind := range []string{"workflow", "event", "exploration", "plan", "work_unit", "evidence", "review"} {
+		if !seenKinds[kind] {
+			t.Errorf("unresolved durable kind %q", kind)
+		}
+	}
+}
+
+func TestServiceReadsLegacySchemaHonestlyWithoutMigration(t *testing.T) {
+	ctx := context.Background()
+	root := legacyHistoryRoot(t)
+	before := schemaSnapshot(t, root)
+	opened, err := store.OpenReadOnly(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = opened.Store.Close() })
+	service := New(opened.Store)
+	workflows, err := service.List(ctx)
+	if err != nil || len(workflows) != 1 || workflows[0].Name != "Legacy goal" || !workflows[0].NameDerived {
+		t.Fatalf("legacy List() = %#v, %v", workflows, err)
+	}
+	detail, err := service.Detail(ctx, "wf-legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Timeline) != 2 {
+		t.Fatalf("legacy timeline = %#v", detail.Timeline)
+	}
+	for _, entry := range detail.Timeline {
+		if !entry.Legacy || entry.Actor == "" || entry.At == "" {
+			t.Fatalf("dishonest legacy entry = %#v", entry)
+		}
+	}
+	if got := schemaSnapshot(t, root); got != before {
+		t.Fatalf("read-only history changed schema\nbefore: %s\nafter:  %s", before, got)
+	}
+}
 
 func TestServiceProjectsDeterministicProjectHistory(t *testing.T) {
 	ctx := context.Background()
@@ -116,14 +218,22 @@ func openHistory(t *testing.T, seeded bool) *store.Store {
 	statements := []string{
 		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-old',4,'completed','shared-needle old goal','2024-01-01T00:00:00Z','2024-01-02T00:00:00Z')`,
 		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-new',8,'abandoned','new goal','2025-01-01T00:00:00Z','2025-01-09T00:00:00Z')`,
-		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-active',2,'planning','active goal','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')`,
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-active',2,'planning','Active delivery','active goal','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')`,
 		`INSERT INTO events VALUES('wf-new','planning','abandoned','daimon','event-reason',8,'2025-01-03T00:00:00Z')`,
 		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-new','exploration','literal % _ "quoted" café ','explorer',2,'2025-01-04T00:00:00Z')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-new','exploration','same-time legacy','explorer',2,'2025-01-04T00:00:00Z')`,
 		`INSERT INTO plans VALUES('wf-new','plan title','internal/history',1,'plan-text')`,
 		`INSERT INTO work_units VALUES('wu-new','wf-new','unit-text','internal/history','["history"]','["wu-dependency"]',12,5,'reviewing','{"justification":"approved"}',1,3)`,
 		`INSERT INTO evidence VALUES('wf-new','wu-new',3,'implementer','red cmd','exit 1 red-text','green cmd','exit 0','clean','go test','exit 0','internal/history','2025-01-06T00:00:00Z')`,
 		`INSERT INTO reviews VALUES('wf-new','wu-new',3,'reviewer','approved','review-text shared-needle','', '', '2025-01-08T00:00:00Z')`,
 		`INSERT INTO handles VALUES('claim','wf-new','wu-new','active','raw-handle-secret','implementer','2025-01-01T00:00:00Z','2025-01-02T00:00:00Z',1)`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new',NULL,'workflow_created','daimon','2025-01-01T00:00:00Z','workflow','wf-new')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new',NULL,'workflow_abandoned','daimon','2025-01-03T00:00:00Z','event','wf-new@8')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new',NULL,'exploration_recorded','explorer','2025-01-04T00:00:00Z','artifact','1')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new',NULL,'plan_submitted','planner','2025-01-05T00:00:00Z','plan','wf-new')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new','wu-new','unit_claimed','implementer','2025-01-05T01:00:00Z','work_unit','wu-new')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new','wu-new','unit_tdd_recorded','implementer','2025-01-06T00:00:00Z','evidence','wu-new@3')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new','wu-new','unit_review_recorded','reviewer','2025-01-08T00:00:00Z','review','wu-new@3')`,
 	}
 	if seeded {
 		for _, statement := range statements {
@@ -176,4 +286,69 @@ func recordText(records []Record) string {
 		b.WriteString(record.Content)
 	}
 	return b.String()
+}
+
+func timelineEntry(entries []Activity, action string) Activity {
+	for _, entry := range entries {
+		if entry.Action == action {
+			return entry
+		}
+	}
+	return Activity{}
+}
+
+func legacyHistoryRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pitcrew"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, ".pitcrew", "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE workflows (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, state TEXT NOT NULL, goal TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+		`CREATE TABLE events (workflow_id TEXT NOT NULL, from_state TEXT NOT NULL, to_state TEXT NOT NULL, actor TEXT NOT NULL, reason TEXT NOT NULL, revision_after INTEGER NOT NULL, at TEXT NOT NULL)`,
+		`CREATE TABLE artifacts (id INTEGER PRIMARY KEY AUTOINCREMENT, workflow_id TEXT NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL, actor TEXT NOT NULL, accepted_revision INTEGER NOT NULL, recorded_at TEXT NOT NULL)`,
+		`CREATE TABLE plans (workflow_id TEXT PRIMARY KEY, summary TEXT NOT NULL, scope TEXT NOT NULL, max_parallel_units INTEGER NOT NULL, body TEXT NOT NULL)`,
+		`CREATE TABLE work_units (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, description TEXT NOT NULL, scope TEXT NOT NULL, areas TEXT NOT NULL, depends_on TEXT NOT NULL, estimated_changed_lines INTEGER NOT NULL, estimated_review_minutes INTEGER NOT NULL, state TEXT NOT NULL, admission_exception TEXT, admission_exception_approved INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 1)`,
+		`CREATE TABLE evidence (workflow_id TEXT NOT NULL, unit_id TEXT NOT NULL, revision INTEGER NOT NULL, actor TEXT NOT NULL, red_command TEXT NOT NULL, red_outcome TEXT NOT NULL, green_command TEXT NOT NULL, green_outcome TEXT NOT NULL, refactor_summary TEXT NOT NULL, validation_command TEXT NOT NULL, validation_outcome TEXT NOT NULL, changed_paths TEXT NOT NULL, recorded_at TEXT NOT NULL)`,
+		`CREATE TABLE reviews (workflow_id TEXT NOT NULL, unit_id TEXT NOT NULL, revision INTEGER NOT NULL, actor TEXT NOT NULL, verdict TEXT NOT NULL, summary TEXT NOT NULL, findings TEXT NOT NULL, plan_impact TEXT NOT NULL, recorded_at TEXT NOT NULL)`,
+		`INSERT INTO workflows VALUES('wf-legacy',3,'planning','Legacy goal','2023-01-01T00:00:00Z','2023-01-03T00:00:00Z')`,
+		`INSERT INTO events VALUES('wf-legacy','draft','exploring','daimon','',2,'2023-01-02T00:00:00Z')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-legacy','exploration','legacy evidence','pc2-explorer',2,'2023-01-02T01:00:00Z')`,
+		`INSERT INTO plans VALUES('wf-legacy','untimed plan','scope',1,'{}')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func schemaSnapshot(t *testing.T, root string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(root, ".pitcrew", "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT type || ':' || name || ':' || sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var values []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		values = append(values, value)
+	}
+	return strings.Join(values, "\n")
 }
