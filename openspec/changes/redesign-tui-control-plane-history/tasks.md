@@ -37,9 +37,9 @@ First create the sole aggregate PR `feat/tui-history-redesign` → `main` (`48a1
 
 ## Phase 3: Typed History
 
-- [ ] 3.1 **RED:** Prove grid/timeline order, schema probing, honest legacy rows, complete records, and exact resolution despite collisions.
-- [ ] 3.2 **GREEN:** Add name metadata, chronological typed timeline, actor/time-only legacy rows, and migration-free v1/v2 reads to `internal/history/service.go`.
-- [ ] 3.3 **REFACTOR:** Consolidate scanners; run focused tests and dual-fixture read-only harness.
+- [x] 3.1 **RED:** Prove grid/timeline order, schema probing, honest legacy rows, complete records, and exact resolution despite collisions.
+- [x] 3.2 **GREEN:** Add name metadata, chronological typed timeline, actor/time-only legacy rows, and migration-free v1/v2 reads to `internal/history/service.go`.
+- [x] 3.3 **REFACTOR:** Consolidate scanners; run focused tests and dual-fixture read-only harness.
 
 ## Phase 4: TUI and Documentation
 
