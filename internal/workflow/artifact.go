@@ -81,9 +81,13 @@ func (s *Service) Artifacts(ctx context.Context, workflowID string) ([]Artifact,
 
 func workflowInTx(ctx context.Context, tx *sql.Tx, id string) (Workflow, error) {
 	var current Workflow
-	err := tx.QueryRowContext(ctx, `SELECT id,revision,state,goal,created_at,updated_at FROM workflows WHERE id=?`, id).Scan(&current.ID, &current.Revision, &current.State, &current.Goal, &current.CreatedAt, &current.UpdatedAt)
+	var name sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT id,revision,state,name,goal,created_at,updated_at FROM workflows WHERE id=?`, id).Scan(&current.ID, &current.Revision, &current.State, &name, &current.Goal, &current.CreatedAt, &current.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return Workflow{}, ErrNotFound
+	}
+	if err == nil {
+		current.Name, current.NameDerived = DisplayName(name, current.Goal)
 	}
 	return current, err
 }

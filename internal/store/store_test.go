@@ -124,7 +124,7 @@ func TestOpenReadOnlyPreservesLogicalStateAndRejectsMutation(t *testing.T) {
 			t.Fatalf("read-only store accepted %q", statement)
 		}
 	}
-	if err := readOnly.ApplyMigrations(ctx, []Migration{{Version: 2, Name: "forbidden", SQL: `CREATE TABLE migrated (id TEXT)`}}); err == nil {
+	if err := readOnly.ApplyMigrations(ctx, []Migration{{Version: 3, Name: "forbidden", SQL: `CREATE TABLE migrated (id TEXT)`}}); err == nil {
 		t.Fatal("read-only store accepted a migration")
 	}
 	if err := readOnly.Close(); err != nil {
@@ -282,7 +282,7 @@ func TestMigrationsAreOrderedAndRejectDestructiveSQL(t *testing.T) {
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='late'`).Scan(&lateTables); err != nil || lateTables != 0 {
 		t.Fatalf("out-of-order batch changed schema: count=%d, err=%v", lateTables, err)
 	}
-	for _, sql := range []string{`DROP TABLE workflows`, `UPDATE workflows SET goal = ''`, `DELETE FROM workflows`} {
+	for _, sql := range []string{`DROP TABLE workflows`, `UPDATE workflows SET goal = ''`, `DELETE FROM workflows`, `ALTER TABLE workflows ADD COLUMN unsafe TEXT`, `ALTER TABLE workflows ADD COLUMN name TEXT NOT NULL`} {
 		if err := s.ApplyMigrations(ctx, []Migration{{Version: 2, Name: "destructive", SQL: sql}}); err == nil {
 			t.Fatalf("destructive migration %q was accepted", sql)
 		}
@@ -293,6 +293,58 @@ func TestMigrationsAreOrderedAndRejectDestructiveSQL(t *testing.T) {
 	var applied int
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&applied); err != nil || applied != 3 {
 		t.Fatalf("applied migrations = %d, %v", applied, err)
+	}
+}
+
+func TestMigration2PreservesV1RowsAndAddsNameAndActivities(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dir := filepath.Join(root, ".pitcrew")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := &Store{db: db}
+	if err := legacy.ApplyMigrations(ctx, schemaMigrations[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-legacy',3,'designing','legacy goal','created','updated')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var id, goal string
+	var revision int
+	var name sql.NullString
+	if err := migrated.db.QueryRowContext(ctx, `SELECT id,revision,goal,name FROM workflows WHERE id='wf-legacy'`).Scan(&id, &revision, &goal, &name); err != nil {
+		t.Fatal(err)
+	}
+	if id != "wf-legacy" || revision != 3 || goal != "legacy goal" || name.Valid {
+		t.Fatalf("legacy row changed: id=%q revision=%d goal=%q name=%#v", id, revision, goal, name)
+	}
+	for _, table := range []string{"activities"} {
+		var count int
+		if err := migrated.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("table %s count = %d, %v", table, count, err)
+		}
+	}
+	var activities int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT count(*) FROM activities`).Scan(&activities); err != nil || activities != 0 {
+		t.Fatalf("historical activities = %d, %v; want none fabricated", activities, err)
+	}
+	var migrations int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != 2 {
+		t.Fatalf("migration count = %d, %v; want 2", migrations, err)
 	}
 }
 

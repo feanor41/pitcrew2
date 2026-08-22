@@ -19,6 +19,7 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/plan"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 	"github.com/fmazzalomo/pitcrew/internal/tui"
+	"github.com/fmazzalomo/pitcrew/internal/version"
 	"github.com/fmazzalomo/pitcrew/internal/workflow"
 )
 
@@ -34,7 +35,6 @@ type Dependencies struct {
 	Stdout      io.Writer
 	Stderr      io.Writer
 	ProjectRoot string
-	Version     string
 	Now         func() time.Time
 	Entropy     io.Reader
 	TUIRunner   func(string, io.Reader, io.Writer) error
@@ -62,7 +62,7 @@ func Run(args []string, deps Dependencies) int {
 		return int(envelope.OK)
 	}
 	if equalArgs(args, "--version") {
-		fmt.Fprintf(deps.Stdout, "pitcrew %s\n", deps.Version)
+		fmt.Fprintf(deps.Stdout, "pitcrew %s\n", version.Current)
 		return int(envelope.OK)
 	}
 	switch args[0] {
@@ -189,12 +189,16 @@ func runWorkflow(args []string, deps Dependencies) int {
 }
 
 func runWorkflowNew(args []string, deps Dependencies) int {
-	values, err := parseFlags(args, flagRules{required: []string{"--goal", "--actor"}})
+	values, err := parseFlags(args, flagRules{required: []string{"--name", "--goal", "--actor"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	name, err := workflow.NormalizeName(values.one("--name"))
 	if err != nil {
 		return fail(deps, err, err.Error())
 	}
 	return withStore(deps, func(s *store.Store) error {
-		created, err := workflow.New(s, deps.Now).Create(context.Background(), values.one("--goal"), values.one("--actor"))
+		created, err := workflow.New(s, deps.Now).Create(context.Background(), name, values.one("--goal"), values.one("--actor"))
 		if err != nil {
 			return err
 		}
@@ -506,7 +510,7 @@ func classify(err error) envelope.ExitCode {
 		return envelope.CAS
 	case errors.Is(err, handles.ErrInvalid), errors.Is(err, handles.ErrExpired), errors.Is(err, handles.ErrUnsafePath), errors.Is(err, handles.ErrUnsafePermissions), errors.Is(err, evidence.ErrInvalidHandle):
 		return envelope.Handle
-	case errors.Is(err, ErrState), errors.Is(err, sql.ErrNoRows), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
+	case errors.Is(err, ErrState), errors.Is(err, sql.ErrNoRows), errors.Is(err, workflow.ErrInvalidName), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
 		return envelope.State
 	default:
 		return envelope.Internal

@@ -25,9 +25,9 @@ First create the sole aggregate PR `feat/tui-history-redesign` → `main` (`48a1
 
 ## Phase 1: Version, Names, and Migration
 
-- [ ] 1.1 **RED:** Validate canonical `0.2.0` with a dependency-free SemVer 2.0.0 regex and identical CLI/model values; prove v1→v2 preservation, allowed name ALTER, and valid/invalid `--name` behavior.
-- [ ] 1.2 **GREEN:** Add `internal/version.Current`, remove `Dependencies.Version`, `cmd/pitcrew`'s ad-hoc value, and version ldflags; add migration 2, ≤80-rune names, marked fallback, and CLI wiring.
-- [ ] 1.3 **REFACTOR:** Centralize validation; run focused/runtime tests and plain `go build` rollback compatibility.
+- [x] 1.1 **RED:** Validate canonical `0.2.0` with a dependency-free SemVer 2.0.0 regex and identical CLI/model values; prove v1→v2 preservation, allowed name ALTER, and valid/invalid `--name` behavior.
+- [x] 1.2 **GREEN:** Add `internal/version.Current`, remove `Dependencies.Version`, `cmd/pitcrew`'s ad-hoc value, and version ldflags; add migration 2, ≤80-rune names, marked fallback, and CLI wiring.
+- [x] 1.3 **REFACTOR:** Centralize validation; run focused/runtime tests and plain `go build` rollback compatibility.
 
 ## Phase 2: Transactional Activities
 

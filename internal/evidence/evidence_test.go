@@ -165,7 +165,7 @@ func evidenceService(t *testing.T) (*Service, DB, string, string) {
 	t.Cleanup(func() { _ = s.Close() })
 	now := time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)
 	wfSvc := workflow.New(s, func() time.Time { return now })
-	wf, err := wfSvc.Create(context.Background(), "goal", "master")
+	wf, err := wfSvc.Create(context.Background(), "Work", "goal", "master")
 	if err != nil {
 		t.Fatal(err)
 	}
