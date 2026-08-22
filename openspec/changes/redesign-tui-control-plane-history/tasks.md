@@ -43,6 +43,6 @@ First create the sole aggregate PR `feat/tui-history-redesign` → `main` (`48a1
 
 ## Phase 4: TUI and Documentation
 
-- [ ] 4.1 **RED:** Add model/view/goldens for `PitCrew2` / `Control Plane` with canonical version always visible in accent color, including minimum layout; cover grid, drill-down, Arrow/Vim, focus, resize, and immutable snapshots.
-- [ ] 4.2 **GREEN:** Render `Model.Version()` in responsive headers and implement grid/detail/result screens in `internal/tui/{model,view,styles}.go`; update docs/agent contracts without dependencies or mutation.
-- [ ] 4.3 **REFACTOR:** Run focused tests, `go test ./...`, `go vet ./...`, `go build ./...`, and PTY harness; exclude deterministic goldens only from authored-line counts.
+- [x] 4.1 **RED:** Add model/view/goldens for `PitCrew2` / `Control Plane` with canonical version always visible in accent color, including minimum layout; cover grid, drill-down, Arrow/Vim, focus, resize, and immutable snapshots.
+- [x] 4.2 **GREEN:** Render `Model.Version()` in responsive headers and implement grid/detail/result screens in `internal/tui/{model,view,styles}.go`; update docs/agent contracts without dependencies or mutation.
+- [x] 4.3 **REFACTOR:** Run focused tests, `go test ./...`, `go vet ./...`, `go build ./...`, and PTY harness; exclude deterministic goldens only from authored-line counts.
