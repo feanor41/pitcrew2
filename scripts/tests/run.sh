@@ -12,12 +12,14 @@ assert_file() { [ -f "$1" ] || fail "missing file $1"; }
 assert_absent() { [ ! -e "$1" ] && [ ! -L "$1" ] || fail "unexpected path $1"; }
 snapshot() { find "$1" -type f -exec cksum {} \; | sort > "$2"; }
 assert_no_temps() { find "$1" -name '.pitcrew-install.*' -o -name '.*.md.new.*' | grep . >/dev/null && fail "installer temporary remains in $1" || :; }
-roles='daimon explorer specifier designer task-planner implementer reviewer archivist'
+roles='daimon pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-archivist'
+legacy_roles='explorer specifier designer task-planner implementer reviewer archivist'
 assert_role_set() {
   for role in $roles; do assert_file "$1/$role.md"; done
   assert_file "$1/agent-contract.md"
   [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 9 ] || fail "unexpected prompt set in $1"
   assert_absent "$1/master.md"
+  for role in $legacy_roles; do assert_absent "$1/$role.md"; done
 }
 
 sh -n "$INSTALLER" || fail "installer is not POSIX-shell parseable"
@@ -50,6 +52,10 @@ done
 for contract in 'sole bridge between the user and sub-agents' 'Adapt expression to the user' truthful incisive goal-directed outcome-first 'resistant to cheerleading' 'not a Unix daemon' 'authorization identity' 'internal orchestrator'; do
   grep -F "$contract" "$target/daimon.md" >/dev/null || fail "Daimon contract omitted $contract"
 done
+for route in 'exploration: pc2-explorer' 'specification: pc2-specifier' 'design: pc2-designer' 'task planning: pc2-task-planner' 'implementation: pc2-implementer' 'review: pc2-reviewer' 'archival: pc2-archivist' 'Never delegate a workflow role to General or general'; do
+  grep -F "$route" "$target/daimon.md" >/dev/null || fail "Daimon routing omitted $route"
+  grep -F "$route" "$target/agent-contract.md" >/dev/null || fail "agent contract routing omitted $route"
+done
 assert_file "$target/agent-contract.md"
 for prohibited in '--claim-token' '--emit-plain-token' '--print-claim-handle-secret-once' 'same identity' 'CAS'; do
   grep -F -- "$prohibited" "$target/agent-contract.md" >/dev/null || fail "contract omitted $prohibited"
@@ -60,11 +66,17 @@ CODEX_HOME=$codex sh "$INSTALLER"
 snapshot "$target" "$TMP_ROOT/after.cksum"
 cmp "$TMP_ROOT/before.cksum" "$TMP_ROOT/after.cksum" || fail "reinstall changed bytes"
 
-printf 'custom explorer\n' > "$target/explorer.md"
-CODEX_HOME=$codex sh "$INSTALLER"
-grep -F 'custom explorer' "$target/explorer.md" >/dev/null && fail "ordinary fragment was not refreshed"
+printf 'custom explorer\n' > "$target/pc2-explorer.md"
+snapshot "$target" "$TMP_ROOT/custom-role.before"
+if CODEX_HOME=$codex sh "$INSTALLER" >"$TMP_ROOT/custom-role.out" 2>"$TMP_ROOT/custom-role.err"; then fail 'custom role accepted without overwrite'; fi
+snapshot "$target" "$TMP_ROOT/custom-role.after"
+cmp "$TMP_ROOT/custom-role.before" "$TMP_ROOT/custom-role.after" || fail 'custom role refusal changed files'
+grep -F 'custom explorer' "$target/pc2-explorer.md" >/dev/null || fail 'custom role was overwritten'
+CODEX_HOME=$codex sh "$INSTALLER" --overwrite >/dev/null
+grep -F 'custom explorer' "$target/pc2-explorer.md" >/dev/null && fail 'overwrite did not refresh custom role'
 
 printf 'custom master\n' > "$target/master.md"
+for role in $legacy_roles; do printf 'legacy %s\n' "$role" > "$target/$role.md"; done
 snapshot "$target" "$TMP_ROOT/custom.cksum"
 if CODEX_HOME=$codex sh "$INSTALLER" >"$TMP_ROOT/refuse.out" 2>"$TMP_ROOT/refuse.err"; then
   fail "legacy master accepted without --overwrite"
@@ -76,6 +88,7 @@ grep -F -- '--overwrite' "$TMP_ROOT/refuse.err" >/dev/null || fail 'legacy refus
 CODEX_HOME=$codex sh "$INSTALLER" --overwrite >"$TMP_ROOT/migrate.out" 2>"$TMP_ROOT/migrate.err"
 grep -F 'preserve desired custom text' "$TMP_ROOT/migrate.err" >/dev/null || fail 'overwrite warning omitted customization risk'
 assert_absent "$target/master.md"
+for role in $legacy_roles; do assert_absent "$target/$role.md"; done
 assert_file "$target/daimon.md"
 
 differ=$TMP_ROOT/differing-daimon
@@ -92,6 +105,7 @@ for case_name in fail-remove signal-remove fail-writes signal-writes; do
   printf 'previous master\n' > "$rollback/prompts/master.md"
   printf 'previous daimon\n' > "$rollback/prompts/daimon.md"
   printf 'previous explorer\n' > "$rollback/prompts/explorer.md"
+  printf 'previous pc2 explorer\n' > "$rollback/prompts/pc2-explorer.md"
   snapshot "$rollback/prompts" "$TMP_ROOT/$case_name.before"
   case $case_name in
     fail-remove) injection=PITCREW_TEST_FAIL_AFTER_MASTER_REMOVAL=1 ;;
@@ -104,6 +118,15 @@ for case_name in fail-remove signal-remove fail-writes signal-writes; do
   cmp "$TMP_ROOT/$case_name.before" "$TMP_ROOT/$case_name.after" || fail "$case_name did not restore all files"
   assert_no_temps "$rollback"
 done
+
+legacy_rollback=$TMP_ROOT/legacy-removal-rollback
+mkdir -p "$legacy_rollback/prompts"
+for role in $legacy_roles; do printf 'legacy %s\n' "$role" > "$legacy_rollback/prompts/$role.md"; done
+snapshot "$legacy_rollback/prompts" "$TMP_ROOT/legacy-removal.before"
+if CODEX_HOME=$legacy_rollback PITCREW_TEST_FAIL_AFTER_LEGACY_REMOVALS=1 sh "$INSTALLER" --overwrite >/dev/null 2>&1; then fail 'legacy removal fault succeeded'; fi
+snapshot "$legacy_rollback/prompts" "$TMP_ROOT/legacy-removal.after"
+cmp "$TMP_ROOT/legacy-removal.before" "$TMP_ROOT/legacy-removal.after" || fail 'legacy removal fault did not restore all files'
+assert_no_temps "$legacy_rollback"
 
 order_home=$TMP_ROOT/rollback-order
 order_bin=$TMP_ROOT/rollback-order-bin
@@ -120,7 +143,7 @@ exec /bin/cp "$@"
 EOF
 chmod 700 "$order_bin/cp"
 if PATH="$order_bin:$PATH" ROLLBACK_ORDER_FILE="$TMP_ROOT/rollback.order" CODEX_HOME="$order_home" PITCREW_TEST_FAIL_AFTER_WRITES=2 sh "$INSTALLER" --overwrite >"$TMP_ROOT/order.out" 2>"$TMP_ROOT/order.err"; then fail 'rollback-order injection succeeded'; fi
-printf '%s\n' explorer.md daimon.md master.md > "$TMP_ROOT/rollback.expected"
+printf '%s\n' daimon.md explorer.md master.md > "$TMP_ROOT/rollback.expected"
 cmp "$TMP_ROOT/rollback.expected" "$TMP_ROOT/rollback.order" || fail 'rollback did not compensate in reverse mutation order'
 
 empty=$TMP_ROOT/new-empty-target

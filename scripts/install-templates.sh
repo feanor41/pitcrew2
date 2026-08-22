@@ -94,14 +94,14 @@ write_role() {
   } > "$stage/$name.md"
 }
 
-write_role daimon Daimon "Daimon is PitCrew's sole bridge between the user and sub-agents. Adapt expression to the user while remaining truthful, incisive, goal-directed, outcome-first, and resistant to cheerleading or people-pleasing. Coordinate the harness so process serves the user's desired result. Daimon is not a Unix daemon, authorization identity, or internal orchestrator." 'new, show, approve-plan, abandon, and optional complete.'
-write_role explorer Explorer 'Investigate the goal, persist exploration content directly, and report only completion status.' 'explore.'
-write_role specifier Specifier 'Write executable specification content and persist it directly.' 'spec.'
-write_role designer Designer 'Write the technical design and persist it directly.' 'design.'
-write_role task-planner TaskPlanner 'Produce the validated JSON plan and persist it directly.' 'plan.'
-write_role implementer Implementer 'List ready units, claim one with an opaque handle, record TDD evidence, and complete only after approval. Return only the handle path.' 'list-ready-units, claim-unit, unit-tdd, and unit-complete. Never unit-review.'
-write_role reviewer Reviewer 'Review one unit independently using the handed-off opaque handle path.' 'unit-review only. Never implementation commands.'
-write_role archivist Archivist 'Complete a workflow only after every unit is done and the aggregate is ready.' 'complete only.'
+write_role daimon Daimon "Daimon is PitCrew's sole bridge between the user and sub-agents. Adapt expression to the user while remaining truthful, incisive, goal-directed, outcome-first, and resistant to cheerleading or people-pleasing. Coordinate the harness so process serves the user's desired result. Route workflow phases exactly: exploration: pc2-explorer; specification: pc2-specifier; design: pc2-designer; task planning: pc2-task-planner; implementation: pc2-implementer; review: pc2-reviewer; archival: pc2-archivist. Never delegate a workflow role to General or general. Daimon is not a Unix daemon, authorization identity, or internal orchestrator." 'new, show, approve-plan, abandon, and optional complete.'
+write_role pc2-explorer Explorer 'Investigate the goal, persist exploration content directly, and report only completion status.' 'explore.'
+write_role pc2-specifier Specifier 'Write executable specification content and persist it directly.' 'spec.'
+write_role pc2-designer Designer 'Write the technical design and persist it directly.' 'design.'
+write_role pc2-task-planner TaskPlanner 'Produce the validated JSON plan and persist it directly.' 'plan.'
+write_role pc2-implementer Implementer 'List ready units, claim one with an opaque handle, record TDD evidence, and complete only after approval. Return only the handle path.' 'list-ready-units, claim-unit, unit-tdd, and unit-complete. Never unit-review.'
+write_role pc2-reviewer Reviewer 'Review one unit independently using the handed-off opaque handle path.' 'unit-review only. Never implementation commands.'
+write_role pc2-archivist Archivist 'Complete a workflow only after every unit is done and the aggregate is ready.' 'complete only.'
 
 cat > "$stage/agent-contract.md" <<'CONTRACT'
 # PitCrew agent contract
@@ -114,10 +114,13 @@ cat > "$stage/agent-contract.md" <<'CONTRACT'
 - Never retry blindly after a CAS error. Run `workflow show`, inspect the new revision, and decide explicitly.
 - Hand off only an opaque handle path. Never read or relay handle contents.
 - Call the control plane directly and return only a one-line revision-bearing completion status to Daimon.
+- Route workflow phases exactly: exploration: pc2-explorer; specification: pc2-specifier; design: pc2-designer; task planning: pc2-task-planner; implementation: pc2-implementer; review: pc2-reviewer; archival: pc2-archivist.
+- Never delegate a workflow role to General or general.
 CONTRACT
 
-names='daimon explorer specifier designer task-planner implementer reviewer archivist agent-contract'
-for name in master $names; do
+names='daimon pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-archivist agent-contract'
+obsolete='master explorer specifier designer task-planner implementer reviewer archivist'
+for name in $obsolete $names; do
   destination=$target/$name.md
   if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
     printf 'pitcrew installer: %s is not a regular file\n' "$destination" >&2
@@ -126,27 +129,31 @@ for name in master $names; do
 done
 
 conflict=0
-if [ -f "$target/master.md" ]; then
-  conflict=1
-  if [ "$overwrite" -ne 1 ]; then
-    printf 'pitcrew installer: refusing legacy %s without --overwrite\n' "$target/master.md" >&2
-    exit 1
+for name in $obsolete; do
+  if [ -f "$target/$name.md" ]; then
+    conflict=1
+    if [ "$overwrite" -ne 1 ]; then
+      printf 'pitcrew installer: refusing legacy %s without --overwrite\n' "$target/$name.md" >&2
+      exit 1
+    fi
   fi
-fi
-if [ -f "$target/daimon.md" ] && ! cmp -s "$stage/daimon.md" "$target/daimon.md"; then
-  conflict=1
-  if [ "$overwrite" -ne 1 ]; then
-    printf 'pitcrew installer: refusing to overwrite %s without --overwrite\n' "$target/daimon.md" >&2
-    exit 1
+done
+for name in $names; do
+  if [ -f "$target/$name.md" ] && ! cmp -s "$stage/$name.md" "$target/$name.md"; then
+    conflict=1
+    if [ "$overwrite" -ne 1 ]; then
+      printf 'pitcrew installer: refusing to overwrite %s without --overwrite\n' "$target/$name.md" >&2
+      exit 1
+    fi
   fi
-fi
+done
 if [ "$conflict" -eq 1 ]; then
-  printf '%s\n' 'pitcrew installer: WARNING: replacing coordinator prompt; preserve desired custom text before continuing.' >&2
+  printf '%s\n' 'pitcrew installer: WARNING: replacing prompts or legacy names; preserve desired custom text before continuing.' >&2
 fi
 
-if [ -f "$target/master.md" ]; then
-  cp -p "$target/master.md" "$stage/backup.master.md"
-fi
+for name in $obsolete; do
+  if [ -f "$target/$name.md" ]; then cp -p "$target/$name.md" "$stage/backup.$name.md"; fi
+done
 
 for name in $names; do
   source=$stage/$name.md
@@ -161,12 +168,15 @@ for name in $names; do
   printf '%s %s.md\n' "$status" "$name" >> "$changes"
 done
 
-if [ -f "$target/master.md" ]; then
-  printf 'existing master.md\n' >> "$manifest"
-  rm -f "$target/master.md"
-  if [ -n "${PITCREW_TEST_FAIL_AFTER_MASTER_REMOVAL:-}" ]; then false; fi
-  if [ -n "${PITCREW_TEST_SIGNAL_AFTER_MASTER_REMOVAL:-}" ]; then kill -TERM "$$"; fi
-fi
+for name in $obsolete; do
+  if [ -f "$target/$name.md" ]; then
+    printf 'existing %s.md\n' "$name" >> "$manifest"
+    rm -f "$target/$name.md"
+    if [ "$name" = master ] && [ -n "${PITCREW_TEST_FAIL_AFTER_MASTER_REMOVAL:-}" ]; then false; fi
+    if [ "$name" = master ] && [ -n "${PITCREW_TEST_SIGNAL_AFTER_MASTER_REMOVAL:-}" ]; then kill -TERM "$$"; fi
+  fi
+done
+if [ -n "${PITCREW_TEST_FAIL_AFTER_LEGACY_REMOVALS:-}" ]; then false; fi
 
 writes=0
 while read -r status filename; do
