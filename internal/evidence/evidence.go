@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fmazzalomo/pitcrew/internal/activity"
 	"github.com/fmazzalomo/pitcrew/internal/ids"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
@@ -179,7 +180,8 @@ func (s *Service) RecordTDDAsTx(ctx context.Context, tx *sql.Tx, wfID, unitID st
 	if state != "pending" {
 		return fmt.Errorf("%w: current state %s; expected pending", ErrInvalidState, state)
 	}
-	at := ids.FormatTime(s.now())
+	now := s.now()
+	at := ids.FormatTime(now)
 	_, err = tx.ExecContext(ctx, `INSERT INTO evidence(workflow_id,unit_id,revision,actor,red_command,red_outcome,green_command,green_outcome,refactor_summary,validation_command,validation_outcome,changed_paths,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, wfID, unitID, revision, actor, r.RedCommand, r.RedOutcome, r.GreenCommand, r.GreenOutcome, r.RefactorSummary, r.ValidationCommand, r.ValidationOutcome, r.ChangedPaths, at)
 	if err != nil {
 		return err
@@ -194,7 +196,7 @@ func (s *Service) RecordTDDAsTx(ctx context.Context, tx *sql.Tx, wfID, unitID st
 		}
 		return store.ErrCASMismatch
 	}
-	return nil
+	return activity.AppendTx(ctx, tx, activity.New(wfID, unitID, activity.UnitTDDRecorded, actor, now, activity.EvidenceSubject(unitID, revision)))
 }
 
 func (s *Service) RecordReview(ctx context.Context, r Review) (ReviewOutcome, error) {
@@ -243,7 +245,8 @@ func (s *Service) RecordReviewTx(ctx context.Context, tx *sql.Tx, r Review) (Rev
 		}
 		return ReviewOutcome{}, ErrInvalidState
 	}
-	at := ids.FormatTime(s.now())
+	now := s.now()
+	at := ids.FormatTime(now)
 	_, err = tx.ExecContext(ctx, `INSERT INTO reviews(workflow_id,unit_id,revision,actor,verdict,summary,findings,plan_impact,recorded_at) VALUES(?,?,?,?,?,?,?,?,?)`, r.WorkflowID, r.UnitID, r.Revision, r.Actor, r.Verdict, r.Summary, r.Findings, r.PlanImpact, at)
 	if err != nil {
 		return ReviewOutcome{}, err
@@ -263,7 +266,7 @@ func (s *Service) RecordReviewTx(ctx context.Context, tx *sql.Tx, r Review) (Rev
 		}
 		outcome.NextRevision++
 	}
-	return outcome, nil
+	return outcome, activity.AppendTx(ctx, tx, activity.New(r.WorkflowID, r.UnitID, activity.UnitReviewRecorded, r.Actor, now, activity.ReviewSubject(r.UnitID, r.Revision)))
 }
 
 func (s *Service) CompleteUnit(ctx context.Context, wfID, unitID string, unitRevision, workflowRevision int64, handleValid bool, actor string) error {
@@ -338,6 +341,7 @@ func (s *Service) completeUnitTx(ctx context.Context, tx *sql.Tx, wfID, unitID, 
 		}
 		return store.ErrCASMismatch
 	}
+	now := s.now()
 	var remaining int
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM work_units WHERE workflow_id=? AND state!='done'`, wfID).Scan(&remaining); err != nil {
 		return err
@@ -354,7 +358,7 @@ func (s *Service) completeUnitTx(ctx context.Context, tx *sql.Tx, wfID, unitID, 
 		if state != "implementing" {
 			return ErrInvalidState
 		}
-		at := ids.FormatTime(s.now())
+		at := ids.FormatTime(now)
 		if _, err = tx.ExecContext(ctx, `UPDATE workflows SET state='ready_to_complete',revision=revision+1,updated_at=? WHERE id=? AND revision=?`, at, wfID, workflowRevision); err != nil {
 			return err
 		}
@@ -363,5 +367,5 @@ func (s *Service) completeUnitTx(ctx context.Context, tx *sql.Tx, wfID, unitID, 
 			return err
 		}
 	}
-	return nil
+	return activity.AppendTx(ctx, tx, activity.New(wfID, unitID, activity.UnitCompleted, actor, now, activity.UnitSubject(unitID)))
 }

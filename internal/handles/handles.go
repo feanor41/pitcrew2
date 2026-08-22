@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fmazzalomo/pitcrew/internal/activity"
 	"github.com/fmazzalomo/pitcrew/internal/ids"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
@@ -164,6 +165,13 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	path := filepath.Join(dir, claimID+".json")
 	generation++
 	if _, err = tx.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation) VALUES(?,?,?,?,?,?,?,?,?)`, claimID, workflowID, unitID, Intent, h.SecretHash, actor, h.IssuedAt, h.ExpiresAt, generation); err != nil {
+		return IssueResult{}, err
+	}
+	action := activity.UnitClaimed
+	if recovery {
+		action = activity.UnitClaimRecovered
+	}
+	if err = activity.AppendTx(ctx, tx, activity.New(workflowID, unitID, action, actor, issued, activity.UnitSubject(unitID))); err != nil {
 		return IssueResult{}, err
 	}
 	if err = writeAtomic(path, h); err != nil {

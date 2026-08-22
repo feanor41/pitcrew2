@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fmazzalomo/pitcrew/internal/activity"
 	"github.com/fmazzalomo/pitcrew/internal/ids"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
@@ -101,7 +102,8 @@ func (s *Service) Create(ctx context.Context, name, goal, actor string) (Workflo
 	if err != nil {
 		return Workflow{}, err
 	}
-	at := ids.FormatTime(s.now())
+	now := s.now()
+	at := ids.FormatTime(now)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Workflow{}, err
@@ -111,6 +113,9 @@ func (s *Service) Create(ctx context.Context, name, goal, actor string) (Workflo
 		return Workflow{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,?,?,?,?,1,?)`, id, "", Draft, actor, "", at); err != nil {
+		return Workflow{}, err
+	}
+	if err = activity.AppendTx(ctx, tx, activity.New(id, "", activity.WorkflowCreated, actor, now, activity.WorkflowSubject(id))); err != nil {
 		return Workflow{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -163,7 +168,8 @@ func (s *Service) transition(ctx context.Context, id string, expected int64, eve
 	if !ok {
 		return Workflow{}, transitionError(current.State, event)
 	}
-	at, revision := ids.FormatTime(s.now()), expected+1
+	now := s.now()
+	at, revision := ids.FormatTime(now), expected+1
 	result, err := tx.ExecContext(ctx, `UPDATE workflows SET state=?,revision=?,updated_at=? WHERE id=? AND revision=?`, next, revision, at, id, expected)
 	if err != nil {
 		return Workflow{}, err
@@ -177,11 +183,29 @@ func (s *Service) transition(ctx context.Context, id string, expected int64, eve
 	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,?,?,?,?,?,?)`, id, current.State, next, actor, reason, revision, at); err != nil {
 		return Workflow{}, err
 	}
+	if action, ok := transitionActivity(event); ok {
+		if err = activity.AppendTx(ctx, tx, activity.New(id, "", action, actor, now, activity.EventSubject(id, revision))); err != nil {
+			return Workflow{}, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return Workflow{}, err
 	}
 	current.State, current.Revision, current.UpdatedAt = next, revision, at
 	return current, nil
+}
+
+func transitionActivity(event EventType) (activity.Action, bool) {
+	switch event {
+	case BeginImplementation:
+		return activity.ImplementationStarted, true
+	case Complete:
+		return activity.WorkflowCompleted, true
+	case "abandon":
+		return activity.WorkflowAbandoned, true
+	default:
+		return "", false
+	}
 }
 
 func NormalizeName(name string) (string, error) {

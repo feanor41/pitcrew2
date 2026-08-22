@@ -70,6 +70,116 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 	if len(document.Data.Artifacts) != 3 || document.Data.Artifacts[0].Kind != "exploration" || document.Data.Artifacts[2].Revision != 4 {
 		t.Fatalf("artifacts=%#v", document.Data.Artifacts)
 	}
+	wantActions := []string{"workflow_created", "exploration_recorded", "specification_recorded", "design_recorded", "plan_submitted", "plan_approved", "implementation_started", "unit_claimed", "unit_tdd_recorded", "unit_review_recorded", "unit_completed", "workflow_completed"}
+	wantSubjects := []string{wfID, "1", "2", "3", wfID, wfID, wfID + "@7", unitID, unitID + "@1", unitID + "@1", unitID, wfID + "@9"}
+	got, subjects := storedActivities(t, root, wfID)
+	if strings.Join(got, ",") != strings.Join(wantActions, ",") || strings.Join(subjects, ",") != strings.Join(wantSubjects, ",") {
+		t.Fatalf("activities=%v want=%v", got, wantActions)
+	}
+}
+
+func TestActivityFailureRollsBackDomainAndHandleMutations(t *testing.T) {
+	root := t.TempDir()
+	wfID, revision := createWorkflow(t, root)
+	installFailingActivityTrigger(t, root)
+	input := writeInput(t, root, "explore.json", `{"content":"facts"}`)
+	if failed := runAt(t, root, "workflow", "explore", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "explorer", "--input-file", input); failed.code != 1 {
+		t.Fatalf("artifact failure=%#v", failed)
+	}
+	s, _ := store.Open(context.Background(), root)
+	defer s.Close()
+	var revisionAfter, artifacts, activities int
+	_ = s.DB().QueryRow(`SELECT revision FROM workflows WHERE id=?`, wfID).Scan(&revisionAfter)
+	_ = s.DB().QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=?`, wfID).Scan(&artifacts)
+	_ = s.DB().QueryRow(`SELECT count(*) FROM activities WHERE workflow_id=?`, wfID).Scan(&activities)
+	if revisionAfter != 1 || artifacts != 0 || activities != 1 {
+		t.Fatalf("failed artifact mutated revision=%d artifacts=%d activities=%d", revisionAfter, artifacts, activities)
+	}
+	_ = s.Close()
+
+	root = t.TempDir()
+	wfID, revision = createWorkflow(t, root)
+	for _, stage := range []string{"explore", "spec", "design"} {
+		input = writeInput(t, root, stage+".json", `{"content":"`+stage+`"}`)
+		revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", stage, "--workflow-id", wfID, "--revision", itoa(revision), "--actor", stage, "--input-file", input)))
+	}
+	installFailingActivityTrigger(t, root)
+	planFile := writeInput(t, root, "plan.json", `{"summary":"one","scope":"internal","max_parallel_units":1,"work_units":[{"id":"wu-000000000000000000000001","description":"unit","scope":"internal/unit","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}]}`)
+	if failed := runAt(t, root, "workflow", "plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "planner", "--input-file", planFile); failed.code != 1 {
+		t.Fatalf("plan failure=%#v", failed)
+	}
+	s, _ = store.Open(context.Background(), root)
+	var plans int
+	_ = s.DB().QueryRow(`SELECT count(*) FROM plans WHERE workflow_id=?`, wfID).Scan(&plans)
+	if plans != 0 {
+		t.Fatalf("failed plan persisted %d rows", plans)
+	}
+	_ = s.Close()
+
+	root = t.TempDir()
+	wfID, unitID, _ := setupImplementingUnit(t, root)
+	installFailingActivityTrigger(t, root)
+	handleDir := filepath.Join(root, "failed-handle")
+	if failed := runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--handle-dir", handleDir); failed.code != 1 {
+		t.Fatalf("claim failure=%#v", failed)
+	}
+	entries, err := os.ReadDir(handleDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed claim left files=%v error=%v", entries, err)
+	}
+
+	root = t.TempDir()
+	wfID, unitID, _ = setupImplementingUnit(t, root)
+	claim := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--handle-dir", filepath.Join(root, "handles")))
+	handlePath := stringField(t, claim, "handle_path")
+	before, _ := os.ReadFile(handlePath)
+	installFailingActivityTrigger(t, root)
+	tdd := writeInput(t, root, "tdd.json", `{"red_command":"red","red_outcome":"exit 1","green_command":"green","green_outcome":"exit 0","refactor_summary":"","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)
+	if failed := runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handlePath, "--input-file", tdd); failed.code != 1 {
+		t.Fatalf("evidence failure=%#v", failed)
+	}
+	after, _ := os.ReadFile(handlePath)
+	state, count := storedUnitEvidence(t, root, wfID, unitID)
+	if !bytes.Equal(before, after) || state != "pending" || count != 0 {
+		t.Fatalf("failed evidence mutated file=%t state=%s evidence=%d", !bytes.Equal(before, after), state, count)
+	}
+}
+
+func storedActivities(t *testing.T, root, wfID string) ([]string, []string) {
+	t.Helper()
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rows, err := s.DB().Query(`SELECT action,subject_id FROM activities WHERE workflow_id=? ORDER BY id`, wfID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var actions []string
+	var subjects []string
+	for rows.Next() {
+		var action, subject string
+		if err = rows.Scan(&action, &subject); err != nil {
+			t.Fatal(err)
+		}
+		actions = append(actions, action)
+		subjects = append(subjects, subject)
+	}
+	return actions, subjects
+}
+
+func installFailingActivityTrigger(t *testing.T, root string) {
+	t.Helper()
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err = s.DB().Exec(`CREATE TRIGGER fail_activity BEFORE INSERT ON activities BEGIN SELECT RAISE(ABORT,'activity failure'); END`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
@@ -82,6 +192,9 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	abandoned := mustOK(t, runAt(t, root, "workflow", "abandon", "--workflow-id", wfID, "--revision", "1", "--actor", "daimon", "--reason", "superseded"))
 	if workflowState(t, abandoned) != "abandoned" {
 		t.Fatal(string(abandoned))
+	}
+	if actions, _ := storedActivities(t, root, wfID); strings.Join(actions, ",") != "workflow_created,workflow_abandoned" {
+		t.Fatalf("abandon activities=%v", actions)
 	}
 
 	root = t.TempDir()
@@ -108,6 +221,9 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	recovered := mustOK(t, runAt(t, root, "workflow", "recover-unit-claim", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--handle-dir", filepath.Join(root, "recovered")))
 	if stringField(t, recovered, "handle_path") == handlePath {
 		t.Fatal("recovery reused handle")
+	}
+	if actions, _ := storedActivities(t, root, wfID); actions[len(actions)-1] != "unit_claim_recovered" {
+		t.Fatalf("recovery activity=%v", actions)
 	}
 
 	debugRoot := t.TempDir()
@@ -144,6 +260,9 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	}
 	if state != "revoked" || strings.Contains(hash, secret) {
 		t.Fatalf("debug persisted state=%s hash=%s", state, hash)
+	}
+	if actions, _ := storedActivities(t, debugRoot, debugWF); actions[len(actions)-1] != "unit_claimed" {
+		t.Fatalf("debug claim activities=%v", actions)
 	}
 }
 

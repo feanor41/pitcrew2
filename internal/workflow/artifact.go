@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fmazzalomo/pitcrew/internal/activity"
 	"github.com/fmazzalomo/pitcrew/internal/ids"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
@@ -38,7 +39,8 @@ func (s *Service) RecordArtifact(ctx context.Context, workflowID string, expecte
 	if !ok {
 		return Workflow{}, transitionError(current.State, event)
 	}
-	at, revision := ids.FormatTime(s.now()), expected+1
+	now := s.now()
+	at, revision := ids.FormatTime(now), expected+1
 	result, err := tx.ExecContext(ctx, `UPDATE workflows SET state=?,revision=?,updated_at=? WHERE id=? AND revision=?`, next, revision, at, workflowID, expected)
 	if err != nil {
 		return Workflow{}, err
@@ -49,10 +51,19 @@ func (s *Service) RecordArtifact(ctx context.Context, workflowID string, expecte
 		}
 		return Workflow{}, store.ErrCASMismatch
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,?,?,?,?,?)`, workflowID, kind, content, actor, revision, at); err != nil {
+	artifactResult, err := tx.ExecContext(ctx, `INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,?,?,?,?,?)`, workflowID, kind, content, actor, revision, at)
+	if err != nil {
+		return Workflow{}, err
+	}
+	artifactID, err := artifactResult.LastInsertId()
+	if err != nil {
 		return Workflow{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,?,?,?,?,?,?)`, workflowID, current.State, next, actor, "", revision, at); err != nil {
+		return Workflow{}, err
+	}
+	action := map[EventType]activity.Action{Explore: activity.ExplorationRecorded, Specify: activity.SpecificationRecorded, Design: activity.DesignRecorded}[event]
+	if err = activity.AppendTx(ctx, tx, activity.New(workflowID, "", action, actor, now, activity.ArtifactSubject(artifactID))); err != nil {
 		return Workflow{}, err
 	}
 	if err = tx.Commit(); err != nil {

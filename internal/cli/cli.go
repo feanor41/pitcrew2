@@ -115,6 +115,9 @@ func (f failedHistory) Search(context.Context, string) ([]history.SearchResult, 
 func (f failedHistory) Resolve(context.Context, history.SearchResult) (history.Resolution, error) {
 	return history.Resolution{}, f.err
 }
+func (f failedHistory) ResolveActivity(context.Context, history.Activity) (history.Resolution, error) {
+	return history.Resolution{}, f.err
+}
 
 func runPrinciples(args []string, deps Dependencies) int {
 	if len(args) == 0 {

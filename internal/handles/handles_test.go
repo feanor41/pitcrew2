@@ -3,6 +3,7 @@ package handles
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -173,6 +174,30 @@ func TestExpiredHandleIsAtomicallyDeletedWithoutUnitMutation(t *testing.T) {
 	}
 	if unitState != "pending" || handleState != "revoked" {
 		t.Fatalf("unit=%s handle=%s", unitState, handleState)
+	}
+}
+
+func TestActivityCommitFailureRestoresPriorHandleBytes(t *testing.T) {
+	m, db, _, wfID, unitID := testManager(t)
+	result, _ := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "handles"))
+	before, _ := os.ReadFile(result.Path)
+	if _, err := db.DB().Exec(`PRAGMA defer_foreign_keys=ON`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := m.UseForMutation(context.Background(), result.Path, wfID, unitID, 1, "implementer", TDD, func(tx *sql.Tx, _ Handle) error {
+		_, insertErr := tx.Exec(`INSERT INTO activities(workflow_id,action,actor,at,subject_kind,subject_id) VALUES('wf-missing','unit_tdd_recorded','implementer','now','evidence','wu-000000000000000000000001@1')`)
+		return insertErr
+	})
+	if err == nil {
+		t.Fatal("deferred commit failure was accepted")
+	}
+	after, readErr := os.ReadFile(result.Path)
+	if readErr != nil || !bytes.Equal(before, after) {
+		t.Fatalf("handle restoration error=%v equal=%t", readErr, bytes.Equal(before, after))
+	}
+	var state string
+	if err = db.DB().QueryRow(`SELECT state FROM handles WHERE claim_id=?`, result.ClaimID).Scan(&state); err != nil || state != "intent" {
+		t.Fatalf("stored handle state=%s error=%v", state, err)
 	}
 }
 

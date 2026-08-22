@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fmazzalomo/pitcrew/internal/activity"
 	"github.com/fmazzalomo/pitcrew/internal/ids"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 	"github.com/fmazzalomo/pitcrew/internal/workflow"
@@ -64,7 +65,7 @@ func (s *Service) Submit(ctx context.Context, workflowID string, expected int64,
 			return workflow.Workflow{}, err
 		}
 	}
-	return commitWorkflowTransition(ctx, tx, current, workflow.Planning, actor, s.now())
+	return commitWorkflowTransition(ctx, tx, current, workflow.Planning, actor, s.now(), activity.PlanSubmitted)
 }
 
 func (s *Service) Approve(ctx context.Context, workflowID string, expected int64, actor string, approved []string) (workflow.Workflow, error) {
@@ -102,7 +103,7 @@ func (s *Service) Approve(ctx context.Context, workflowID string, expected int64
 			return workflow.Workflow{}, fmt.Errorf("admission exception approval target %s is not persisted", unitID)
 		}
 	}
-	return commitWorkflowTransition(ctx, tx, current, workflow.PlanApproved, actor, s.now())
+	return commitWorkflowTransition(ctx, tx, current, workflow.PlanApproved, actor, s.now(), activity.PlanApproved)
 }
 
 func (s *Service) Ready(ctx context.Context, workflowID string) ([]WorkUnit, error) {
@@ -183,7 +184,7 @@ func workflowRow(ctx context.Context, tx *sql.Tx, id string) (workflow.Workflow,
 	}
 	return w, err
 }
-func commitWorkflowTransition(ctx context.Context, tx *sql.Tx, current workflow.Workflow, next workflow.State, actor string, now time.Time) (workflow.Workflow, error) {
+func commitWorkflowTransition(ctx context.Context, tx *sql.Tx, current workflow.Workflow, next workflow.State, actor string, now time.Time, action activity.Action) (workflow.Workflow, error) {
 	at := ids.FormatTime(now)
 	revision := current.Revision + 1
 	result, err := tx.ExecContext(ctx, `UPDATE workflows SET state=?,revision=?,updated_at=? WHERE id=? AND revision=?`, next, revision, at, current.ID, current.Revision)
@@ -198,6 +199,9 @@ func commitWorkflowTransition(ctx context.Context, tx *sql.Tx, current workflow.
 		return workflow.Workflow{}, store.ErrCASMismatch
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,?,?,?,?,?,?)`, current.ID, current.State, next, actor, "", revision, at); err != nil {
+		return workflow.Workflow{}, err
+	}
+	if err = activity.AppendTx(ctx, tx, activity.New(current.ID, "", action, actor, now, activity.PlanSubject(current.ID))); err != nil {
 		return workflow.Workflow{}, err
 	}
 	if err = tx.Commit(); err != nil {

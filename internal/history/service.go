@@ -3,21 +3,25 @@ package history
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/fmazzalomo/pitcrew/internal/store"
+	workflowdomain "github.com/fmazzalomo/pitcrew/internal/workflow"
 )
 
 const ContextRunes = 120
 
 type Workflow struct {
-	ID        string
-	Revision  int64
-	State     string
-	Goal      string
-	CreatedAt string
-	UpdatedAt string
+	ID          string
+	Revision    int64
+	State       string
+	Name        string
+	NameDerived bool
+	Goal        string
+	CreatedAt   string
+	UpdatedAt   string
 }
 
 type Record struct {
@@ -28,12 +32,20 @@ type Record struct {
 	Revision   int64
 	Title      string
 	Content    string
+	Actor      string
 	At         string
 }
 
+type Activity struct {
+	ID                                    string
+	WorkflowID, UnitID, Action, Actor, At string
+	SubjectKind, SubjectID, RecordID      string
+	Legacy                                bool
+}
 type Detail struct {
 	Workflow Workflow
 	Records  []Record
+	Timeline []Activity
 }
 
 type SearchResult struct {
@@ -56,16 +68,20 @@ type Service struct{ db *sql.DB }
 func New(s *store.Store) *Service { return &Service{db: s.DB()} }
 
 func (s *Service) List(ctx context.Context) ([]Workflow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, revision, state, goal, created_at, updated_at
-FROM workflows ORDER BY updated_at DESC, id ASC`)
+	nameExpr, err := s.workflowNameExpr(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT id, revision, state, %s, goal, created_at, updated_at
+FROM workflows ORDER BY created_at DESC, id ASC`, nameExpr))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var workflows []Workflow
 	for rows.Next() {
-		var workflow Workflow
-		if err := rows.Scan(&workflow.ID, &workflow.Revision, &workflow.State, &workflow.Goal, &workflow.CreatedAt, &workflow.UpdatedAt); err != nil {
+		workflow, err := scanWorkflow(rows)
+		if err != nil {
 			return nil, err
 		}
 		workflows = append(workflows, workflow)
@@ -75,9 +91,12 @@ FROM workflows ORDER BY updated_at DESC, id ASC`)
 
 func (s *Service) Detail(ctx context.Context, workflowID string) (Detail, error) {
 	var detail Detail
-	err := s.db.QueryRowContext(ctx, `SELECT id, revision, state, goal, created_at, updated_at
-FROM workflows WHERE id=?`, workflowID).Scan(&detail.Workflow.ID, &detail.Workflow.Revision,
-		&detail.Workflow.State, &detail.Workflow.Goal, &detail.Workflow.CreatedAt, &detail.Workflow.UpdatedAt)
+	nameExpr, err := s.workflowNameExpr(ctx)
+	if err != nil {
+		return Detail{}, err
+	}
+	detail.Workflow, err = scanWorkflow(s.db.QueryRowContext(ctx, fmt.Sprintf(`SELECT id, revision, state, %s, goal, created_at, updated_at
+FROM workflows WHERE id=?`, nameExpr), workflowID))
 	if err != nil {
 		return Detail{}, err
 	}
@@ -88,12 +107,37 @@ FROM workflows WHERE id=?`, workflowID).Scan(&detail.Workflow.ID, &detail.Workfl
 	defer rows.Close()
 	for rows.Next() {
 		record := Record{WorkflowID: workflowID}
-		if err := rows.Scan(&record.ID, &record.Kind, &record.UnitID, &record.Revision, &record.Title, &record.Content, &record.At); err != nil {
+		if err := rows.Scan(&record.ID, &record.Kind, &record.UnitID, &record.Revision, &record.Title, &record.Content, &record.Actor, &record.At); err != nil {
 			return Detail{}, err
 		}
 		detail.Records = append(detail.Records, record)
 	}
-	return detail, rows.Err()
+	if err := rows.Err(); err != nil {
+		return Detail{}, err
+	}
+	detail.Timeline, err = s.timeline(ctx, workflowID, detail.Records)
+	return detail, err
+}
+
+func (s *Service) ResolveActivity(ctx context.Context, entry Activity) (Resolution, error) {
+	detail, err := s.Detail(ctx, entry.WorkflowID)
+	if err != nil {
+		return Resolution{}, err
+	}
+	recordID, ok := subjectRecordID(entry.WorkflowID, entry.SubjectKind, entry.SubjectID)
+	if !ok {
+		return Resolution{}, sql.ErrNoRows
+	}
+	if entry.SubjectKind == "workflow" {
+		w := detail.Workflow
+		return Resolution{Detail: detail, Record: Record{ID: recordID, WorkflowID: w.ID, Kind: "workflow", Title: w.Name, Content: w.Goal, At: w.CreatedAt}}, nil
+	}
+	for _, record := range detail.Records {
+		if record.ID == recordID {
+			return Resolution{Detail: detail, Record: record}, nil
+		}
+	}
+	return Resolution{}, sql.ErrNoRows
 }
 
 func (s *Service) Search(ctx context.Context, query string) ([]SearchResult, error) {
@@ -161,6 +205,138 @@ func (s *Service) Resolve(ctx context.Context, result SearchResult) (Resolution,
 	return Resolution{}, sql.ErrNoRows
 }
 
+func (s *Service) timeline(ctx context.Context, workflowID string, records []Record) ([]Activity, error) {
+	var activityTables int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='activities'`).Scan(&activityTables)
+	if err != nil {
+		return nil, err
+	}
+	hasActivities := activityTables != 0
+	var entries []Activity
+	coveredRecords := map[string]bool{}
+	if hasActivities {
+		rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(unit_id,''),action,actor,at,subject_kind,subject_id
+FROM activities WHERE workflow_id=? ORDER BY at,id`, workflowID)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			entry := Activity{WorkflowID: workflowID}
+			if err := rows.Scan(&id, &entry.UnitID, &entry.Action, &entry.Actor, &entry.At, &entry.SubjectKind, &entry.SubjectID); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			entry.ID = fmt.Sprintf("activity:%d", id)
+			entry.RecordID, _ = subjectRecordID(workflowID, entry.SubjectKind, entry.SubjectID)
+			coveredRecords[entry.RecordID] = true
+			entries = append(entries, entry)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	for _, record := range records {
+		if record.Actor == "" || record.At == "" || coveredRecords[record.ID] {
+			continue
+		}
+		kind, subject, ok := recordSubject(record)
+		if !ok {
+			continue
+		}
+		entries = append(entries, Activity{ID: "legacy:" + record.ID, WorkflowID: workflowID, UnitID: record.UnitID,
+			Action: record.Kind, Actor: record.Actor, At: record.At, SubjectKind: kind, SubjectID: subject, RecordID: record.ID, Legacy: true})
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].At != entries[j].At {
+			return entries[i].At < entries[j].At
+		}
+		if entries[i].Legacy != entries[j].Legacy {
+			return !entries[i].Legacy
+		}
+		return entries[i].ID < entries[j].ID
+	})
+	return entries, nil
+}
+
+func (s *Service) workflowNameExpr(ctx context.Context) (string, error) {
+	hasName, err := s.hasColumn(ctx, "workflows", "name")
+	if hasName {
+		return "name", err
+	}
+	return "NULL", err
+}
+
+type scanner interface{ Scan(...any) error }
+
+func scanWorkflow(row scanner) (Workflow, error) {
+	var value Workflow
+	var name sql.NullString
+	err := row.Scan(&value.ID, &value.Revision, &value.State, &name, &value.Goal, &value.CreatedAt, &value.UpdatedAt)
+	value.Name, value.NameDerived = workflowdomain.DisplayName(name, value.Goal)
+	return value, err
+}
+
+func (s *Service) hasColumn(ctx context.Context, table, column string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func subjectRecordID(workflowID, kind, subject string) (string, bool) {
+	switch kind {
+	case "workflow":
+		return "workflow:" + subject, subject == workflowID
+	case "plan":
+		return "plan", subject == workflowID
+	case "artifact":
+		return "artifact:" + subject, subject != ""
+	case "work_unit":
+		return "work_unit:" + subject, subject != ""
+	case "event":
+		prefix := workflowID + "@"
+		return "event:" + strings.TrimPrefix(subject, prefix), strings.HasPrefix(subject, prefix) && len(subject) > len(prefix)
+	case "evidence", "review":
+		parts := strings.Split(subject, "@")
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return kind + ":" + parts[0] + ":" + parts[1], true
+		}
+	}
+	return "", false
+}
+
+func recordSubject(record Record) (string, string, bool) {
+	switch record.Kind {
+	case "event":
+		return "event", record.WorkflowID + "@" + fmt.Sprint(record.Revision), true
+	case "evidence", "review":
+		return record.Kind, record.UnitID + "@" + fmt.Sprint(record.Revision), true
+	case "plan":
+		return "plan", record.WorkflowID, true
+	case "work_unit":
+		return "work_unit", record.UnitID, true
+	default:
+		if strings.HasPrefix(record.ID, "artifact:") {
+			return "artifact", strings.TrimPrefix(record.ID, "artifact:"), true
+		}
+	}
+	return "", "", false
+}
+
 func matchContext(text, query string) (string, bool) {
 	runes := []rune(text)
 	visible := []rune(strings.ToLower(text))
@@ -187,22 +363,22 @@ func matchContext(text, query string) (string, bool) {
 	return string(runes[start:end]), true
 }
 
-const detailQuery = `SELECT record_id, kind, unit_id, revision, title, content, at FROM (
+const detailQuery = `SELECT record_id, kind, unit_id, revision, title, content, actor, at FROM (
 SELECT 'event:' || revision_after record_id, 'event' kind, '' unit_id, revision_after revision, from_state || ' -> ' || to_state title,
- actor || ' ' || reason content, at FROM events WHERE workflow_id=?
-UNION ALL SELECT 'artifact:' || id, kind, '', accepted_revision, kind, actor || ' ' || content, recorded_at
+ reason content, actor, at FROM events WHERE workflow_id=?
+UNION ALL SELECT 'artifact:' || id, kind, '', accepted_revision, kind, content, actor, recorded_at
  FROM artifacts WHERE workflow_id=?
-UNION ALL SELECT 'plan', 'plan', '', 0, summary, scope || ' ' || max_parallel_units || ' ' || body,
+UNION ALL SELECT 'plan', 'plan', '', 0, summary, scope || ' ' || max_parallel_units || ' ' || body, '',
  (SELECT updated_at FROM workflows WHERE id=plans.workflow_id) FROM plans WHERE workflow_id=?
 UNION ALL SELECT 'work_unit:' || id, 'work_unit', id, revision, description,
  scope || ' ' || areas || ' ' || depends_on || ' ' || state || ' ' ||
- COALESCE(admission_exception,'') || ' approved=' || admission_exception_approved,
+ COALESCE(admission_exception,'') || ' approved=' || admission_exception_approved, '',
  (SELECT updated_at FROM workflows WHERE id=work_units.workflow_id) FROM work_units WHERE workflow_id=?
 UNION ALL SELECT 'evidence:' || unit_id || ':' || revision, 'evidence', unit_id, revision, red_command,
- actor || ' ' || red_outcome || ' ' || green_command || ' ' || green_outcome || ' ' ||
- refactor_summary || ' ' || validation_command || ' ' || validation_outcome || ' ' || changed_paths, recorded_at
+ red_outcome || ' ' || green_command || ' ' || green_outcome || ' ' ||
+ refactor_summary || ' ' || validation_command || ' ' || validation_outcome || ' ' || changed_paths, actor, recorded_at
  FROM evidence WHERE workflow_id=?
 UNION ALL SELECT 'review:' || unit_id || ':' || revision, 'review', unit_id, revision, verdict,
- actor || ' ' || summary || ' ' || findings || ' ' || plan_impact, recorded_at
+ summary || ' ' || findings || ' ' || plan_impact, actor, recorded_at
  FROM reviews WHERE workflow_id=?
 ) ORDER BY at ASC, kind ASC, unit_id ASC, revision ASC, record_id ASC`
