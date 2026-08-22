@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/fmazzalomo/pitcrew/internal/history"
@@ -14,6 +15,10 @@ type Loader interface {
 	Search(context.Context, string) ([]history.SearchResult, error)
 	Resolve(context.Context, history.SearchResult) (history.Resolution, error)
 	ResolveActivity(context.Context, history.Activity) (history.Resolution, error)
+}
+
+type occurrenceResolver interface {
+	ResolveOccurrence(context.Context, string, string, string) (history.Resolution, error)
 }
 
 type Screen uint8
@@ -41,9 +46,11 @@ type Model struct {
 }
 
 type detailCursor struct {
-	recordID string
-	line     int
-	top      int
+	occurrenceID  string
+	occurrenceTop int
+	recordID      string
+	line          int
+	top           int
 }
 
 type workflowsLoadedMsg struct{ workflows []history.Workflow }
@@ -75,9 +82,10 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 		m.results, m.loading, m.err = msg.results, false, nil
 		m.screen, m.selected = ResultsScreen, 0
 	case detailLoadedMsg:
+		occurrenceID := m.detail.occurrenceID
 		m.opened, m.loading, m.err = msg.resolution, false, nil
 		m.screen = DetailScreen
-		m.detail = detailCursor{recordID: msg.resolution.Record.ID}
+		m.detail = detailCursor{occurrenceID: occurrenceID, recordID: msg.resolution.Record.ID}
 		m.reconcileDetail()
 	case loadFailedMsg:
 		m.loading, m.err = false, msg.err
@@ -94,18 +102,40 @@ func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch actionFor(key, m.searchFocused) {
 	case actionUp:
 		if m.screen == DetailScreen {
-			m.moveDetail(-1)
+			m.moveFocused(-1)
 		} else if m.selected > 0 {
 			m.selected--
 		}
 	case actionDown:
 		if m.screen == DetailScreen {
-			m.moveDetail(1)
+			m.moveFocused(1)
 		} else if m.selected+1 < m.itemCount() {
 			m.selected++
 		}
 	case actionBack:
-		m.screen = WorkflowsScreen
+		if m.screen == DetailScreen && m.opened.Record.ID != "" && m.detail.occurrenceID != "" {
+			m.opened.Record = history.Record{}
+			m.detail.recordID, m.detail.line, m.detail.top = "", 0, 0
+			m.reconcileDetail()
+		} else {
+			m.screen = WorkflowsScreen
+		}
+	case actionPageUp:
+		if m.occurrenceMode() {
+			m.moveOccurrence(-m.occurrencePageSize())
+		}
+	case actionPageDown:
+		if m.occurrenceMode() {
+			m.moveOccurrence(m.occurrencePageSize())
+		}
+	case actionHome:
+		if m.occurrenceMode() {
+			m.setOccurrenceIndex(0)
+		}
+	case actionEnd:
+		if m.occurrenceMode() {
+			m.setOccurrenceIndex(m.operationalOccurrenceIndex())
+		}
 	case actionSelect:
 		return m.openSelected()
 	case actionSearch:
@@ -136,14 +166,16 @@ func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) openSelected() (Model, tea.Cmd) {
-	if m.screen == DetailScreen {
-		lines := m.evidenceLines()
-		index, _ := m.detailPosition()
-		if index > 0 && index <= len(lines) && lines[index-1].activity != nil {
-			activity := *lines[index-1].activity
+	if m.occurrenceMode() {
+		if occurrence, ok := m.focusedOccurrence(); ok {
+			resolver, ok := m.loader.(occurrenceResolver)
+			if !ok {
+				m.err = errors.New("history loader cannot resolve occurrences")
+				return m, nil
+			}
 			m.loading = true
 			return m, func() tea.Msg {
-				resolution, err := m.loader.ResolveActivity(context.Background(), activity)
+				resolution, err := resolver.ResolveOccurrence(context.Background(), m.opened.Detail.Workflow.ID, occurrence.ID, occurrence.RecordID)
 				if err != nil {
 					return loadFailedMsg{err}
 				}
@@ -153,6 +185,7 @@ func (m Model) openSelected() (Model, tea.Cmd) {
 	}
 	if m.screen == WorkflowsScreen && m.selected < len(m.workflows) {
 		workflowID := m.workflows[m.selected].ID
+		m.detail = detailCursor{}
 		m.loading = true
 		return m, func() tea.Msg {
 			detail, err := m.loader.Detail(context.Background(), workflowID)
@@ -164,6 +197,7 @@ func (m Model) openSelected() (Model, tea.Cmd) {
 	}
 	if m.screen == ResultsScreen && m.selected < len(m.results) {
 		result := m.results[m.selected]
+		m.detail = detailCursor{}
 		m.loading = true
 		return m, func() tea.Msg {
 			resolution, err := m.loader.Resolve(context.Background(), result)
@@ -184,9 +218,17 @@ func (m Model) itemCount() int {
 }
 
 func (m *Model) reconcileDetail() {
-	lines := m.evidenceLines()
-	if m.screen != DetailScreen || len(lines) == 0 {
+	if m.screen != DetailScreen {
 		m.detail = detailCursor{}
+		return
+	}
+	if m.occurrenceMode() {
+		m.reconcileOccurrences()
+		return
+	}
+	lines := m.evidenceLines()
+	if len(lines) == 0 {
+		m.detail.recordID, m.detail.line, m.detail.top = "", 0, 0
 		return
 	}
 	index := 0
@@ -197,18 +239,22 @@ func (m *Model) reconcileDetail() {
 			}
 		}
 	}
-	m.setDetailIndex(lines, index)
+	m.setEvidenceIndex(lines, index)
 }
 
-func (m *Model) moveDetail(delta int) {
+func (m *Model) moveFocused(delta int) {
+	if m.occurrenceMode() {
+		m.moveOccurrence(delta)
+		return
+	}
 	m.reconcileDetail()
 	lines := m.evidenceLines()
 	index, _ := m.detailPosition()
 	index = max(1, min(len(lines), index+delta)) - 1
-	m.setDetailIndex(lines, index)
+	m.setEvidenceIndex(lines, index)
 }
 
-func (m *Model) setDetailIndex(lines []evidenceLine, index int) {
+func (m *Model) setEvidenceIndex(lines []evidenceLine, index int) {
 	if len(lines) == 0 {
 		return
 	}
@@ -224,6 +270,14 @@ func (m *Model) setDetailIndex(lines []evidenceLine, index int) {
 }
 
 func (m Model) detailPosition() (int, int) {
+	if m.occurrenceMode() {
+		for i, occurrence := range m.opened.Detail.Occurrences {
+			if occurrence.ID == m.detail.occurrenceID {
+				return i + 1, len(m.opened.Detail.Occurrences)
+			}
+		}
+		return 0, len(m.opened.Detail.Occurrences)
+	}
 	lines := m.evidenceLines()
 	for i, line := range lines {
 		if line.recordID == m.detail.recordID && line.local == m.detail.line {
@@ -231,6 +285,111 @@ func (m Model) detailPosition() (int, int) {
 		}
 	}
 	return 0, len(lines)
+}
+
+func (m Model) occurrenceMode() bool {
+	return m.screen == DetailScreen && m.opened.Record.ID == "" && len(m.opened.Detail.Occurrences) > 0
+}
+
+func (m *Model) reconcileOccurrences() {
+	occurrences := m.opened.Detail.Occurrences
+	if len(occurrences) == 0 {
+		m.detail.occurrenceID, m.detail.recordID, m.detail.occurrenceTop = "", "", 0
+		return
+	}
+	for i, occurrence := range occurrences {
+		if occurrence.ID == m.detail.occurrenceID {
+			m.setOccurrenceIndex(i)
+			return
+		}
+	}
+	m.setOccurrenceIndex(m.operationalOccurrenceIndex())
+}
+
+func (m *Model) moveOccurrence(delta int) {
+	m.reconcileOccurrences()
+	index, _ := m.detailPosition()
+	m.setOccurrenceIndex(max(0, min(len(m.opened.Detail.Occurrences)-1, index-1+delta)))
+}
+
+func (m *Model) setOccurrenceIndex(index int) {
+	occurrences := m.opened.Detail.Occurrences
+	if len(occurrences) == 0 {
+		return
+	}
+	index = max(0, min(len(occurrences)-1, index))
+	m.detail.occurrenceID = occurrences[index].ID
+	m.detail.recordID, m.detail.line = occurrences[index].ID, 0
+	visible := m.occurrencePageSize()
+	if index < m.detail.occurrenceTop {
+		m.detail.occurrenceTop = index
+	} else if index >= m.detail.occurrenceTop+visible {
+		m.detail.occurrenceTop = index - visible + 1
+	}
+	m.detail.occurrenceTop = max(0, min(m.detail.occurrenceTop, max(0, len(occurrences)-visible)))
+}
+
+func (m Model) focusedOccurrence() (history.Occurrence, bool) {
+	for _, occurrence := range m.opened.Detail.Occurrences {
+		if occurrence.ID == m.detail.occurrenceID {
+			return occurrence, true
+		}
+	}
+	return history.Occurrence{}, false
+}
+
+func (m Model) occurrencePageSize() int {
+	rows := max(1, m.height-12)
+	if m.width > 0 && m.width < 80 {
+		rows /= 2
+	}
+	return max(1, rows)
+}
+
+func (m Model) operationalOccurrenceIndex() int {
+	occurrences := m.opened.Detail.Occurrences
+	if len(occurrences) == 0 {
+		return 0
+	}
+	synopsis := m.opened.Detail.Synopsis
+	if synopsis.Blocker != nil && synopsis.Blocker.Status == "Correction" {
+		if index := latestWorkOccurrence(occurrences, synopsis.Blocker.Description); index >= 0 {
+			return index
+		}
+		for i := len(occurrences) - 1; i >= 0; i-- {
+			if occurrences[i].Outcome == "Corrections" {
+				return i
+			}
+		}
+	}
+	if synopsis.Current != nil && (synopsis.Current.Status == "Claimed" || synopsis.Current.Status == "Reviewing") {
+		if index := latestWorkOccurrence(occurrences, synopsis.Current.Description); index >= 0 {
+			return index
+		}
+	}
+	if m.opened.Detail.Workflow.State == "completed" || m.opened.Detail.Workflow.State == "abandoned" {
+		want := "workflow_" + m.opened.Detail.Workflow.State
+		for i := len(occurrences) - 1; i >= 0; i-- {
+			if occurrences[i].Activity == want {
+				return i
+			}
+		}
+	}
+	if synopsis.Blocker != nil {
+		if index := latestWorkOccurrence(occurrences, synopsis.Blocker.Description); index >= 0 {
+			return index
+		}
+	}
+	return len(occurrences) - 1
+}
+
+func latestWorkOccurrence(occurrences []history.Occurrence, work string) int {
+	for i := len(occurrences) - 1; i >= 0; i-- {
+		if occurrences[i].Work == work {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m Model) Hints() string {

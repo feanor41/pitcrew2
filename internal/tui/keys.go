@@ -8,6 +8,10 @@ const (
 	actionNone action = iota
 	actionUp
 	actionDown
+	actionPageUp
+	actionPageDown
+	actionHome
+	actionEnd
 	actionBack
 	actionSelect
 	actionSearch
@@ -42,6 +46,14 @@ func actionFor(key tea.KeyPressMsg, searchFocused bool) action {
 		return actionUp
 	case "down", "j":
 		return actionDown
+	case "pgup":
+		return actionPageUp
+	case "pgdown":
+		return actionPageDown
+	case "home":
+		return actionHome
+	case "end":
+		return actionEnd
 	case "left", "h", "esc":
 		return actionBack
 	case "right", "l", "enter":
