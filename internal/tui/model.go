@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/fmazzalomo/pitcrew/internal/history"
+	"github.com/fmazzalomo/pitcrew/internal/version"
 )
 
 type Loader interface {
@@ -12,6 +13,7 @@ type Loader interface {
 	Detail(context.Context, string) (history.Detail, error)
 	Search(context.Context, string) ([]history.SearchResult, error)
 	Resolve(context.Context, history.SearchResult) (history.Resolution, error)
+	ResolveActivity(context.Context, history.Activity) (history.Resolution, error)
 }
 
 type Screen uint8
@@ -52,6 +54,8 @@ type loadFailedMsg struct{ err error }
 func New(loader Loader) Model {
 	return Model{loader: loader, loading: true}
 }
+
+func (Model) Version() string { return version.Current }
 
 func (m Model) Init() tea.Cmd {
 	return func() tea.Msg {
@@ -132,6 +136,21 @@ func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) openSelected() (Model, tea.Cmd) {
+	if m.screen == DetailScreen {
+		lines := m.evidenceLines()
+		index, _ := m.detailPosition()
+		if index > 0 && index <= len(lines) && lines[index-1].activity != nil {
+			activity := *lines[index-1].activity
+			m.loading = true
+			return m, func() tea.Msg {
+				resolution, err := m.loader.ResolveActivity(context.Background(), activity)
+				if err != nil {
+					return loadFailedMsg{err}
+				}
+				return detailLoadedMsg{resolution}
+			}
+		}
+	}
 	if m.screen == WorkflowsScreen && m.selected < len(m.workflows) {
 		workflowID := m.workflows[m.selected].ID
 		m.loading = true
