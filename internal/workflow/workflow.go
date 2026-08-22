@@ -69,6 +69,32 @@ type TransitionError struct {
 	Event    EventType
 }
 
+// NextAction is the single state-to-command mapping shared by every read surface.
+func NextAction(state State) string {
+	switch state {
+	case Draft:
+		return "workflow explore"
+	case Exploring:
+		return "workflow spec"
+	case Specifying:
+		return "workflow design"
+	case Designing:
+		return "workflow plan"
+	case Planning:
+		return "workflow approve-plan"
+	case PlanApproved:
+		return "workflow begin-implementation"
+	case Implementing:
+		return "workflow list-ready-units"
+	case ReadyToComplete:
+		return "workflow complete"
+	case Completed, Abandoned:
+		return "none"
+	default:
+		return "workflow show"
+	}
+}
+
 func (e *TransitionError) Error() string {
 	expected := make([]string, len(e.Expected))
 	for i, state := range e.Expected {

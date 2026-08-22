@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/store"
 	workflowdomain "github.com/fmazzalomo/pitcrew/internal/workflow"
@@ -49,9 +50,11 @@ type Activity struct {
 	Legacy      bool   `json:"legacy"`
 }
 type Detail struct {
-	Workflow Workflow   `json:"workflow"`
-	Records  []Record   `json:"records"`
-	Timeline []Activity `json:"timeline"`
+	Workflow    Workflow     `json:"workflow"`
+	Synopsis    Synopsis     `json:"synopsis"`
+	Occurrences []Occurrence `json:"occurrences"`
+	Records     []Record     `json:"records"`
+	Timeline    []Activity   `json:"timeline"`
 }
 
 type SearchResult struct {
@@ -69,9 +72,18 @@ type Resolution struct {
 	Record Record
 }
 
-type Service struct{ db *sql.DB }
+type Service struct {
+	db  *sql.DB
+	now func() time.Time
+}
 
-func New(s *store.Store) *Service { return &Service{db: s.DB()} }
+func New(s *store.Store, clocks ...func() time.Time) *Service {
+	now := time.Now
+	if len(clocks) != 0 {
+		now = clocks[0]
+	}
+	return &Service{db: s.DB(), now: now}
+}
 
 func (s *Service) List(ctx context.Context) ([]Workflow, error) {
 	nameExpr, err := s.workflowNameExpr(ctx)
@@ -122,6 +134,9 @@ FROM workflows WHERE id=?`, nameExpr), workflowID))
 		return Detail{}, err
 	}
 	detail.Timeline, err = s.timeline(ctx, workflowID, detail.Records)
+	if err == nil {
+		err = s.project(ctx, &detail)
+	}
 	return detail, err
 }
 
@@ -141,6 +156,35 @@ func (s *Service) ResolveActivity(ctx context.Context, entry Activity) (Resoluti
 	for _, record := range detail.Records {
 		if record.ID == recordID {
 			return Resolution{Detail: detail, Record: record}, nil
+		}
+	}
+	return Resolution{}, sql.ErrNoRows
+}
+
+func (s *Service) ResolveOccurrence(ctx context.Context, workflowID, occurrenceID, recordID string) (Resolution, error) {
+	detail, err := s.Detail(ctx, workflowID)
+	if err != nil {
+		return Resolution{}, err
+	}
+	for _, occurrence := range detail.Occurrences {
+		if occurrence.ID != occurrenceID {
+			continue
+		}
+		allowed := occurrence.RecordID == recordID
+		for _, related := range occurrence.RelatedRecordIDs {
+			allowed = allowed || related == recordID
+		}
+		if !allowed {
+			return Resolution{}, sql.ErrNoRows
+		}
+		if recordID == "workflow:"+workflowID {
+			w := detail.Workflow
+			return Resolution{Detail: detail, Record: Record{ID: recordID, WorkflowID: w.ID, Kind: "workflow", Title: w.Name, Content: w.Goal, At: w.CreatedAt}}, nil
+		}
+		for _, record := range detail.Records {
+			if record.ID == recordID {
+				return Resolution{Detail: detail, Record: record}, nil
+			}
 		}
 	}
 	return Resolution{}, sql.ErrNoRows

@@ -7,8 +7,41 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
+
+type ClaimStatus struct {
+	UnitID     string
+	State      string
+	ExpiresAt  time.Time
+	Generation int64
+}
+
+func ClaimActive(claim ClaimStatus, now time.Time) bool {
+	return claim.State != "revoked" && claim.ExpiresAt.After(now)
+}
+
+// ActiveClaims selects only the latest generation of live, unexpired claims.
+func ActiveClaims(claims []ClaimStatus, now time.Time) map[string]bool {
+	latest := map[string]ClaimStatus{}
+	for _, claim := range claims {
+		if prior, ok := latest[claim.UnitID]; !ok || claim.Generation > prior.Generation {
+			latest[claim.UnitID] = claim
+		}
+	}
+	active := map[string]bool{}
+	for id, claim := range latest {
+		if ClaimActive(claim, now) {
+			active[id] = true
+		}
+	}
+	return active
+}
+
+func ReadyUnitsAt(p Plan, claims []ClaimStatus, now time.Time) []WorkUnit {
+	return ReadyUnits(p, ActiveClaims(claims, now))
+}
 
 type UnitState string
 

@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fmazzalomo/pitcrew/internal/plan"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
 
@@ -34,6 +36,10 @@ func TestServiceProjectsNamedGridAndExactActivityTimeline(t *testing.T) {
 	}
 	if detail.Workflow.Name != "new goal" || !detail.Workflow.NameDerived {
 		t.Fatalf("detail name = %q derived=%v", detail.Workflow.Name, detail.Workflow.NameDerived)
+	}
+	created := occurrence(detail.Occurrences, "workflow_created")
+	if resolved, err := service.ResolveOccurrence(ctx, "wf-new", created.ID, created.RecordID); err != nil || resolved.Record.Kind != "workflow" || resolved.Record.ID != "workflow:wf-new" {
+		t.Fatalf("ResolveOccurrence(workflow_created) = %#v, %v", resolved, err)
 	}
 	for i := 1; i < len(detail.Timeline); i++ {
 		if detail.Timeline[i-1].At > detail.Timeline[i].At {
@@ -77,6 +83,72 @@ func TestServiceProjectsNamedGridAndExactActivityTimeline(t *testing.T) {
 			t.Errorf("unresolved durable kind %q", kind)
 		}
 	}
+}
+
+func TestServiceClassifiesCorrectionsDependenciesAndClaimExpiry(t *testing.T) {
+	now := time.Date(2026, 8, 22, 17, 0, 0, 0, time.UTC)
+	opened := openHistory(t, true)
+	detail, err := New(opened, func() time.Time { return now }).Detail(context.Background(), "wf-active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := detail.Synopsis
+	if s.Total != 7 || s.Done != 1 || s.Correction != 1 || s.Claimed != 1 || s.Reviewing != 1 || s.DependencyWaiting != 1 || s.Recovery != 1 || s.Ready != 0 || s.NextAction != "workflow list-ready-units" {
+		t.Fatalf("classified synopsis = %#v", s)
+	}
+	if s.Current == nil || s.Current.ID != "wu-correction" || s.Blocker == nil || s.Blocker.Reason != "fix typed projection" {
+		t.Fatalf("correction precedence = %#v", s)
+	}
+	claim, review := occurrence(detail.Occurrences, "unit_claimed"), occurrence(detail.Occurrences, "unit_review_recorded")
+	if claim.Attempt != nil || review.Attempt == nil || *review.Attempt != 1 {
+		t.Fatalf("attempt truth: claim=%#v review=%#v", claim, review)
+	}
+	ready, err := plan.NewService(opened, func() time.Time { return now }).Ready(context.Background(), "wf-active")
+	if err != nil || len(ready) != s.Ready {
+		t.Fatalf("readiness parity: executable=%#v synopsis=%#v err=%v", ready, s, err)
+	}
+}
+
+func TestServiceUsesLatestAggregateAuthorityAndResolvesCoalescedOccurrence(t *testing.T) {
+	service := New(openHistory(t, true))
+	detail, err := service.Detail(context.Background(), "wf-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Synopsis.Blocker != nil {
+		t.Fatalf("stale aggregate correction: %#v", detail.Synopsis)
+	}
+	var aggregates []Occurrence
+	for _, entry := range detail.Occurrences {
+		if entry.Activity == "aggregate_review_recorded" {
+			aggregates = append(aggregates, entry)
+		}
+	}
+	if len(aggregates) != 2 {
+		t.Fatalf("same-time aggregate occurrences = %#v", aggregates)
+	}
+	var linked Occurrence
+	for _, entry := range aggregates {
+		if len(entry.RelatedRecordIDs) > 0 {
+			linked = entry
+		}
+	}
+	if linked.ID == "" {
+		t.Fatalf("final transition not explicitly coalesced: %#v", aggregates)
+	}
+	resolved, err := service.ResolveOccurrence(context.Background(), "wf-old", linked.ID, linked.RelatedRecordIDs[0])
+	if err != nil || resolved.Record.Kind != "event" {
+		t.Fatalf("ResolveOccurrence() = %#v, %v", resolved, err)
+	}
+}
+
+func occurrence(entries []Occurrence, action string) Occurrence {
+	for _, entry := range entries {
+		if entry.Activity == action {
+			return entry
+		}
+	}
+	return Occurrence{}
 }
 
 func TestServiceReadsLegacySchemaHonestlyWithoutMigration(t *testing.T) {
@@ -123,7 +195,7 @@ func TestServiceProjectsDeterministicProjectHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if states := []string{got[0].State, got[1].State, got[2].State}; strings.Join(states, ",") != "planning,abandoned,completed" {
+	if states := []string{got[0].State, got[1].State, got[2].State}; strings.Join(states, ",") != "implementing,abandoned,completed" {
 		t.Fatalf("states = %v", states)
 	}
 	detail, err := service.Detail(ctx, "wf-new")
@@ -218,10 +290,14 @@ func openHistory(t *testing.T, seeded bool) *store.Store {
 	statements := []string{
 		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-old',4,'completed','shared-needle old goal','2024-01-01T00:00:00Z','2024-01-02T00:00:00Z')`,
 		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-new',8,'abandoned','new goal','2025-01-01T00:00:00Z','2025-01-09T00:00:00Z')`,
-		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-active',2,'planning','Active delivery','active goal','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')`,
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-active',2,'implementing','Active delivery','active goal','2026-01-01T00:00:00Z','2023-01-02T00:00:00Z')`,
+		`INSERT INTO events VALUES('wf-old','ready_to_complete','completed','aggregate-reviewer','approved',4,'2024-01-02T00:00:00Z')`,
 		`INSERT INTO events VALUES('wf-new','planning','abandoned','daimon','event-reason',8,'2025-01-03T00:00:00Z')`,
 		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-new','exploration','literal % _ "quoted" café ','explorer',2,'2025-01-04T00:00:00Z')`,
 		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-new','exploration','same-time legacy','explorer',2,'2025-01-04T00:00:00Z')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-old','aggregate_review','{"verdict":"corrections","findings":"old"}','aggregate-reviewer',3,'2024-01-01T23:00:00Z')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-old','aggregate_review','{"verdict":"approved","findings":""}','aggregate-reviewer',4,'2024-01-02T00:00:00Z')`,
+		`INSERT INTO plans VALUES('wf-active','active plan','scope',1,'{"summary":"active plan","scope":"scope","work_units":[{"id":"wu-done","description":"done","scope":"scope","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"wu-correction","description":"correct","scope":"scope","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"wu-claimed","description":"claimed","scope":"scope","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"wu-dependency","description":"dependency","scope":"scope","areas":[],"depends_on":["wu-correction"],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"wu-recovery","description":"recovery","scope":"scope","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"wu-ready","description":"ready","scope":"scope","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"wu-fresh","description":"fresh","scope":"scope","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}],"max_parallel_units":1}')`,
 		`INSERT INTO plans VALUES('wf-new','plan title','internal/history',1,'plan-text')`,
 		`INSERT INTO work_units VALUES('wu-new','wf-new','unit-text','internal/history','["history"]','["wu-dependency"]',12,5,'reviewing','{"justification":"approved"}',1,3)`,
 		`INSERT INTO evidence VALUES('wf-new','wu-new',3,'implementer','red cmd','exit 1 red-text','green cmd','exit 0','clean','go test','exit 0','internal/history','2025-01-06T00:00:00Z')`,
@@ -234,6 +310,24 @@ func openHistory(t *testing.T, seeded bool) *store.Store {
 		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new','wu-new','unit_claimed','implementer','2025-01-05T01:00:00Z','work_unit','wu-new')`,
 		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new','wu-new','unit_tdd_recorded','implementer','2025-01-06T00:00:00Z','evidence','wu-new@3')`,
 		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-new','wu-new','unit_review_recorded','reviewer','2025-01-08T00:00:00Z','review','wu-new@3')`,
+		`INSERT INTO work_units VALUES('wu-done','wf-active','done','scope','[]','[]',1,1,'done',NULL,0,1)`,
+		`INSERT INTO work_units VALUES('wu-correction','wf-active','correct','scope','[]','[]',1,1,'pending',NULL,0,2)`,
+		`INSERT INTO work_units VALUES('wu-claimed','wf-active','claimed','scope','[]','[]',1,1,'pending',NULL,0,1)`,
+		`INSERT INTO work_units VALUES('wu-dependency','wf-active','dependency','scope','[]','["wu-correction"]',1,1,'pending',NULL,0,1)`,
+		`INSERT INTO work_units VALUES('wu-recovery','wf-active','recovery','scope','[]','[]',1,1,'pending',NULL,0,1)`,
+		`INSERT INTO work_units VALUES('wu-ready','wf-active','ready','scope','[]','[]',1,1,'pending',NULL,0,1)`,
+		`INSERT INTO work_units VALUES('wu-fresh','wf-active','fresh','scope','[]','[]',1,1,'reviewing',NULL,0,2)`,
+		`INSERT INTO reviews VALUES('wf-active','wu-correction',1,'reviewer','corrections','needs work','fix typed projection','','2026-08-22T16:00:00Z')`,
+		`INSERT INTO reviews VALUES('wf-active','wu-fresh',1,'reviewer','corrections','old work','superseded by evidence','','2026-08-22T15:00:00Z')`,
+		`INSERT INTO evidence VALUES('wf-active','wu-fresh',2,'implementer','red','fail','green','pass','clean','test','pass','internal/history','2026-08-22T16:10:00Z')`,
+		`INSERT INTO handles VALUES('old','wf-active','wu-claimed','active','old-secret','actor','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z',1)`,
+		`INSERT INTO handles VALUES('live','wf-active','wu-claimed','active','live-secret','actor','2026-08-22T16:00:00Z','2030-01-01T00:00:00Z',2)`,
+		`INSERT INTO handles VALUES('expired','wf-active','wu-recovery','active','expired-secret','actor','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z',1)`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-active','wu-claimed','unit_claimed','actor','2026-08-22T16:30:00Z','work_unit','wu-claimed')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-active','wu-correction','unit_review_recorded','reviewer','2026-08-22T16:00:00Z','review','wu-correction@1')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-old',NULL,'aggregate_review_recorded','aggregate-reviewer','2024-01-02T00:00:00Z','artifact','4')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-old',NULL,'aggregate_review_recorded','aggregate-reviewer','2024-01-02T00:00:00Z','artifact','4')`,
+		`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-old',NULL,'workflow_completed','aggregate-reviewer','2024-01-02T00:00:00Z','event','wf-old@4')`,
 	}
 	if seeded {
 		for _, statement := range statements {
