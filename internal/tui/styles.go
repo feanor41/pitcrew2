@@ -1,6 +1,10 @@
 package tui
 
-import "charm.land/lipgloss/v2"
+import (
+	"strings"
+
+	"charm.land/lipgloss/v2"
+)
 
 var flight = struct {
 	brand, subtitle, version, mode, panel, focus, title, muted, good, warn, bad, footer lipgloss.Style
@@ -26,6 +30,6 @@ func statusLabel(state string) string {
 	case "abandoned":
 		return flight.bad.Render("[ABANDONED]")
 	default:
-		return flight.warn.Render("[ACTIVE]")
+		return flight.warn.Render("[" + strings.ToUpper(strings.ReplaceAll(state, "_", " ")) + "]")
 	}
 }

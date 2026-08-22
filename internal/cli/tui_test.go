@@ -2,12 +2,38 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestEmbeddedTUILeavesDatabaseBytesUnchanged(t *testing.T) {
+	root := t.TempDir()
+	if created := runAt(t, root, "workflow", "new", "--name", "Read only", "--goal", "prove TUI immutability", "--actor", "daimon"); created.code != 0 {
+		t.Fatalf("initialize workflow: %#v", created)
+	}
+	dbPath := filepath.Join(root, ".pitcrew", "state.db")
+	before := fileDigest(t, dbPath)
+	var output bytes.Buffer
+	if err := runEmbeddedTUI(root, strings.NewReader("q"), &output); err != nil {
+		t.Fatal(err)
+	}
+	if after := fileDigest(t, dbPath); after != before {
+		t.Fatalf("embedded TUI mutated state.db: before=%x after=%x", before, after)
+	}
+}
+
+func fileDigest(t *testing.T, path string) [32]byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sha256.Sum256(data)
+}
 
 func TestTUIExactSameProcessDispatchAndSubprocessTrap(t *testing.T) {
 	root := t.TempDir()
