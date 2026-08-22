@@ -65,7 +65,7 @@ func TestUsageFailuresAreStderrOnlySingleLineAndLongFlagsOnly(t *testing.T) {
 
 func TestWorkflowNewAndShowUseEnvelopeAndProjectLocalStore(t *testing.T) {
 	root := t.TempDir()
-	created := runAt(t, root, "workflow", "new", "--goal", "ship safely", "--actor", "daimon")
+	created := runAt(t, root, "workflow", "new", "--name", "Release 0.2", "--goal", "ship safely", "--actor", "daimon")
 	if created.code != 0 || created.stderr != "" {
 		t.Fatalf("new=%#v", created)
 	}
@@ -79,7 +79,7 @@ func TestWorkflowNewAndShowUseEnvelopeAndProjectLocalStore(t *testing.T) {
 	if err := json.Unmarshal([]byte(created.stdout), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.OK || response.Data.Workflow.State != workflow.Draft || response.Data.Workflow.Revision != 1 || response.NextAction != "workflow explore" {
+	if !response.OK || response.Data.Workflow.Name != "Release 0.2" || response.Data.Workflow.State != workflow.Draft || response.Data.Workflow.Revision != 1 || response.NextAction != "workflow explore" {
 		t.Fatalf("new response=%#v", response)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".pitcrew", "state.db")); err != nil {
@@ -97,8 +97,31 @@ func TestWorkflowNewAndShowUseEnvelopeAndProjectLocalStore(t *testing.T) {
 
 func TestVersionIsAGlobalFlag(t *testing.T) {
 	result := runCLI(t, "--version")
-	if result.code != 0 || result.stdout != "pitcrew test-version\n" || result.stderr != "" {
+	if result.code != 0 || result.stdout != "pitcrew 0.2.0\n" || result.stderr != "" {
 		t.Fatalf("version=%#v", result)
+	}
+}
+
+func TestWorkflowNewRejectsInvalidNameWithoutOpeningStore(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		code envelope.ExitCode
+	}{
+		{name: "missing", args: []string{"workflow", "new", "--goal", "ship", "--actor", "daimon"}, code: envelope.Usage},
+		{name: "blank", args: []string{"workflow", "new", "--name", "  ", "--goal", "ship", "--actor", "daimon"}, code: envelope.Usage},
+		{name: "over limit", args: []string{"workflow", "new", "--name", strings.Repeat("界", 81), "--goal", "ship", "--actor", "daimon"}, code: envelope.State},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			result := runAt(t, root, test.args...)
+			if result.code != int(test.code) {
+				t.Fatalf("args=%v result=%#v", test.args, result)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".pitcrew")); !os.IsNotExist(err) {
+				t.Fatalf("invalid name opened store: %v", err)
+			}
+		})
 	}
 }
 
@@ -135,6 +158,6 @@ func runCLI(t *testing.T, args ...string) result { return runAt(t, t.TempDir(), 
 func runAt(t *testing.T, root string, args ...string) result {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Run(args, Dependencies{Stdout: &stdout, Stderr: &stderr, ProjectRoot: root, Version: "test-version", Now: func() time.Time { return time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC) }})
+	code := Run(args, Dependencies{Stdout: &stdout, Stderr: &stderr, ProjectRoot: root, Now: func() time.Time { return time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC) }})
 	return result{code, stdout.String(), stderr.String()}
 }

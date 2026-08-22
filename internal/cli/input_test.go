@@ -63,7 +63,7 @@ func TestEveryWorkflowCommandRequiresItsExactFlagMatrix(t *testing.T) {
 	input := writeInput(t, root, "input.json", `{"content":"x"}`)
 	base := []string{"--workflow-id", "wf-000000000000000000000001", "--revision", "1", "--actor", "actor"}
 	cases := map[string][]string{
-		"new":                  {"--goal", "x", "--actor", "actor"},
+		"new":                  {"--name", "work", "--goal", "x", "--actor", "actor"},
 		"show":                 {"--workflow-id", "wf-000000000000000000000001"},
 		"explore":              append(append([]string{}, base...), "--input-file", input),
 		"spec":                 append(append([]string{}, base...), "--input-file", input),
@@ -97,7 +97,7 @@ func TestEveryWorkflowCommandRequiresItsExactFlagMatrix(t *testing.T) {
 func TestExactFlagMatrixRejectsUnknownDuplicateShortAndMissing(t *testing.T) {
 	for _, args := range [][]string{
 		{"workflow", "new", "--goal", "x"},
-		{"workflow", "new", "--goal", "x", "--actor", "a", "--actor", "b"},
+		{"workflow", "new", "--name", "work", "--goal", "x", "--actor", "a", "--actor", "b"},
 		{"workflow", "show", "-workflow-id", "wf-x"},
 		{"workflow", "show", "--workflow-id", "wf-x", "--extra", "x"},
 	} {

@@ -14,6 +14,7 @@ import (
 
 var (
 	ErrInvalidTransition = errors.New("invalid workflow transition")
+	ErrInvalidName       = errors.New("workflow name must contain 1 to 80 runes")
 	ErrNotFound          = errors.New("workflow not found")
 )
 
@@ -43,12 +44,14 @@ const (
 )
 
 type Workflow struct {
-	ID        string `json:"id"`
-	Revision  int64  `json:"revision"`
-	State     State  `json:"state"`
-	Goal      string `json:"goal"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID          string `json:"id"`
+	Revision    int64  `json:"revision"`
+	State       State  `json:"state"`
+	Name        string `json:"name"`
+	NameDerived bool   `json:"name_derived"`
+	Goal        string `json:"goal"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 type Event struct {
 	WorkflowID    string `json:"workflow_id"`
@@ -89,7 +92,11 @@ type Service struct {
 
 func New(s *store.Store, now func() time.Time) *Service { return &Service{db: s.DB(), now: now} }
 
-func (s *Service) Create(ctx context.Context, goal, actor string) (Workflow, error) {
+func (s *Service) Create(ctx context.Context, name, goal, actor string) (Workflow, error) {
+	name, err := NormalizeName(name)
+	if err != nil {
+		return Workflow{}, err
+	}
 	id, err := ids.NewWorkflow()
 	if err != nil {
 		return Workflow{}, err
@@ -100,7 +107,7 @@ func (s *Service) Create(ctx context.Context, goal, actor string) (Workflow, err
 		return Workflow{}, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES(?,1,?,?,?,?)`, id, Draft, goal, at, at); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES(?,1,?,?,?,?,?)`, id, Draft, name, goal, at, at); err != nil {
 		return Workflow{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,?,?,?,?,1,?)`, id, "", Draft, actor, "", at); err != nil {
@@ -109,14 +116,18 @@ func (s *Service) Create(ctx context.Context, goal, actor string) (Workflow, err
 	if err = tx.Commit(); err != nil {
 		return Workflow{}, err
 	}
-	return Workflow{ID: id, Revision: 1, State: Draft, Goal: goal, CreatedAt: at, UpdatedAt: at}, nil
+	return Workflow{ID: id, Revision: 1, State: Draft, Name: name, Goal: goal, CreatedAt: at, UpdatedAt: at}, nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Workflow, error) {
 	var w Workflow
-	err := s.db.QueryRowContext(ctx, `SELECT id,revision,state,goal,created_at,updated_at FROM workflows WHERE id=?`, id).Scan(&w.ID, &w.Revision, &w.State, &w.Goal, &w.CreatedAt, &w.UpdatedAt)
+	var name sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT id,revision,state,name,goal,created_at,updated_at FROM workflows WHERE id=?`, id).Scan(&w.ID, &w.Revision, &w.State, &name, &w.Goal, &w.CreatedAt, &w.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Workflow{}, ErrNotFound
+	}
+	if err == nil {
+		w.Name, w.NameDerived = DisplayName(name, w.Goal)
 	}
 	return w, err
 }
@@ -138,8 +149,7 @@ func (s *Service) transition(ctx context.Context, id string, expected int64, eve
 		return Workflow{}, err
 	}
 	defer tx.Rollback()
-	var current Workflow
-	err = tx.QueryRowContext(ctx, `SELECT id,revision,state,goal,created_at,updated_at FROM workflows WHERE id=?`, id).Scan(&current.ID, &current.Revision, &current.State, &current.Goal, &current.CreatedAt, &current.UpdatedAt)
+	current, err := workflowInTx(ctx, tx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Workflow{}, ErrNotFound
 	}
@@ -172,6 +182,32 @@ func (s *Service) transition(ctx context.Context, id string, expected int64, eve
 	}
 	current.State, current.Revision, current.UpdatedAt = next, revision, at
 	return current, nil
+}
+
+func NormalizeName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if count := len([]rune(name)); count == 0 || count > 80 {
+		return "", ErrInvalidName
+	}
+	return name, nil
+}
+
+func DisplayName(name sql.NullString, goal string) (string, bool) {
+	if name.Valid {
+		return name.String, false
+	}
+	for _, line := range strings.Split(goal, "\n") {
+		candidate := strings.Join(strings.Fields(line), " ")
+		if candidate == "" {
+			continue
+		}
+		runes := []rune(candidate)
+		if len(runes) > 80 {
+			candidate = string(runes[:80])
+		}
+		return candidate, true
+	}
+	return "Untitled workflow", true
 }
 
 func (s *Service) Events(ctx context.Context, id string) ([]Event, error) {

@@ -8,8 +8,6 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/cli"
 )
 
-var version = "dev"
-
 func main() {
 	root, err := os.Getwd()
 	if err != nil {
@@ -19,5 +17,5 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, root string) int {
-	return cli.Run(args, cli.Dependencies{Stdin: stdin, Stdout: stdout, Stderr: stderr, ProjectRoot: root, Version: version, Now: time.Now})
+	return cli.Run(args, cli.Dependencies{Stdin: stdin, Stdout: stdout, Stderr: stderr, ProjectRoot: root, Now: time.Now})
 }
