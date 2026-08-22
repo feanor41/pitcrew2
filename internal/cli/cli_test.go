@@ -97,7 +97,7 @@ func TestWorkflowNewAndShowUseEnvelopeAndProjectLocalStore(t *testing.T) {
 
 func TestVersionIsAGlobalFlag(t *testing.T) {
 	result := runCLI(t, "--version")
-	if result.code != 0 || result.stdout != "pitcrew 0.2.0\n" || result.stderr != "" {
+	if result.code != 0 || result.stdout != "pitcrew 0.3.0\n" || result.stderr != "" {
 		t.Fatalf("version=%#v", result)
 	}
 }
@@ -140,11 +140,12 @@ func TestErrorClassificationPreservesExitContract(t *testing.T) {
 func TestStateErrorNamesCurrentAndExpectedState(t *testing.T) {
 	root := t.TempDir()
 	wfID, revision := createWorkflow(t, root)
-	failed := runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", strconv.FormatInt(revision, 10), "--actor", "archivist")
+	input := writeInput(t, root, "aggregate.json", `{"verdict":"approved","summary":"aggregate matches","findings":""}`)
+	failed := runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", strconv.FormatInt(revision, 10), "--actor", "pc2-reviewer", "--input-file", input)
 	if failed.code != int(envelope.State) || failed.stdout != "" {
 		t.Fatalf("state failure=%#v", failed)
 	}
-	if !strings.Contains(failed.stderr, "current state draft") || !strings.Contains(failed.stderr, "expected ready_to_complete") {
+	if !strings.Contains(failed.stderr, "current workflow state draft") || !strings.Contains(failed.stderr, "expected ready_to_complete") {
 		t.Fatalf("state error omits current/expected: %s", failed.stderr)
 	}
 }

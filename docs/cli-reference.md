@@ -11,7 +11,7 @@ pitcrew tui
 pitcrew principles
 ```
 
-A planned workflow normally progresses through exploration, specification, design, planning, approval, implementation, independent review, and completion. Use the `next_action` returned by each successful envelope rather than guessing the next transition.
+A full workflow progresses through exploration, specification, design, planning, approval, implementation, and independent aggregate review/completion. Unit review is selective. Use the `next_action` returned by each successful envelope rather than guessing the next transition.
 
 ## Closed command matrix
 
@@ -27,7 +27,7 @@ A planned workflow normally progresses through exploration, specification, desig
 | `workflow approve-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> [--approve-exception <wu-id> ...]` |
 | `workflow list-ready-units` | `--workflow-id <wf-id>` |
 | `workflow begin-implementation` | `--workflow-id <wf-id> --revision <n> --actor <label>` |
-| `workflow complete` | `--workflow-id <wf-id> --revision <n> --actor <label>` |
+| `workflow complete` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow abandon` | `--workflow-id <wf-id> --revision <n> --actor <label> --reason <text>` |
 | `workflow claim-unit` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
 | `workflow recover-unit-claim` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
@@ -51,7 +51,7 @@ Global `--help` and `--version` are flags, not commands. `principles [--json]` p
 {"content":"non-empty artifact content"}
 ```
 
-The command infers `exploration`, `specification`, or `design`. `workflow show` returns all accepted artifacts ordered by revision and insertion order.
+The command infers `exploration`, `specification`, or `design`. While a workflow remains in `exploring`, `specifying`, or `designing`, its corresponding stage command may be repeated to append an amendment. The amendment increments the revision without advancing the state, and the response keeps the forward `next_action`. `workflow show` returns all accepted artifacts ordered by revision and insertion order. Later and terminal states still reject stage amendments.
 
 ### Plan
 
@@ -89,7 +89,7 @@ Units over 400 changed lines or 60 review minutes require a non-empty `admission
 }
 ```
 
-### Review
+### Unit review
 
 Approved:
 
@@ -104,6 +104,12 @@ Corrections:
 ```
 
 Outside-plan corrections use `"plan_impact":"outside"` and return `daimon revise plan`, requiring Daimon to revise the plan through a new OpenSpec change.
+
+Unit review is optional: current TDD evidence plus the active owner handle can complete a unit without an approval. A corrections verdict still reopens the unit and requires fresh evidence.
+
+### Aggregate review
+
+`workflow complete` uses the approved review shape above, or a corrections payload without `plan_impact`. The independent reviewer compares the repository result and tests with requirements, every specification/design amendment, the approved plan and tasks, current implementation evidence, and unit reviews. Approval records the review and completes atomically. Corrections record the review, advance workflow CAS, remain `ready_to_complete`, and return control to Daimon for a fresh correction/review cycle.
 
 ## Envelopes and exit codes
 
@@ -122,7 +128,7 @@ Failures write one single-line JSON error to stderr and nothing to stdout.
 - `4 — CAS`
 - `5 — handle`
 
-Workflow mutations compare `--revision` with the aggregate revision. Unit commands compare it with the unit revision. On exit `4`, inspect current state; never retry blindly.
+Workflow mutations compare `--revision` with the aggregate revision. Unit commands compare it with the unit revision. On exit `3` or `4`, inspect current state once. If the attempted work is legitimate but the harness blocks it, surface the obstruction; never repeat an identical command.
 
 ## Opaque claims
 

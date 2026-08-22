@@ -32,8 +32,8 @@ before they read `MAXIMS.md`. See `MAXIMS.md` for the canonical wording.
 2. **The harness serves the result, never the other way around.** Defaults
    are safe; every default has a documented, auditable escape hatch.
 
-3. **The harness is the usual path, not the only path.** For trivial work,
-   skip the harness. For everything else, use it.
+3. **The harness is the usual path, not the only path.** Use proportional
+   direct, delegated-direct, or full-workflow routing according to risk and uncertainty.
 
 4. **Short scope, easy to complete, always.** Decompose large ambitions into
    stacked changes. A change that grows past its budget is split, not merged
@@ -94,8 +94,8 @@ justified explicitly in its own OpenSpec proposal.
 ## Orchestration model
 
 The control plane is a **shared memory**, not a Daimon proxy. Every role
-(Daimon, Explorer, Specifier, Designer, TaskPlanner, Implementer, Reviewer,
-Archivist) invokes the `pitcrew` CLI directly. Daimon orchestrates by
+(Daimon, Explorer, Specifier, Designer, TaskPlanner, Implementer, Reviewer)
+invokes the `pitcrew` CLI directly. Daimon orchestrates by
 sending short messages; it does not relay content.
 
 Two channels:
@@ -120,29 +120,27 @@ Consequences:
 
 ## Roles and their CLI surface
 
-Eight roles, each with a minimal subcommand surface. The canonical sequence
-(one unit at a time, in dependency order):
+Seven roles use an advisory subcommand surface. A full-workflow sequence is:
 
 ```
 user → Daimon → Explorer → Specifier → Designer → TaskPlanner
       → Daimon approves
       → Implementer (claim + unit-tdd)
-      → Reviewer (unit-review)
+      → optional Reviewer (unit-review)
       → Implementer (unit-complete)
       → repeat per unit
-      → Archivist (complete)
+      → Reviewer (aggregate review + complete)
 ```
 
 | Role         | Subcommands                          |
 |--------------|---------------------------------------|
-| Daimon       | `new`, `show`, `approve-plan`, `abandon`, `complete` (optional) |
+| Daimon       | all workflow commands when coordination requires them |
 | Explorer     | `explore`                             |
 | Specifier    | `spec`                                |
 | Designer     | `design`                              |
 | TaskPlanner  | `plan`                                |
 | Implementer  | `list-ready-units`, `claim-unit`, `unit-tdd`, `unit-complete` |
-| Reviewer     | `unit-review`                         |
-| Archivist    | `complete`                            |
+| Reviewer     | `unit-review`, `complete`             |
 
 Hand-off contract:
 
@@ -157,8 +155,23 @@ Hand-off contract:
 
 Failure handling:
 
-- Exit code `3` or `4` → Daimon decides whether to retry after re-inspecting
-  (`workflow show`) or surface to the user.
+- Exit code `3` or `4` → Daimon runs `workflow show` once. If the attempted
+  work is legitimate but the harness blocks it, Daimon surfaces the obstruction
+  and SHALL NOT issue an identical retry.
 - Exit code `5` (handle error) → Daimon waits 5 minutes for expiry, then
   re-claims.
-- Daimon SHALL NOT retry blindly on CAS error; SHALL re-inspect first.
+
+Routing is proportional. Daimon directly implements and verifies well-understood,
+low-risk work affecting at most three files without calling it independent
+approval. Simple work affecting four or more files uses pc2-implementer and one
+independent complete-change review. Complexity, high impact, changed requirements
+or architecture, security, migrations, persistence, irreversibility, or
+uncertainty require the full workflow regardless of file count.
+
+Unit review is selective. Every full workflow requires a final independent
+aggregate review against requirements, specifications, design, tasks,
+implementation evidence, and tests. Daimon may call any advisory command and,
+after one inspection, abandon an obstructive non-terminal workflow with a recorded
+reason. It may not forge review, bypass aggregate review, disclose handle contents
+or secrets, discard evidence, or mutate terminal workflows. When unit review is
+selected, Daimon passes only the opaque handle path to pc2-reviewer.

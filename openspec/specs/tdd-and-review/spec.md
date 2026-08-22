@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define test evidence, independent review, corrections, and completion for one work-unit revision.
+Define test evidence, selective unit review, corrections, unit completion, and authoritative aggregate review.
 
 ## Requirements
 
@@ -39,7 +39,7 @@ The accepted TDD actor and review `--actor` SHALL be non-empty declarative label
 
 ### Requirement: Correction outcomes
 
-An `inside` correction SHALL record the verdict/findings, return the unit to `pending`, and increment its revision for re-claim and new evidence. An `outside` correction SHALL do the same and set a response signal requiring Master plan revision and a new OpenSpec change before execution resumes.
+An `inside` correction SHALL record the verdict/findings, return the unit to `pending`, and increment its revision for re-claim and new evidence. An `outside` correction SHALL do the same and set a response signal requiring Daimon plan revision and a new OpenSpec change before execution resumes.
 
 #### Scenario: Inside correction increments revision
 
@@ -47,22 +47,32 @@ An `inside` correction SHALL record the verdict/findings, return the unit to `pe
 - WHEN the review succeeds
 - THEN the unit SHALL become pending at revision n+1
 
-### Requirement: Approval and completion
+### Requirement: Selective unit review and completion
 
-An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL require that state, exactly one latest approved verdict for the explicit unit revision, and a valid active `--claim-handle`. It SHALL move the unit to `done`, revoke the handle, and move the aggregate to `ready_to_complete` atomically when all units are done.
+An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL require current TDD evidence, the `reviewing` state, and a valid active owner `--claim-handle`; it SHALL accept zero or one approval. A corrections verdict SHALL continue to reopen the unit and require fresh evidence. Completion SHALL move the unit to `done`, revoke the handle, and move the aggregate to `ready_to_complete` atomically when all units are done.
 
 #### Scenario: Approved unit completes
 
-- GIVEN latest approval and a valid active handle
+- GIVEN current evidence with zero or one approval and a valid active handle
 - WHEN unit-complete succeeds
 - THEN the unit SHALL become done and the handle SHALL be revoked
 
-### Requirement: Trivial-work exception
+### Requirement: Independent aggregate review
 
-The Master MAY skip the harness for trivial work and SHALL disclose that choice to the user. The CLI SHALL NOT classify triviality.
+`workflow complete --input-file` SHALL accept an existing review verdict shape with `approved|corrections`, summary, and findings. It SHALL reject an actor matching implementation evidence for any current unit revision. The reviewer SHALL validate the repository result and tests against requirements, all specification/design amendments, plan/tasks, current evidence, and unit reviews. Approval SHALL append an `aggregate_review` artifact and atomically complete the workflow. Corrections SHALL append the artifact, advance workflow CAS in `ready_to_complete`, and require a fresh aggregate review after Daimon coordinates fixes.
+
+#### Scenario: Aggregate corrections preserve flow
+
+- GIVEN all units are done and an independent reviewer reports corrections
+- WHEN workflow complete succeeds
+- THEN the review SHALL persist, workflow CAS SHALL advance, state SHALL remain ready_to_complete, and the response SHALL return an executable correction path
+
+### Requirement: Proportional external routing
+
+Daimon SHALL directly implement and verify well-understood low-risk work affecting at most three files without claiming independent approval. Simple work affecting four or more files SHALL use direct delegation to pc2-implementer followed by one independent complete-change review. Complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty SHALL require the full workflow regardless of size. The CLI SHALL NOT classify routes.
 
 #### Scenario: Trivial bypass is external
 
-- GIVEN the Master discloses a trivial-work bypass
+- GIVEN Daimon selects a valid route outside a full workflow
 - WHEN no workflow command runs
 - THEN the CLI SHALL impose no triviality check

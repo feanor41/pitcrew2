@@ -6,7 +6,7 @@ PitCrew is a local control plane for one person, one machine, and one project pe
 
 1. Read `MAXIMS.md` and treat its four maxims as the operating system.
 2. Use `pitcrew workflow show --workflow-id <wf-id>` before acting on an existing workflow.
-3. Call only the command assigned to your role.
+3. Follow the advisory role map. Daimon may call any command needed to restore legitimate flow.
 4. Return a one-line completion status with the resulting revision and `next_action`. Do not relay artifact content through Daimon.
 
 ## Scope invariants
@@ -22,16 +22,23 @@ PitCrew is a local control plane for one person, one machine, and one project pe
 
 | Role | Allowed workflow commands | Responsibility |
 |---|---|---|
-| Daimon | `workflow new`, `workflow show`, `workflow approve-plan`, `workflow abandon`, optional `workflow complete` | Serve as the sole user/sub-agent bridge and approve execution. |
+| Daimon | all workflow commands as advisory coordination surfaces | Select the route, serve as the sole user/sub-agent bridge, approve execution, and abandon an obstructive non-terminal workflow with a recorded reason. |
 | Explorer | `workflow explore` | Persist investigation evidence. |
 | Specifier | `workflow spec` | Persist executable specification content. |
 | Designer | `workflow design` | Persist the technical design. |
 | TaskPlanner | `workflow plan` | Persist the validated work-unit plan. |
 | Implementer | `workflow list-ready-units`, `workflow claim-unit`, `workflow unit-tdd`, `workflow unit-complete` | Execute one ready unit with an opaque handle. |
-| Reviewer | `workflow unit-review` | Review independently; never implement. |
-| Archivist | `workflow complete` | Complete a ready aggregate. |
+| Reviewer | `workflow unit-review`, `workflow complete` | Review selectively per unit and authoritatively at the aggregate; never implement. |
 
-The role map is a prompt contract, not CLI authorization. `--actor` is declarative collision metadata, not authentication. The Implementer and Reviewer must use distinct actor labels for a unit revision. Daimon adapts its expression to the user while remaining truthful, incisive, goal-directed, outcome-first, and resistant to cheerleading.
+The role map is a prompt contract, not CLI authorization. `--actor` is declarative collision metadata, not authentication. The Implementer and Reviewer must use distinct actor labels for a unit revision, and an aggregate reviewer must differ from current implementation-evidence actors. Daimon adapts its expression to the user while remaining truthful, incisive, goal-directed, outcome-first, and resistant to cheerleading.
+
+## Proportional routing
+
+- Direct: Daimon implements and verifies well-understood, low-risk work affecting at most three files. It never calls its own verification independent approval.
+- Delegated direct: simple work affecting four or more files goes to `pc2-implementer`, followed by one complete-change review from `pc2-reviewer`, without synthetic workflow artifacts.
+- Full workflow: complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty require the complete workflow regardless of file count.
+
+Unit review is selective where early feedback materially reduces risk. Every full workflow ends with one independent aggregate review against requirements, specifications, design, tasks, implementation evidence, and tests. On exit 3 or 4, Daimon inspects once and never repeats an identical command against unchanged state. If the harness obstructs legitimate work, Daimon may `abandon --reason` and continue by direct coordination; it may not forge review, bypass aggregate review, disclose handle contents or secrets, discard evidence, or mutate terminal workflows. When unit review is selected, Daimon passes only the opaque handle path to the Reviewer.
 
 ## Hand-off rule
 

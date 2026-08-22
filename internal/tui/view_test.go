@@ -60,12 +60,12 @@ func TestViewStatesAndResize(t *testing.T) {
 			}
 			model, _ := test.model.Update(tea.WindowSizeMsg{Width: width, Height: height})
 			got := model.View().Content
-			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.2.0"} {
+			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.3.0"} {
 				if !strings.Contains(got, identity) {
 					t.Fatalf("view missing identity %q:\n%s", identity, got)
 				}
 			}
-			if !strings.Contains(got, flight.version.Render("v0.2.0")) {
+			if !strings.Contains(got, flight.version.Render("v0.3.0")) {
 				t.Fatalf("view lacks version accent:\n%s", got)
 			}
 			for _, want := range test.want {
@@ -92,7 +92,7 @@ func TestViewGridMetadataTimelineAndVersionAccent(t *testing.T) {
 			t.Fatalf("grid missing %q:\n%s", want, grid.View().Content)
 		}
 	}
-	if !strings.Contains(grid.View().Content, flight.version.Render("v0.2.0")) {
+	if !strings.Contains(grid.View().Content, flight.version.Render("v0.3.0")) {
 		t.Fatalf("version lacks dedicated accent:\n%s", grid.View().Content)
 	}
 	detail, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 112, Height: 28})
@@ -131,7 +131,7 @@ func TestViewLargeWordmarkAcrossLayouts(t *testing.T) {
 				t.Fatalf("%dx%d missing large wordmark row %q:\n%s", size.Width, size.Height, row, got)
 			}
 		}
-		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.2.0")) {
+		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.3.0")) {
 			t.Fatalf("%dx%d missing accessible identity or version accent:\n%s", size.Width, size.Height, got)
 		}
 	}

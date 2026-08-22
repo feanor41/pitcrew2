@@ -26,27 +26,28 @@ type Entry struct {
 }
 
 const (
-	WorkflowCreated       Action      = "workflow_created"
-	ExplorationRecorded   Action      = "exploration_recorded"
-	SpecificationRecorded Action      = "specification_recorded"
-	DesignRecorded        Action      = "design_recorded"
-	PlanSubmitted         Action      = "plan_submitted"
-	PlanApproved          Action      = "plan_approved"
-	ImplementationStarted Action      = "implementation_started"
-	WorkflowCompleted     Action      = "workflow_completed"
-	WorkflowAbandoned     Action      = "workflow_abandoned"
-	UnitClaimed           Action      = "unit_claimed"
-	UnitClaimRecovered    Action      = "unit_claim_recovered"
-	UnitTDDRecorded       Action      = "unit_tdd_recorded"
-	UnitReviewRecorded    Action      = "unit_review_recorded"
-	UnitCompleted         Action      = "unit_completed"
-	Workflow              SubjectKind = "workflow"
-	Event                 SubjectKind = "event"
-	Artifact              SubjectKind = "artifact"
-	Plan                  SubjectKind = "plan"
-	WorkUnit              SubjectKind = "work_unit"
-	Evidence              SubjectKind = "evidence"
-	Review                SubjectKind = "review"
+	WorkflowCreated         Action      = "workflow_created"
+	ExplorationRecorded     Action      = "exploration_recorded"
+	SpecificationRecorded   Action      = "specification_recorded"
+	DesignRecorded          Action      = "design_recorded"
+	PlanSubmitted           Action      = "plan_submitted"
+	PlanApproved            Action      = "plan_approved"
+	ImplementationStarted   Action      = "implementation_started"
+	WorkflowCompleted       Action      = "workflow_completed"
+	WorkflowAbandoned       Action      = "workflow_abandoned"
+	UnitClaimed             Action      = "unit_claimed"
+	UnitClaimRecovered      Action      = "unit_claim_recovered"
+	UnitTDDRecorded         Action      = "unit_tdd_recorded"
+	UnitReviewRecorded      Action      = "unit_review_recorded"
+	AggregateReviewRecorded Action      = "aggregate_review_recorded"
+	UnitCompleted           Action      = "unit_completed"
+	Workflow                SubjectKind = "workflow"
+	Event                   SubjectKind = "event"
+	Artifact                SubjectKind = "artifact"
+	Plan                    SubjectKind = "plan"
+	WorkUnit                SubjectKind = "work_unit"
+	Evidence                SubjectKind = "evidence"
+	Review                  SubjectKind = "review"
 )
 
 var (
@@ -56,7 +57,7 @@ var (
 		WorkflowCreated: Workflow, ExplorationRecorded: Artifact, SpecificationRecorded: Artifact, DesignRecorded: Artifact,
 		PlanSubmitted: Plan, PlanApproved: Plan, ImplementationStarted: Event, WorkflowCompleted: Event,
 		WorkflowAbandoned: Event, UnitClaimed: WorkUnit, UnitClaimRecovered: WorkUnit, UnitTDDRecorded: Evidence,
-		UnitReviewRecorded: Review, UnitCompleted: WorkUnit,
+		UnitReviewRecorded: Review, UnitCompleted: WorkUnit, AggregateReviewRecorded: Artifact,
 	}
 )
 

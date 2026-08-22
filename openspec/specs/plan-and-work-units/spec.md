@@ -19,7 +19,7 @@ Define plan submission, validation, admission, approval, and executable-unit dis
 
 ### Requirement: Prefixes and dependencies
 
-Plan/unit scope and areas SHALL be normalized repository-relative file or directory prefixes without globs. Unit ids SHALL be unique. Every dependency SHALL name a submitted unit, and the graph SHALL be acyclic. Any overlap among two units' scope/areas SHALL return exit code `3` unless one `overlap_approvals` entry names that exact pair; the approval SHALL become effective only when the Master approves the plan.
+Plan/unit scope and areas SHALL be normalized repository-relative file or directory prefixes without globs. Unit ids SHALL be unique. Every dependency SHALL name a submitted unit, and the graph SHALL be acyclic. Any overlap among two units' scope/areas SHALL return exit code `3` unless one `overlap_approvals` entry names that exact pair; the approval SHALL become effective only when Daimon approves the plan.
 
 #### Scenario: Invalid graph is rejected
 
@@ -49,7 +49,7 @@ A unit SHALL be admitted by default only when changed lines ≤400 and review mi
 
 ### Requirement: Stacked delivery
 
-The Master MAY split delivery into stacked changes; each chosen slice SHALL target ≤400 changed lines and ≤60 review minutes. This is an orchestration decision; the CLI SHALL only enforce per-unit admission.
+Daimon MAY split delivery into stacked changes; each chosen slice SHALL target ≤400 changed lines and ≤60 review minutes. This is an orchestration decision; the CLI SHALL only enforce per-unit admission.
 
 #### Scenario: Stacking remains external
 

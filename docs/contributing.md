@@ -48,7 +48,7 @@ A work unit targets at most 400 authored changed lines and 60 review minutes. Wh
 
 When changing `scripts/install-templates.sh`, prove all of these:
 
-- every supported runtime installs eight role fragments plus `agent-contract.md`;
+- every supported runtime installs seven role fragments plus `agent-contract.md`;
 - every role contains the exact filesystem `MAXIMS.md` bytes and hand-off reminder;
 - a byte-identical reinstall is a no-op;
 - an existing `master.md` or customized `daimon.md` is protected unless `--overwrite` is explicit;

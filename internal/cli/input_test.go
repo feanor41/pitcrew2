@@ -72,7 +72,7 @@ func TestEveryWorkflowCommandRequiresItsExactFlagMatrix(t *testing.T) {
 		"approve-plan":         append([]string{}, base...),
 		"list-ready-units":     {"--workflow-id", "wf-000000000000000000000001"},
 		"begin-implementation": append([]string{}, base...),
-		"complete":             append([]string{}, base...),
+		"complete":             append(append([]string{}, base...), "--input-file", input),
 		"abandon":              append(append([]string{}, base...), "--reason", "stop"),
 		"claim-unit":           append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
 		"recover-unit-claim":   append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
@@ -118,6 +118,7 @@ func TestDTOsRequireEveryDeclaredFieldBeforeStoreOpen(t *testing.T) {
 		{"TDD refactor", "unit-tdd", `{"red_command":"r","red_outcome":"fail","green_command":"g","green_outcome":"pass","validation_command":"v","validation_outcome":"pass","changed_paths":"internal"}`, identity},
 		{"TDD changed path", "unit-tdd", `{"red_command":"r","red_outcome":"fail","green_command":"g","green_outcome":"pass","refactor_summary":"","validation_command":"v","validation_outcome":"pass","changed_paths":"../secret"}`, identity},
 		{"review summary", "unit-review", `{"verdict":"approved","findings":""}`, identity},
+		{"aggregate review findings", "complete", `{"verdict":"corrections","summary":"changes"}`, []string{"--workflow-id", "wf-000000000000000000000001", "--revision", "1", "--actor", "reviewer"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

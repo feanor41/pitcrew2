@@ -114,7 +114,7 @@ func TestRecordReviewCorrectionsIncrementRevisionAndPersistFindings(t *testing.T
 	}
 }
 
-func TestCompletionRequiresApprovedReviewAndValidHandle(t *testing.T) {
+func TestCompletionAllowsSelectiveReviewAndRequiresValidHandle(t *testing.T) {
 	svc, db, wfID, unitID := evidenceService(t)
 	ctx := context.Background()
 	if err := svc.RecordTDD(ctx, wfID, unitID, 1, validTDD()); err != nil {
@@ -122,12 +122,6 @@ func TestCompletionRequiresApprovedReviewAndValidHandle(t *testing.T) {
 	}
 	if err := svc.CompleteUnit(ctx, wfID, unitID, 1, 1, false, "implementer"); !errors.Is(err, ErrInvalidHandle) {
 		t.Fatalf("invalid handle error=%v", err)
-	}
-	if err := svc.CompleteUnit(ctx, wfID, unitID, 1, 1, true, "implementer"); !errors.Is(err, ErrReviewRequired) {
-		t.Fatalf("missing review error=%v", err)
-	}
-	if _, err := svc.RecordReview(ctx, Review{WorkflowID: wfID, UnitID: unitID, Revision: 1, Actor: "reviewer", Verdict: Approved, Summary: "solid"}); err != nil {
-		t.Fatal(err)
 	}
 	if err := svc.CompleteUnit(ctx, wfID, unitID, 1, 1, true, "implementer"); err != nil {
 		t.Fatal(err)
@@ -141,6 +135,97 @@ func TestCompletionRequiresApprovedReviewAndValidHandle(t *testing.T) {
 	}
 	if unitState != "done" || workflowState != "ready_to_complete" {
 		t.Fatalf("unit=%s workflow=%s", unitState, workflowState)
+	}
+}
+
+func TestCompleteAggregateAppendsReviewAndAppliesVerdictAtomically(t *testing.T) {
+	tests := []struct {
+		name, verdict, findings, wantState string
+	}{
+		{"corrections preserve ready state", string(Corrections), "fix integration", "ready_to_complete"},
+		{"approval completes workflow", string(Approved), "", "completed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, db, wfID, unitID := evidenceService(t)
+			_, err := db.Exec(`UPDATE workflows SET state='ready_to_complete',revision=2 WHERE id=?`, wfID)
+			if err == nil {
+				_, err = db.Exec(`UPDATE work_units SET state='done',revision=2 WHERE id=?`, unitID)
+			}
+			if err == nil {
+				_, err = db.Exec(`INSERT INTO evidence(workflow_id,unit_id,revision,actor,red_command,red_outcome,green_command,green_outcome,refactor_summary,validation_command,validation_outcome,changed_paths,recorded_at) VALUES(?,?,1,'aggregate-reviewer','red','exit 1','green','exit 0','','validate','exit 0','internal','now')`, wfID, unitID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := svc.CompleteAggregate(context.Background(), wfID, 2, AggregateReview{Actor: "aggregate-reviewer", Verdict: Verdict(tt.verdict), Summary: "checked sources", Findings: tt.findings})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Revision != 3 || out.State != tt.wantState {
+				t.Fatalf("outcome=%#v", out)
+			}
+			var state string
+			var revision, artifacts, events, activities int
+			_ = db.QueryRow(`SELECT state,revision FROM workflows WHERE id=?`, wfID).Scan(&state, &revision)
+			_ = db.QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=? AND kind='aggregate_review'`, wfID).Scan(&artifacts)
+			_ = db.QueryRow(`SELECT count(*) FROM events WHERE workflow_id=? AND revision_after=3`, wfID).Scan(&events)
+			_ = db.QueryRow(`SELECT count(*) FROM activities WHERE workflow_id=? AND action='aggregate_review_recorded'`, wfID).Scan(&activities)
+			if state != tt.wantState || revision != 3 || artifacts != 1 || events != 1 || activities != 1 {
+				t.Fatalf("state=%s revision=%d artifacts=%d events=%d activities=%d", state, revision, artifacts, events, activities)
+			}
+		})
+	}
+}
+
+func TestCompleteAggregateRollsBackWhenActivityCannotPersist(t *testing.T) {
+	svc, db, wfID, unitID := evidenceService(t)
+	_, _ = db.Exec(`UPDATE workflows SET state='ready_to_complete',revision=2 WHERE id=?`, wfID)
+	_, _ = db.Exec(`UPDATE work_units SET state='done' WHERE id=?`, unitID)
+	_, _ = db.Exec(`CREATE TRIGGER reject_aggregate_activity BEFORE INSERT ON activities WHEN NEW.action='aggregate_review_recorded' BEGIN SELECT RAISE(ABORT, 'reject activity'); END`)
+	_, err := svc.CompleteAggregate(context.Background(), wfID, 2, AggregateReview{Actor: "reviewer", Verdict: Approved})
+	if err == nil {
+		t.Fatal("expected activity persistence failure")
+	}
+	var state string
+	var revision, artifacts, events int
+	_ = db.QueryRow(`SELECT state,revision FROM workflows WHERE id=?`, wfID).Scan(&state, &revision)
+	_ = db.QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=?`, wfID).Scan(&artifacts)
+	_ = db.QueryRow(`SELECT count(*) FROM events WHERE workflow_id=? AND revision_after=3`, wfID).Scan(&events)
+	if state != "ready_to_complete" || revision != 2 || artifacts != 0 || events != 0 {
+		t.Fatalf("state=%s revision=%d artifacts=%d events=%d", state, revision, artifacts, events)
+	}
+}
+
+func TestCompleteAggregateRejectsImplementerActorCASAndIncompleteUnitsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name, actor string
+		revision    int64
+		unitDone    bool
+		want        error
+	}{
+		{"implementer collision", "implementer", 2, true, ErrInvalidState},
+		{"stale workflow revision", "reviewer", 1, true, store.ErrCASMismatch},
+		{"incomplete unit", "reviewer", 2, false, ErrInvalidState},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, db, wfID, unitID := evidenceService(t)
+			_, _ = db.Exec(`UPDATE workflows SET state='ready_to_complete',revision=2 WHERE id=?`, wfID)
+			_, _ = db.Exec(`INSERT INTO evidence(workflow_id,unit_id,revision,actor,red_command,red_outcome,green_command,green_outcome,refactor_summary,validation_command,validation_outcome,changed_paths,recorded_at) VALUES(?,?,1,'implementer','red','exit 1','green','exit 0','','validate','exit 0','internal','now')`, wfID, unitID)
+			if tt.unitDone {
+				_, _ = db.Exec(`UPDATE work_units SET state='done' WHERE id=?`, unitID)
+			}
+			_, err := svc.CompleteAggregate(context.Background(), wfID, tt.revision, AggregateReview{Actor: tt.actor, Verdict: Approved})
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("error=%v want=%v", err, tt.want)
+			}
+			var artifacts int
+			_ = db.QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=?`, wfID).Scan(&artifacts)
+			if artifacts != 0 {
+				t.Fatalf("artifacts=%d", artifacts)
+			}
+		})
 	}
 }
 

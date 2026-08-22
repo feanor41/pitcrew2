@@ -38,14 +38,13 @@ file it modified and SHALL exit non-zero.
 
 The installer SHALL write one prompt fragment per role:
 
-- `master.md`
-- `explorer.md`
-- `specifier.md`
-- `designer.md`
-- `task-planner.md`
-- `implementer.md`
-- `reviewer.md`
-- `archivist.md`
+- `daimon.md`
+- `pc2-explorer.md`
+- `pc2-specifier.md`
+- `pc2-designer.md`
+- `pc2-task-planner.md`
+- `pc2-implementer.md`
+- `pc2-reviewer.md`
 
 Each fragment SHALL begin with the verbatim text of `MAXIMS.md`,
 prefixed with:
@@ -57,7 +56,8 @@ prefixed with:
 
 - GIVEN a supported runtime
 - WHEN installation succeeds
-- THEN all eight named role fragments SHALL exist
+- THEN all seven named role fragments SHALL exist
+- AND obsolete unprefixed role fragments and `pc2-archivist.md` SHALL be absent
 
 ### Requirement: Agent-contract fragment
 
@@ -76,18 +76,18 @@ the prohibitions common to every role. The prohibitions SHALL include:
 - WHEN the contract fragment is read
 - THEN it SHALL contain every listed prohibition
 
-### Requirement: Master fragment overwrite protection
+### Requirement: Prompt overwrite protection
 
-The installer SHALL refuse to overwrite `master.md` without an
-explicit `--overwrite` flag. All other fragments SHALL be overwritten
-without ceremony. The Master fragment is the default user-facing
-agent prompt; overwriting it silently is a footgun.
+The installer SHALL refuse to overwrite any differing current or obsolete prompt
+without an explicit `--overwrite` flag. Overwrite installation SHALL transactionally
+refresh current prompts and remove obsolete prompts, including `pc2-archivist.md`;
+failure or interruption SHALL restore the exact prior prompt set.
 
-#### Scenario: Master overwrite is refused
+#### Scenario: Prompt overwrite is refused
 
-- GIVEN master.md already exists
+- GIVEN any managed prompt already differs
 - WHEN installation lacks --overwrite
-- THEN it SHALL fail without replacing master.md
+- THEN it SHALL fail without changing installed bytes
 
 ### Requirement: Reading MAXIMS.md
 
@@ -105,8 +105,8 @@ the fragment SHALL match `MAXIMS.md` byte-for-byte at install time.
 
 Every role fragment SHALL include the reminder:
 
-> You do not return your output to the Master. You call the control
-> plane yourself. The Master only learns that you finished.
+> Persist your output through the control plane yourself. Return only a
+> one-line completion status to Daimon, the sole coordinator and user contact.
 
 #### Scenario: Reminder is present
 
@@ -139,7 +139,7 @@ The installer SHALL be exercised by POSIX shell smoke tests under
 
 - idempotency (running twice),
 - partial-write rollback (simulated mid-write failure),
-- Master fragment overwrite refusal without `--overwrite`,
+- differing prompt refusal without `--overwrite`,
 - unsupported runtime detection.
 
 #### Scenario: Installer contracts are exercised

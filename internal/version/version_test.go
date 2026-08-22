@@ -8,8 +8,8 @@ import (
 const semVer2Pattern = `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`
 
 func TestVersionCurrentIsCanonicalSemVer(t *testing.T) {
-	if Current != "0.2.0" {
-		t.Fatalf("Current = %q; want 0.2.0", Current)
+	if Current != "0.3.0" {
+		t.Fatalf("Current = %q; want 0.3.0", Current)
 	}
 	if !regexp.MustCompile(semVer2Pattern).MatchString(Current) {
 		t.Fatalf("Current = %q; want SemVer 2.0.0", Current)

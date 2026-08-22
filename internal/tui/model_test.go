@@ -80,7 +80,7 @@ func TestModelVersionAndActivityDrillDown(t *testing.T) {
 	want := history.Resolution{Detail: history.Detail{Timeline: []history.Activity{activity}, Records: []history.Record{record}}, Record: record}
 	model := New(fakeLoader{activityResolution: want})
 	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: want.Detail}})
-	if model.Version() != "0.2.0" {
+	if model.Version() != "0.3.0" {
 		t.Fatalf("Version() = %q", model.Version())
 	}
 	for _, key := range []tea.KeyPressMsg{special(tea.KeyEnter), special(tea.KeyRight), textKey("l")} {

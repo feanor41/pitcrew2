@@ -59,6 +59,16 @@ type ReviewOutcome struct {
 	NextRevision         int64
 	PlanRevisionRequired bool
 }
+type AggregateReview struct {
+	Verdict  Verdict `json:"verdict"`
+	Summary  string  `json:"summary"`
+	Findings string  `json:"findings"`
+	Actor    string  `json:"-"`
+}
+type AggregateOutcome struct {
+	Revision int64  `json:"revision"`
+	State    string `json:"state"`
+}
 type Service struct {
 	db  *sql.DB
 	now func() time.Time
@@ -141,6 +151,19 @@ func (r Review) Validate() error {
 	}
 	if r.Verdict == Approved && r.PlanImpact != "" {
 		return fmt.Errorf("approved review must omit plan impact")
+	}
+	return nil
+}
+
+func (r AggregateReview) Validate() error {
+	if r.Verdict != Approved && r.Verdict != Corrections {
+		return fmt.Errorf("invalid aggregate review verdict")
+	}
+	if strings.TrimSpace(r.Actor) == "" {
+		return fmt.Errorf("aggregate reviewer actor is required")
+	}
+	if r.Verdict == Corrections && strings.TrimSpace(r.Findings) == "" {
+		return fmt.Errorf("aggregate corrections require findings")
 	}
 	return nil
 }
@@ -312,13 +335,6 @@ func (s *Service) completeUnitTx(ctx context.Context, tx *sql.Tx, wfID, unitID, 
 	if state != "reviewing" {
 		return fmt.Errorf("%w: current state %s; expected reviewing", ErrInvalidState, state)
 	}
-	var approved int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews WHERE workflow_id=? AND unit_id=? AND revision=? AND verdict='approved'`, wfID, unitID, unitRevision).Scan(&approved); err != nil {
-		return err
-	}
-	if approved != 1 {
-		return ErrReviewRequired
-	}
 	if claimID != "" {
 		result, updateErr := tx.ExecContext(ctx, `UPDATE handles SET state='revoked' WHERE claim_id=? AND workflow_id=? AND unit_id=? AND state='active'`, claimID, wfID, unitID)
 		if updateErr != nil {
@@ -368,4 +384,81 @@ func (s *Service) completeUnitTx(ctx context.Context, tx *sql.Tx, wfID, unitID, 
 		}
 	}
 	return activity.AppendTx(ctx, tx, activity.New(wfID, unitID, activity.UnitCompleted, actor, now, activity.UnitSubject(unitID)))
+}
+
+func (s *Service) CompleteAggregate(ctx context.Context, wfID string, revision int64, review AggregateReview) (AggregateOutcome, error) {
+	if err := review.Validate(); err != nil {
+		return AggregateOutcome{}, err
+	}
+	payload, err := json.Marshal(review)
+	if err != nil {
+		return AggregateOutcome{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AggregateOutcome{}, err
+	}
+	defer tx.Rollback()
+	var state string
+	var current int64
+	if err = tx.QueryRowContext(ctx, `SELECT state,revision FROM workflows WHERE id=?`, wfID).Scan(&state, &current); err != nil {
+		return AggregateOutcome{}, err
+	}
+	if current != revision {
+		return AggregateOutcome{}, store.ErrCASMismatch
+	}
+	if state != "ready_to_complete" {
+		return AggregateOutcome{}, fmt.Errorf("%w: current workflow state %s; expected ready_to_complete", ErrInvalidState, state)
+	}
+	var count int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM work_units WHERE workflow_id=? AND state!='done'`, wfID).Scan(&count); err != nil {
+		return AggregateOutcome{}, err
+	}
+	if count != 0 {
+		return AggregateOutcome{}, fmt.Errorf("%w: aggregate review requires all units done", ErrInvalidState)
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM evidence e JOIN work_units u ON u.id=e.unit_id AND u.workflow_id=e.workflow_id AND u.revision=e.revision WHERE e.workflow_id=? AND e.actor=?`, wfID, review.Actor).Scan(&count); err != nil {
+		return AggregateOutcome{}, err
+	}
+	if count != 0 {
+		return AggregateOutcome{}, fmt.Errorf("%w: implementer and aggregate reviewer actors must differ", ErrInvalidState)
+	}
+	now := s.now()
+	at, nextRevision, nextState := ids.FormatTime(now), revision+1, "ready_to_complete"
+	if review.Verdict == Approved {
+		nextState = "completed"
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE workflows SET state=?,revision=?,updated_at=? WHERE id=? AND revision=?`, nextState, nextRevision, at, wfID, revision)
+	if err != nil {
+		return AggregateOutcome{}, err
+	}
+	if changed, changeErr := result.RowsAffected(); changeErr != nil || changed != 1 {
+		if changeErr != nil {
+			return AggregateOutcome{}, changeErr
+		}
+		return AggregateOutcome{}, store.ErrCASMismatch
+	}
+	artifact, err := tx.ExecContext(ctx, `INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,?,?,?,?,?)`, wfID, "aggregate_review", string(payload), review.Actor, nextRevision, at)
+	if err != nil {
+		return AggregateOutcome{}, err
+	}
+	artifactID, err := artifact.LastInsertId()
+	if err != nil {
+		return AggregateOutcome{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,?,?,?,?,?,?)`, wfID, state, nextState, review.Actor, string(review.Verdict), nextRevision, at); err != nil {
+		return AggregateOutcome{}, err
+	}
+	if err = activity.AppendTx(ctx, tx, activity.New(wfID, "", activity.AggregateReviewRecorded, review.Actor, now, activity.ArtifactSubject(artifactID))); err != nil {
+		return AggregateOutcome{}, err
+	}
+	if review.Verdict == Approved {
+		if err = activity.AppendTx(ctx, tx, activity.New(wfID, "", activity.WorkflowCompleted, review.Actor, now, activity.EventSubject(wfID, nextRevision))); err != nil {
+			return AggregateOutcome{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return AggregateOutcome{}, err
+	}
+	return AggregateOutcome{Revision: nextRevision, State: nextState}, nil
 }
