@@ -34,7 +34,7 @@ func TestLifecyclePersistsTransitionsAndAppendOnlyEvents(t *testing.T) {
 	}{
 		{Explore, Exploring}, {Specify, Specifying}, {Design, Designing},
 		{Plan, Planning}, {ApprovePlan, PlanApproved}, {BeginImplementation, Implementing},
-		{AllUnitsCompleted, ReadyToComplete}, {Complete, Completed},
+		{AllUnitsCompleted, ReadyToComplete},
 	}
 	for _, step := range steps {
 		wf, err = svc.Transition(ctx, wf.ID, wf.Revision, step.event, "actor")
@@ -43,7 +43,7 @@ func TestLifecyclePersistsTransitionsAndAppendOnlyEvents(t *testing.T) {
 		}
 	}
 	events, err := svc.Events(ctx, wf.ID)
-	if err != nil || len(events) != 9 || events[len(events)-1].RevisionAfter != wf.Revision {
+	if err != nil || len(events) != 8 || events[len(events)-1].RevisionAfter != wf.Revision {
 		t.Fatalf("Events() = %#v, %v", events, err)
 	}
 }
@@ -74,16 +74,16 @@ func TestTransitionMatrixExecutesEveryLegalAndRejectsEverySourceState(t *testing
 		to    State
 	}{
 		{Draft, Explore, Exploring},
-		{Draft, BeginImplementation, Implementing},
+		{Exploring, Explore, Exploring},
 		{Exploring, Specify, Specifying},
 		{Exploring, Design, Designing},
-		{Exploring, BeginImplementation, Implementing},
+		{Specifying, Specify, Specifying},
 		{Specifying, Design, Designing},
+		{Designing, Design, Designing},
 		{Designing, Plan, Planning},
 		{Planning, ApprovePlan, PlanApproved},
 		{PlanApproved, BeginImplementation, Implementing},
 		{Implementing, AllUnitsCompleted, ReadyToComplete},
-		{ReadyToComplete, Complete, Completed},
 	}
 	for _, tt := range legal {
 		t.Run(string(tt.from)+"_"+string(tt.event), func(t *testing.T) {
@@ -127,16 +127,24 @@ func TestTransitionMatrixExecutesEveryLegalAndRejectsEverySourceState(t *testing
 		event    EventType
 		expected []State
 	}{
-		{Draft, Complete, []State{ReadyToComplete}},
+		{Draft, Complete, nil},
 		{Exploring, Plan, []State{Designing}},
-		{Specifying, Explore, []State{Draft}},
-		{Designing, Specify, []State{Exploring}},
-		{Planning, Design, []State{Exploring, Specifying}},
+		{Specifying, Explore, []State{Draft, Exploring}},
+		{Designing, Specify, []State{Exploring, Specifying}},
+		{Planning, Design, []State{Exploring, Specifying, Designing}},
+		{PlanApproved, Design, []State{Exploring, Specifying, Designing}},
+		{Implementing, Design, []State{Exploring, Specifying, Designing}},
+		{ReadyToComplete, Design, []State{Exploring, Specifying, Designing}},
+		{Completed, Design, []State{Exploring, Specifying, Designing}},
+		{Abandoned, Design, []State{Exploring, Specifying, Designing}},
 		{PlanApproved, ApprovePlan, []State{Planning}},
 		{Implementing, Plan, []State{Designing}},
-		{ReadyToComplete, BeginImplementation, []State{Draft, Exploring, PlanApproved}},
-		{Completed, Complete, []State{ReadyToComplete}},
-		{Abandoned, Explore, []State{Draft}},
+		{ReadyToComplete, BeginImplementation, []State{PlanApproved}},
+		{ReadyToComplete, Complete, nil},
+		{Completed, Complete, nil},
+		{Draft, BeginImplementation, []State{PlanApproved}},
+		{Exploring, BeginImplementation, []State{PlanApproved}},
+		{Abandoned, Explore, []State{Draft, Exploring}},
 	}
 	for _, tt := range invalid {
 		t.Run(string(tt.from)+"_rejects_"+string(tt.event), func(t *testing.T) {

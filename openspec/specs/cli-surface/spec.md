@@ -19,7 +19,8 @@ The CLI SHALL expose only `principles`, global `--help`/`--version`, and the 16 
 | `plan` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `approve-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> [--approve-exception <wu-id> ...]` |
 | `list-ready-units` | `--workflow-id <wf-id>` |
-| `begin-implementation`, `complete` | `--workflow-id <wf-id> --revision <n> --actor <label>` |
+| `begin-implementation` | `--workflow-id <wf-id> --revision <n> --actor <label>` |
+| `complete` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `abandon` | `--workflow-id <wf-id> --revision <n> --actor <label> --reason <text>` |
 | `claim-unit`, `recover-unit-claim` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
 | `unit-tdd`, `unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
@@ -49,7 +50,7 @@ Each successful workflow command SHALL emit one JSON document:
 {"ok":true,"data":{},"warnings":[],"next_action":"..."}
 ```
 
-Failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's canonical version baseline SHALL be `0.2.0`; every later release version MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
+Failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.3.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
 
 (Previously: Version output was plain text without a canonical baseline, SemVer policy, or shared CLI/TUI source.)
 
@@ -78,7 +79,7 @@ Failures SHALL write one single-line error envelope to stderr, nothing to stdout
 
 ### Requirement: Role and hand-off contract
 
-The role map SHALL remain: Master (`new`, `show`, `approve-plan`, `abandon`, optional `complete`); Explorer (`explore`); Specifier (`spec`); Designer (`design`); TaskPlanner (`plan`); Implementer (`list-ready-units`, `claim-unit`, `unit-tdd`, `unit-complete`); Reviewer (`unit-review` only); Archivist (`complete`). Implementers SHALL NOT review and SHALL hand off only the handle path. The CLI SHALL NOT enforce this map.
+The advisory role map SHALL be: Daimon (all commands when coordination requires them); Explorer (`explore`); Specifier (`spec`); Designer (`design`); TaskPlanner (`plan`); Implementer (`list-ready-units`, `claim-unit`, `unit-tdd`, `unit-complete`); Reviewer (`unit-review`, `complete`). Implementers SHALL NOT review and SHALL hand off only the handle path for workflow units. There SHALL be no Archivist role. The CLI SHALL NOT enforce this map.
 
 #### Scenario: Role map is advisory
 

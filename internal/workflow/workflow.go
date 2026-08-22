@@ -260,11 +260,10 @@ func nextState(from State, event EventType) (State, bool) {
 }
 
 var transitionTable = map[State]map[EventType]State{
-	Draft:      {Explore: Exploring, BeginImplementation: Implementing},
-	Exploring:  {Specify: Specifying, Design: Designing, BeginImplementation: Implementing},
-	Specifying: {Design: Designing}, Designing: {Plan: Planning}, Planning: {ApprovePlan: PlanApproved},
+	Draft:      {Explore: Exploring},
+	Exploring:  {Explore: Exploring, Specify: Specifying, Design: Designing},
+	Specifying: {Specify: Specifying, Design: Designing}, Designing: {Design: Designing, Plan: Planning}, Planning: {ApprovePlan: PlanApproved},
 	PlanApproved: {BeginImplementation: Implementing}, Implementing: {AllUnitsCompleted: ReadyToComplete},
-	ReadyToComplete: {Complete: Completed},
 }
 
 var nonTerminalStates = []State{Draft, Exploring, Specifying, Designing, Planning, PlanApproved, Implementing, ReadyToComplete}

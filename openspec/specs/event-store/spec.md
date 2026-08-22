@@ -43,7 +43,7 @@ The schema SHALL preserve:
 | reviews | workflow/unit ids, unit revision, actor, verdict fields, time |
 | handles | claim/workflow/unit ids, state, secret hash, times, generation, actor identity |
 
-Artifacts, events, activities, evidence, and reviews SHALL be append-only. Actor values SHALL be declarative collision/audit metadata, not credentials. Activities SHALL contain only navigation-safe identifiers: no claim secret, secret hash, handle contents, or handle path. Plain claim secrets SHALL never be stored.
+Artifacts, events, activities, evidence, and reviews SHALL be append-only. Aggregate reviews SHALL use artifacts of kind `aggregate_review` rather than a new table or fake unit. Actor values SHALL be declarative collision/audit metadata, not credentials. Activities SHALL contain only navigation-safe identifiers: no claim secret, secret hash, handle contents, or handle path. Plain claim secrets SHALL never be stored.
 
 (Previously: The schema had no workflow name or activity ledger.)
 
@@ -62,7 +62,7 @@ Artifacts, events, activities, evidence, and reviews SHALL be append-only. Actor
 
 ### Requirement: Revision compare-and-swap
 
-Every mutating command except `workflow new` SHALL require `--revision <n>`. Workflow-scoped commands SHALL compare it to the workflow revision; unit-scoped commands SHALL compare it to the work-unit revision. A mismatch SHALL return exit code `4` with no mutation. Multi-record effects SHALL be atomic; when final `unit-complete` also updates the aggregate, it SHALL verify and update the then-current workflow row in the same transaction.
+Every mutating command except `workflow new` SHALL require `--revision <n>`. Workflow-scoped commands SHALL compare it to the workflow revision; unit-scoped commands SHALL compare it to the work-unit revision. A mismatch SHALL return exit code `4` with no mutation. Multi-record effects SHALL be atomic; final `unit-complete` and aggregate-review-backed `complete` SHALL verify and update every affected current row in one transaction.
 
 #### Scenario: Unit CAS mismatch
 

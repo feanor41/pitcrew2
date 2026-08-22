@@ -12,12 +12,12 @@ assert_file() { [ -f "$1" ] || fail "missing file $1"; }
 assert_absent() { [ ! -e "$1" ] && [ ! -L "$1" ] || fail "unexpected path $1"; }
 snapshot() { find "$1" -type f -exec cksum {} \; | sort > "$2"; }
 assert_no_temps() { find "$1" -name '.pitcrew-install.*' -o -name '.*.md.new.*' | grep . >/dev/null && fail "installer temporary remains in $1" || :; }
-roles='daimon pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-archivist'
-legacy_roles='explorer specifier designer task-planner implementer reviewer archivist'
+roles='daimon pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer'
+legacy_roles='explorer specifier designer task-planner implementer reviewer archivist pc2-archivist'
 assert_role_set() {
   for role in $roles; do assert_file "$1/$role.md"; done
   assert_file "$1/agent-contract.md"
-  [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 9 ] || fail "unexpected prompt set in $1"
+  [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 8 ] || fail "unexpected prompt set in $1"
   assert_absent "$1/master.md"
   for role in $legacy_roles; do assert_absent "$1/$role.md"; done
 }
@@ -52,9 +52,22 @@ done
 for contract in 'sole bridge between the user and sub-agents' 'Adapt expression to the user' truthful incisive goal-directed outcome-first 'resistant to cheerleading' 'not a Unix daemon' 'authorization identity' 'internal orchestrator'; do
   grep -F "$contract" "$target/daimon.md" >/dev/null || fail "Daimon contract omitted $contract"
 done
-for route in 'exploration: pc2-explorer' 'specification: pc2-specifier' 'design: pc2-designer' 'task planning: pc2-task-planner' 'implementation: pc2-implementer' 'review: pc2-reviewer' 'archival: pc2-archivist' 'Never delegate a workflow role to General or general'; do
+for obstruction_rule in 'On exit 3 or 4' 'inspect once' 'harness obstructs legitimate work' 'never issue an identical retry'; do
+  grep -F "$obstruction_rule" "$target/daimon.md" >/dev/null || fail "Daimon obstruction rule omitted $obstruction_rule"
+  grep -F "$obstruction_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract obstruction rule omitted $obstruction_rule"
+done
+for route in 'at most three files' 'four or more files' 'risk overrides file count' 'delegated direct' 'full workflow' 'exploration: pc2-explorer' 'specification: pc2-specifier' 'design: pc2-designer' 'task planning: pc2-task-planner' 'implementation: pc2-implementer' 'aggregate review: pc2-reviewer' 'Never delegate a workflow role to General or general'; do
   grep -F "$route" "$target/daimon.md" >/dev/null || fail "Daimon routing omitted $route"
   grep -F "$route" "$target/agent-contract.md" >/dev/null || fail "agent contract routing omitted $route"
+done
+for authority in 'may invoke any workflow command' 'abandon --reason' 'must not claim independent approval' 'must not bypass aggregate review'; do
+  grep -F "$authority" "$target/daimon.md" >/dev/null || fail "Daimon authority omitted $authority"
+done
+for handle_rule in 'must not disclose handle contents or secrets' 'must pass only the opaque handle path to pc2-reviewer'; do
+  grep -F "$handle_rule" "$target/daimon.md" >/dev/null || fail "Daimon handle contract omitted $handle_rule"
+done
+for review_rule in 'Unit review is selective' 'Final aggregate review is mandatory' 'requirements, specifications, design, tasks, implementation evidence, and tests'; do
+  grep -F "$review_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract review rule omitted $review_rule"
 done
 assert_file "$target/agent-contract.md"
 for prohibited in '--claim-token' '--emit-plain-token' '--print-claim-handle-secret-once' 'same identity' 'CAS'; do

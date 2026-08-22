@@ -51,7 +51,8 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 		t.Fatalf("dead handle=%#v", deadHandle)
 	}
 	revision = workflowRevision(t, completed)
-	final := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "archivist"))
+	aggregateReview := writeInput(t, root, "aggregate-review.json", `{"verdict":"approved","summary":"requirements satisfied","findings":""}`)
+	final := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "aggregate-reviewer", "--input-file", aggregateReview))
 	if state := workflowState(t, final); state != "completed" {
 		t.Fatalf("state=%s", state)
 	}
@@ -62,19 +63,110 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 				Kind, Content, Actor string
 				Revision             int64
 			} `json:"artifacts"`
+			Records []struct {
+				Kind, Content, Actor string
+			} `json:"records"`
+			Timeline []struct {
+				Action string `json:"action"`
+			} `json:"timeline"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(shown, &document); err != nil {
 		t.Fatal(err)
 	}
-	if len(document.Data.Artifacts) != 3 || document.Data.Artifacts[0].Kind != "exploration" || document.Data.Artifacts[2].Revision != 4 {
+	if len(document.Data.Artifacts) != 4 || document.Data.Artifacts[0].Kind != "exploration" || document.Data.Artifacts[2].Revision != 4 || document.Data.Artifacts[3].Kind != "aggregate_review" {
 		t.Fatalf("artifacts=%#v", document.Data.Artifacts)
 	}
-	wantActions := []string{"workflow_created", "exploration_recorded", "specification_recorded", "design_recorded", "plan_submitted", "plan_approved", "implementation_started", "unit_claimed", "unit_tdd_recorded", "unit_review_recorded", "unit_completed", "workflow_completed"}
-	wantSubjects := []string{wfID, "1", "2", "3", wfID, wfID, wfID + "@7", unitID, unitID + "@1", unitID + "@1", unitID, wfID + "@9"}
+	kinds := make([]string, len(document.Data.Records))
+	for i, record := range document.Data.Records {
+		kinds[i] = record.Kind
+	}
+	if !strings.Contains(strings.Join(kinds, ","), "plan") || !strings.Contains(strings.Join(kinds, ","), "evidence") || !strings.Contains(strings.Join(kinds, ","), "review") || !strings.Contains(strings.Join(kinds, ","), "aggregate_review") || len(document.Data.Timeline) == 0 || strings.Contains(string(shown), "claim_secret") || strings.Contains(string(shown), handlePath) {
+		t.Fatalf("review inspection incomplete or leaked: %s", shown)
+	}
+	wantActions := []string{"workflow_created", "exploration_recorded", "specification_recorded", "design_recorded", "plan_submitted", "plan_approved", "implementation_started", "unit_claimed", "unit_tdd_recorded", "unit_review_recorded", "unit_completed", "aggregate_review_recorded", "workflow_completed"}
+	wantSubjects := []string{wfID, "1", "2", "3", wfID, wfID, wfID + "@7", unitID, unitID + "@1", unitID + "@1", unitID, "4", wfID + "@9"}
 	got, subjects := storedActivities(t, root, wfID)
 	if strings.Join(got, ",") != strings.Join(wantActions, ",") || strings.Join(subjects, ",") != strings.Join(wantSubjects, ",") {
 		t.Fatalf("activities=%v want=%v", got, wantActions)
+	}
+}
+
+func TestAggregateReviewCorrectionsCASActorAndTerminalIntegrity(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, handlePath := setupReviewingUnit(t, root, "implementer")
+	completed := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handlePath))
+	revision := workflowRevision(t, completed)
+	corrections := writeInput(t, root, "aggregate-corrections.json", `{"verdict":"corrections","summary":"not aligned","findings":"fix requirement"}`)
+	corrected := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "aggregate-reviewer", "--input-file", corrections))
+	if workflowState(t, corrected) != "ready_to_complete" || workflowRevision(t, corrected) != revision+1 || !strings.Contains(string(corrected), `"next_action":"daimon coordinate aggregate corrections"`) {
+		t.Fatalf("corrections=%s", corrected)
+	}
+	assertRejectedAggregate := func(name, actor string, attemptedRevision int64, wantCode int) {
+		t.Helper()
+		before := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+		failed := runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(attemptedRevision), "--actor", actor, "--input-file", corrections)
+		if failed.code != wantCode {
+			t.Fatalf("%s=%#v", name, failed)
+		}
+		after := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+		if workflowRevision(t, before) != workflowRevision(t, after) || strings.Count(string(before), `"kind":"aggregate_review"`) != strings.Count(string(after), `"kind":"aggregate_review"`) {
+			t.Fatalf("%s mutated workflow", name)
+		}
+	}
+	assertRejectedAggregate("stale CAS", "other-reviewer", revision, 4)
+	assertRejectedAggregate("same actor", "implementer", revision+1, 3)
+	approval := writeInput(t, root, "aggregate-approval.json", `{"verdict":"approved","summary":"aligned","findings":""}`)
+	approved := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision+1), "--actor", "other-reviewer", "--input-file", approval))
+	if workflowState(t, approved) != "completed" {
+		t.Fatalf("approval=%s", approved)
+	}
+	assertRejectedAggregate("terminal", "third-reviewer", revision+2, 3)
+}
+
+func TestRepeatedDesignPersistsAmendment(t *testing.T) {
+	root := t.TempDir()
+	wfID, revision := createWorkflow(t, root)
+	for _, stage := range []struct{ command, content string }{{"explore", "facts"}, {"spec", "behavior"}, {"design", "first design"}} {
+		input := writeInput(t, root, stage.command+".json", `{"content":"`+stage.content+`"}`)
+		revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", stage.command, "--workflow-id", wfID, "--revision", itoa(revision), "--actor", stage.command, "--input-file", input)))
+	}
+	amendment := writeInput(t, root, "design-amendment.json", `{"content":"amended design"}`)
+	response := mustOK(t, runAt(t, root, "workflow", "design", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "designer", "--input-file", amendment))
+	var amended struct {
+		Data struct {
+			Workflow struct {
+				Revision int64  `json:"revision"`
+				State    string `json:"state"`
+			} `json:"workflow"`
+		} `json:"data"`
+		NextAction string `json:"next_action"`
+	}
+	if err := json.Unmarshal(response, &amended); err != nil {
+		t.Fatal(err)
+	}
+	if amended.Data.Workflow.Revision != 5 || amended.Data.Workflow.State != "designing" || amended.NextAction != "workflow plan" {
+		t.Fatalf("amended response=%#v", amended)
+	}
+	shown := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	var inspection struct {
+		Data struct {
+			Artifacts []struct {
+				Content  string `json:"content"`
+				Revision int64  `json:"revision"`
+			} `json:"artifacts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(shown, &inspection); err != nil {
+		t.Fatal(err)
+	}
+	artifacts := inspection.Data.Artifacts
+	if len(artifacts) != 4 || artifacts[2].Content != "first design" || artifacts[3].Content != "amended design" || artifacts[3].Revision != 5 {
+		t.Fatalf("artifacts=%#v", artifacts)
+	}
+	actions, _ := storedActivities(t, root, wfID)
+	if strings.Join(actions, ",") != "workflow_created,exploration_recorded,specification_recorded,design_recorded,design_recorded" {
+		t.Fatalf("activities=%v", actions)
 	}
 }
 
@@ -334,12 +426,6 @@ func TestFailedUnitCommandsPreserveClaimAtomically(t *testing.T) {
 				return []string{"workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--input-file", input}
 			},
 		},
-		{
-			name: "completion without approved review",
-			args: func(_ *testing.T, _ string, wfID, unitID string) []string {
-				return []string{"workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer"}
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -531,18 +617,15 @@ func createWorkflow(t *testing.T, root string) (string, int64) {
 func setupImplementingUnit(t *testing.T, root string) (string, string, int64) {
 	t.Helper()
 	wfID, revision := createWorkflow(t, root)
-	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "begin-implementation", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon")))
 	unitID := "wu-000000000000000000000001"
-	// The trivial implementation path has no plan, so seed its single unit through the durable schema seam.
-	s, err := store.Open(context.Background(), root)
-	if err != nil {
-		t.Fatal(err)
+	for _, stage := range []string{"explore", "spec", "design"} {
+		input := writeInput(t, root, stage+"-setup.json", `{"content":"`+stage+`"}`)
+		revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", stage, "--workflow-id", wfID, "--revision", itoa(revision), "--actor", stage, "--input-file", input)))
 	}
-	defer s.Close()
-	_, err = s.DB().Exec(`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,admission_exception,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, unitID, wfID, "unit", "internal", `[]`, `[]`, 1, 1, "pending", nil, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	planFile := writeInput(t, root, "setup-plan.json", `{"summary":"one","scope":"internal","max_parallel_units":1,"work_units":[{"id":"`+unitID+`","description":"unit","scope":"internal","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}]}`)
+	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "planner", "--input-file", planFile)))
+	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "approve-plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon")))
+	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "begin-implementation", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon")))
 	return wfID, unitID, revision
 }
 

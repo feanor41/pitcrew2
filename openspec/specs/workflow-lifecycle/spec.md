@@ -33,16 +33,18 @@ Only these transitions SHALL succeed; others SHALL return exit code `3` without 
 | From | Command | To |
 |---|---|---|
 | `draft` | `explore` | `exploring` |
-| `draft` | `begin-implementation` | `implementing` |
+| `exploring` | `explore` | `exploring` |
 | `exploring` | `spec` | `specifying` |
 | `exploring` | `design` | `designing` |
-| `exploring` | `begin-implementation` | `implementing` |
+| `specifying` | `spec` | `specifying` |
 | `specifying` | `design` | `designing` |
+| `designing` | `design` | `designing` |
 | `designing` | `plan` | `planning` |
 | `planning` | `approve-plan` | `plan_approved` |
 | `plan_approved` | `begin-implementation` | `implementing` |
 | `implementing` | final `unit-complete` | `ready_to_complete` |
-| `ready_to_complete` | `complete` | `completed` |
+| `ready_to_complete` | approved `complete` | `completed` |
+| `ready_to_complete` | corrections `complete` | `ready_to_complete` |
 | any non-terminal | `abandon` | `abandoned` |
 
 #### Scenario: Each transition is enforced
@@ -59,7 +61,7 @@ Only these transitions SHALL succeed; others SHALL return exit code `3` without 
 {"content":"non-empty UTF-8 string"}
 ```
 
-The command SHALL infer kind `exploration`, `specification`, or `design`. On the legal transition it SHALL append a durable artifact with workflow id, kind, content, caller-declared actor, accepted workflow revision, and timestamp. Artifacts SHALL NOT be overwritten or deleted by later transitions or abandonment.
+The command SHALL infer kind `exploration`, `specification`, or `design`. On the legal transition it SHALL append a durable artifact with workflow id, kind, content, caller-declared actor, accepted workflow revision, and timestamp. The control plane SHALL accept a repeated stage command while the workflow remains in its corresponding stage; each repetition SHALL append a new artifact and event, increment the revision, preserve the state, and keep the forward `next_action`. Artifacts SHALL NOT be overwritten or deleted by later transitions or abandonment.
 
 #### Scenario: All stage artifacts persist
 
@@ -67,9 +69,17 @@ The command SHALL infer kind `exploration`, `specification`, or `design`. On the
 - WHEN explore, spec, and design succeed
 - THEN each exact content, kind, actor, and revision SHALL persist
 
+#### Scenario: A stage amendment remains append-only
+
+- GIVEN a workflow in `exploring`, `specifying`, or `designing`
+- WHEN its corresponding stage command succeeds again at the current revision
+- THEN it SHALL append the amendment and a self-loop event at the next revision
+- AND it SHALL preserve the current state and forward `next_action`
+- AND stage commands SHALL remain rejected from later and terminal states
+
 ### Requirement: Inspection
 
-`workflow show --workflow-id` SHALL return the aggregate in `data.workflow` and every durable stage artifact in `data.artifacts`, ordered by accepted revision then insertion order. Each artifact SHALL expose `kind`, `content`, `actor`, `revision`, and `recorded_at`. A completed or abandoned workflow SHALL remain queryable.
+`workflow show --workflow-id` SHALL return the aggregate in `data.workflow`, every durable stage artifact in `data.artifacts`, and review-relevant history in `data.records` and `data.timeline`. Inspection SHALL expose plans, units, evidence, and reviews without handles or secrets. A completed or abandoned workflow SHALL remain queryable.
 
 #### Scenario: Show retrieves durable artifacts
 

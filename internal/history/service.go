@@ -14,38 +14,44 @@ import (
 const ContextRunes = 120
 
 type Workflow struct {
-	ID          string
-	Revision    int64
-	State       string
-	Name        string
-	NameDerived bool
-	Goal        string
-	CreatedAt   string
-	UpdatedAt   string
+	ID          string `json:"id"`
+	Revision    int64  `json:"revision"`
+	State       string `json:"state"`
+	Name        string `json:"name"`
+	NameDerived bool   `json:"name_derived"`
+	Goal        string `json:"goal"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 type Record struct {
-	ID         string
-	WorkflowID string
-	Kind       string
-	UnitID     string
-	Revision   int64
-	Title      string
-	Content    string
-	Actor      string
-	At         string
+	ID         string `json:"id"`
+	WorkflowID string `json:"workflow_id"`
+	Kind       string `json:"kind"`
+	UnitID     string `json:"unit_id"`
+	Revision   int64  `json:"revision"`
+	Title      string `json:"title"`
+	Content    string `json:"content"`
+	Actor      string `json:"actor"`
+	At         string `json:"at"`
 }
 
 type Activity struct {
-	ID                                    string
-	WorkflowID, UnitID, Action, Actor, At string
-	SubjectKind, SubjectID, RecordID      string
-	Legacy                                bool
+	ID          string `json:"id"`
+	WorkflowID  string `json:"workflow_id"`
+	UnitID      string `json:"unit_id"`
+	Action      string `json:"action"`
+	Actor       string `json:"actor"`
+	At          string `json:"at"`
+	SubjectKind string `json:"subject_kind"`
+	SubjectID   string `json:"subject_id"`
+	RecordID    string `json:"record_id"`
+	Legacy      bool   `json:"legacy"`
 }
 type Detail struct {
-	Workflow Workflow
-	Records  []Record
-	Timeline []Activity
+	Workflow Workflow   `json:"workflow"`
+	Records  []Record   `json:"records"`
+	Timeline []Activity `json:"timeline"`
 }
 
 type SearchResult struct {

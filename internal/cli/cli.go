@@ -49,6 +49,11 @@ type reviewInput struct {
 	Findings   *string              `json:"findings"`
 	PlanImpact *evidence.PlanImpact `json:"plan_impact,omitempty"`
 }
+type aggregateReviewInput struct {
+	Verdict  *evidence.Verdict `json:"verdict"`
+	Summary  *string           `json:"summary"`
+	Findings *string           `json:"findings"`
+}
 
 func Run(args []string, deps Dependencies) int {
 	if deps.Now == nil {
@@ -174,8 +179,10 @@ func runWorkflow(args []string, deps Dependencies) int {
 		return runApprovePlan(rest, deps)
 	case "list-ready-units":
 		return runReady(rest, deps)
-	case "begin-implementation", "complete":
-		return runTransition(command, rest, deps)
+	case "begin-implementation":
+		return runBeginImplementation(rest, deps)
+	case "complete":
+		return runComplete(rest, deps)
 	case "abandon":
 		return runAbandon(rest, deps)
 	case "claim-unit", "recover-unit-claim":
@@ -223,7 +230,11 @@ func runWorkflowShow(args []string, deps Dependencies) int {
 		if err != nil {
 			return err
 		}
-		return writeSuccess(deps, map[string]any{"workflow": current, "artifacts": artifacts}, nextAction(current.State))
+		detail, err := history.New(s).Detail(context.Background(), current.ID)
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": current, "artifacts": artifacts, "records": detail.Records, "timeline": detail.Timeline}, nextAction(current.State))
 	})
 }
 func runStage(command string, args []string, deps Dependencies) int {
@@ -311,21 +322,50 @@ func runReady(args []string, deps Dependencies) int {
 		return writeSuccess(deps, map[string]any{"units": units}, "workflow claim-unit")
 	})
 }
-func runTransition(command string, args []string, deps Dependencies) int {
+func runBeginImplementation(args []string, deps Dependencies) int {
 	values, revision, err := mutationFlags(args, nil)
 	if err != nil {
 		return fail(deps, err, err.Error())
 	}
-	event := workflow.BeginImplementation
-	if command == "complete" {
-		event = workflow.Complete
-	}
 	return withStore(deps, func(s *store.Store) error {
-		current, err := workflow.New(s, deps.Now).Transition(context.Background(), values.one("--workflow-id"), revision, event, values.one("--actor"))
+		current, err := workflow.New(s, deps.Now).Transition(context.Background(), values.one("--workflow-id"), revision, workflow.BeginImplementation, values.one("--actor"))
 		if err != nil {
 			return err
 		}
 		return writeSuccess(deps, map[string]any{"workflow": current}, nextAction(current.State))
+	})
+}
+func runComplete(args []string, deps Dependencies) int {
+	values, revision, err := mutationFlags(args, []string{"--input-file"})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input, err := decodeInputFile[aggregateReviewInput](values.one("--input-file"))
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if input.Verdict == nil || input.Summary == nil || input.Findings == nil {
+		return fail(deps, ErrState, "aggregate review requires verdict, summary, and findings")
+	}
+	review := evidence.AggregateReview{Verdict: *input.Verdict, Summary: *input.Summary, Findings: *input.Findings, Actor: values.one("--actor")}
+	if err = review.Validate(); err != nil {
+		return fail(deps, ErrState, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		ctx := context.Background()
+		outcome, err := evidence.New(s, deps.Now).CompleteAggregate(ctx, values.one("--workflow-id"), revision, review)
+		if err != nil {
+			return err
+		}
+		current, err := workflow.New(s, deps.Now).Get(ctx, values.one("--workflow-id"))
+		if err != nil {
+			return err
+		}
+		next := nextAction(current.State)
+		if review.Verdict == evidence.Corrections {
+			next = "daimon coordinate aggregate corrections"
+		}
+		return writeSuccess(deps, map[string]any{"workflow": current, "aggregate_review": outcome}, next)
 	})
 }
 func runAbandon(args []string, deps Dependencies) int {
