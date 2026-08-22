@@ -5,7 +5,7 @@ PitCrew exposes `tui` and `principles`, two global flags, and exactly 16 `workfl
 ## Quick path
 
 ```sh
-pitcrew workflow new --goal "Ship the change" --actor daimon
+pitcrew workflow new --name "Ship the change" --goal "Deliver the accepted behavior" --actor daimon
 pitcrew workflow show --workflow-id wf-<24hex>
 pitcrew tui
 pitcrew principles
@@ -18,7 +18,7 @@ A planned workflow normally progresses through exploration, specification, desig
 | Command | Required inputs |
 |---|---|
 | `tui` | None; extra arguments are rejected. |
-| `workflow new` | `--goal <text> --actor <label>` |
+| `workflow new` | `--name <text> --goal <text> --actor <label>` |
 | `workflow show` | `--workflow-id <wf-id>` |
 | `workflow explore` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow spec` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
@@ -39,7 +39,7 @@ Global `--help` and `--version` are flags, not commands. `principles [--json]` p
 
 ## Read-only terminal inspection
 
-`pitcrew tui` runs the embedded visual inspector in the current process. It reads only `<project>/.pitcrew/state.db`; it does not initialize a repository, run migrations, mutate workflow state, or invoke another executable. An uninitialized project shows `No PitCrew repository is initialized for this project.` and remains unchanged. Use Arrow or Vim keys to navigate, `/` to search, and `q` to exit.
+`pitcrew tui` runs the embedded visual inspector in the current process. Its versioned `PitCrew2` / `Control Plane` header, newest-first `Started | Work | Status` grid, workflow metadata, and chronological activity history all read only `<project>/.pitcrew/state.db`. Select an activity to open its exact durable result. The TUI does not initialize a repository, run migrations, mutate workflow state, or invoke another executable. An uninitialized project shows `No PitCrew repository is initialized for this project.` and remains unchanged. Arrow and Vim keys are equivalent; use `/` to search and `q` to exit.
 
 ## JSON input files
 

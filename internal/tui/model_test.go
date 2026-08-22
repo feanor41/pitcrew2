@@ -74,6 +74,53 @@ func TestModelSearchAcceptsVimTextAndOpensExactResult(t *testing.T) {
 	}
 }
 
+func TestModelVersionAndActivityDrillDown(t *testing.T) {
+	activity := history.Activity{ID: "activity:7", WorkflowID: "wf", Action: "specification_recorded", Actor: "pc2-specifier", At: "2026-08-22T03:18:00Z"}
+	record := history.Record{ID: "artifact:7", Kind: "specification", Content: "Scenario: exact Gherkin"}
+	want := history.Resolution{Detail: history.Detail{Timeline: []history.Activity{activity}, Records: []history.Record{record}}, Record: record}
+	model := New(fakeLoader{activityResolution: want})
+	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: want.Detail}})
+	if model.Version() != "0.2.0" {
+		t.Fatalf("Version() = %q", model.Version())
+	}
+	for _, key := range []tea.KeyPressMsg{special(tea.KeyEnter), special(tea.KeyRight), textKey("l")} {
+		candidate, command := model.Update(key)
+		if command == nil {
+			t.Fatalf("%q did not open focused activity", key.String())
+		}
+		candidate, _ = candidate.Update(command())
+		if candidate.opened.Record.ID != "artifact:7" || candidate.detail.recordID != "artifact:7" {
+			t.Fatalf("%q opened %#v with cursor %#v", key.String(), candidate.opened.Record, candidate.detail)
+		}
+	}
+}
+
+func TestModelRepeatedActivityOccurrenceSurvivesResizeAndOpensExact(t *testing.T) {
+	seen := []string{}
+	shared := "artifact:7"
+	activities := []history.Activity{
+		{ID: "activity:1", RecordID: shared, Action: "specification_recorded", Actor: "one", At: "2026-08-22T03:18:00Z"},
+		{ID: "activity:2", RecordID: shared, Action: "specification_recorded", Actor: "two", At: "2026-08-22T03:19:00Z"},
+	}
+	model := New(fakeLoader{activityIDs: &seen, activityResolution: history.Resolution{Detail: history.Detail{Timeline: activities}, Record: history.Record{ID: shared}}})
+	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: history.Detail{Timeline: activities}}})
+	for range 2 {
+		model, _ = model.Update(textKey("j"))
+	}
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	if model.detail.recordID != "activity:2" {
+		t.Fatalf("repeated activity focus = %#v", model.detail)
+	}
+	model, command := model.Update(special(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("focused repeated activity did not open")
+	}
+	_ = command()
+	if !reflect.DeepEqual(seen, []string{"activity:2"}) {
+		t.Fatalf("resolved activity occurrences = %v", seen)
+	}
+}
+
 func TestModelAsyncResizeBackQuitAndHints(t *testing.T) {
 	model := New(fakeLoader{})
 	model, _ = model.Update(workflowsLoadedMsg{workflows: []history.Workflow{{ID: "one"}, {ID: "two"}}})
@@ -160,9 +207,11 @@ func TestModelDetailEvidenceArrowAndVimParityAndClamps(t *testing.T) {
 }
 
 type fakeLoader struct {
-	detail     history.Detail
-	results    []history.SearchResult
-	resolution history.Resolution
+	detail             history.Detail
+	results            []history.SearchResult
+	resolution         history.Resolution
+	activityResolution history.Resolution
+	activityIDs        *[]string
 }
 
 func (f fakeLoader) List(context.Context) ([]history.Workflow, error)       { return nil, nil }
@@ -172,6 +221,12 @@ func (f fakeLoader) Search(context.Context, string) ([]history.SearchResult, err
 }
 func (f fakeLoader) Resolve(context.Context, history.SearchResult) (history.Resolution, error) {
 	return f.resolution, nil
+}
+func (f fakeLoader) ResolveActivity(_ context.Context, activity history.Activity) (history.Resolution, error) {
+	if f.activityIDs != nil {
+		*f.activityIDs = append(*f.activityIDs, activity.ID)
+	}
+	return f.activityResolution, nil
 }
 
 func special(code rune) tea.KeyPressMsg { return tea.KeyPressMsg(tea.Key{Code: code}) }
