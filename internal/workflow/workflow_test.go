@@ -12,11 +12,11 @@ import (
 )
 
 func TestWorkflowJSONUsesTheAggregateContract(t *testing.T) {
-	encoded, err := json.Marshal(Workflow{ID: "wf-id", Revision: 3, State: Designing, Goal: "goal", CreatedAt: "created", UpdatedAt: "updated"})
+	encoded, err := json.Marshal(Workflow{ID: "wf-id", Revision: 3, State: Designing, Name: "work", Goal: "goal", CreatedAt: "created", UpdatedAt: "updated"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(encoded) != `{"id":"wf-id","revision":3,"state":"designing","goal":"goal","created_at":"created","updated_at":"updated"}` {
+	if string(encoded) != `{"id":"wf-id","revision":3,"state":"designing","name":"work","name_derived":false,"goal":"goal","created_at":"created","updated_at":"updated"}` {
 		t.Fatalf("workflow JSON = %s", encoded)
 	}
 }
@@ -24,7 +24,7 @@ func TestWorkflowJSONUsesTheAggregateContract(t *testing.T) {
 func TestLifecyclePersistsTransitionsAndAppendOnlyEvents(t *testing.T) {
 	svc, _ := testService(t)
 	ctx := context.Background()
-	wf, err := svc.Create(ctx, "ship safely", "master")
+	wf, err := svc.Create(ctx, "Release safely", "ship safely", "master")
 	if err != nil || wf.State != Draft || wf.Revision != 1 {
 		t.Fatalf("Create() = %#v, %v", wf, err)
 	}
@@ -50,7 +50,7 @@ func TestLifecyclePersistsTransitionsAndAppendOnlyEvents(t *testing.T) {
 
 func TestInvalidTransitionAndCASDoNotMutate(t *testing.T) {
 	svc, _ := testService(t)
-	wf, err := svc.Create(context.Background(), "goal", "master")
+	wf, err := svc.Create(context.Background(), "Work", "goal", "master")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestTransitionMatrixExecutesEveryLegalAndRejectsEverySourceState(t *testing
 	for _, tt := range legal {
 		t.Run(string(tt.from)+"_"+string(tt.event), func(t *testing.T) {
 			svc, db := testService(t)
-			wf, err := svc.Create(context.Background(), "goal", "master")
+			wf, err := svc.Create(context.Background(), "Work", "goal", "master")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,7 +108,7 @@ func TestTransitionMatrixExecutesEveryLegalAndRejectsEverySourceState(t *testing
 	for _, from := range []State{Draft, Exploring, Specifying, Designing, Planning, PlanApproved, Implementing, ReadyToComplete} {
 		t.Run(string(from)+"_abandon", func(t *testing.T) {
 			svc, db := testService(t)
-			wf, err := svc.Create(context.Background(), "goal", "master")
+			wf, err := svc.Create(context.Background(), "Work", "goal", "master")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func TestTransitionMatrixExecutesEveryLegalAndRejectsEverySourceState(t *testing
 	for _, tt := range invalid {
 		t.Run(string(tt.from)+"_rejects_"+string(tt.event), func(t *testing.T) {
 			svc, db := testService(t)
-			wf, err := svc.Create(context.Background(), "goal", "master")
+			wf, err := svc.Create(context.Background(), "Work", "goal", "master")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -185,7 +185,7 @@ func statesEqual(got, want []State) bool {
 
 func TestAbandonRecordsReasonAndRetainsRelatedRows(t *testing.T) {
 	svc, db := testService(t)
-	wf, err := svc.Create(context.Background(), "goal", "master")
+	wf, err := svc.Create(context.Background(), "Work", "goal", "master")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,12 +211,39 @@ func TestAbandonRecordsReasonAndRetainsRelatedRows(t *testing.T) {
 
 func TestAbandonRequiresAReason(t *testing.T) {
 	svc, _ := testService(t)
-	wf, err := svc.Create(context.Background(), "goal", "master")
+	wf, err := svc.Create(context.Background(), "Work", "goal", "master")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Abandon(context.Background(), wf.ID, wf.Revision, "master", "  "); err == nil {
 		t.Fatal("empty abandonment reason was accepted")
+	}
+}
+
+func TestCreateRequiresBoundedNameAndReturnsHistoricalFallback(t *testing.T) {
+	svc, db := testService(t)
+	ctx := context.Background()
+	created, err := svc.Create(ctx, "  Release 0.2  ", "ship safely", "daimon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name != "Release 0.2" || created.NameDerived {
+		t.Fatalf("created workflow name = %q derived=%v", created.Name, created.NameDerived)
+	}
+	for _, name := range []string{"   ", strings.Repeat("界", 81)} {
+		if _, err := svc.Create(ctx, name, "goal", "daimon"); !errors.Is(err, ErrInvalidName) {
+			t.Fatalf("Create(%q) error = %v; want invalid name", name, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-legacy',1,'draft',NULL,?,'created','updated')`, "  First legacy line  \n second line"); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := svc.Get(ctx, "wf-legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Name != "First legacy line" || !legacy.NameDerived {
+		t.Fatalf("legacy name = %q derived=%v", legacy.Name, legacy.NameDerived)
 	}
 }
 

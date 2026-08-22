@@ -165,7 +165,7 @@ func TestOutsidePlanCorrectionNamesDaimonAsNextCoordinator(t *testing.T) {
 
 func TestMasterRemainsAnOpaqueHistoricalActorLabel(t *testing.T) {
 	root := t.TempDir()
-	created := mustOK(t, runAt(t, root, "workflow", "new", "--goal", "preserve history", "--actor", "master"))
+	created := mustOK(t, runAt(t, root, "workflow", "new", "--name", "Preserve history", "--goal", "preserve history", "--actor", "master"))
 	wfID, revision := workflowID(t, created), workflowRevision(t, created)
 	input := writeInput(t, root, "historical-actor.json", `{"content":"historical evidence"}`)
 	mustOK(t, runAt(t, root, "workflow", "explore", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "master", "--input-file", input))
@@ -385,7 +385,7 @@ func storedUnitEvidence(t *testing.T, root, wfID, unitID string) (string, int) {
 func runAtTime(t *testing.T, root string, now time.Time, args ...string) result {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Run(args, Dependencies{Stdout: &stdout, Stderr: &stderr, ProjectRoot: root, Version: "test-version", Now: func() time.Time { return now }})
+	code := Run(args, Dependencies{Stdout: &stdout, Stderr: &stderr, ProjectRoot: root, Now: func() time.Time { return now }})
 	return result{code, stdout.String(), stderr.String()}
 }
 
@@ -405,7 +405,7 @@ func storedClaim(t *testing.T, root, wfID, unitID string) (string, string) {
 
 func createWorkflow(t *testing.T, root string) (string, int64) {
 	t.Helper()
-	doc := mustOK(t, runAt(t, root, "workflow", "new", "--goal", "ship", "--actor", "daimon"))
+	doc := mustOK(t, runAt(t, root, "workflow", "new", "--name", "Ship", "--goal", "ship", "--actor", "daimon"))
 	return workflowID(t, doc), workflowRevision(t, doc)
 }
 

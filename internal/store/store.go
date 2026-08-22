@@ -185,10 +185,12 @@ func (s *Store) CompareAndSwapRevision(ctx context.Context, workflowID string, e
 }
 
 func destructive(statement string) bool {
-	normalized := strings.ToUpper(strings.Join(strings.Fields(statement), " "))
-	for _, forbidden := range []string{"DROP ", "DELETE ", "UPDATE ", "REPLACE ", "TRUNCATE ", "ALTER TABLE", "VACUUM"} {
-		if strings.Contains(normalized, forbidden) {
-			return true
+	for _, raw := range strings.Split(statement, ";") {
+		normalized := strings.ToUpper(strings.Join(strings.Fields(raw), " "))
+		for _, forbidden := range []string{"DROP ", "DELETE ", "UPDATE ", "REPLACE ", "TRUNCATE ", "ALTER TABLE", "VACUUM"} {
+			if strings.Contains(normalized, forbidden) && normalized != "ALTER TABLE WORKFLOWS ADD COLUMN NAME TEXT" {
+				return true
+			}
 		}
 	}
 	return false
@@ -203,4 +205,9 @@ CREATE TABLE work_units (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL REFERENC
 CREATE TABLE evidence (workflow_id TEXT NOT NULL REFERENCES workflows(id), unit_id TEXT NOT NULL REFERENCES work_units(id), revision INTEGER NOT NULL, actor TEXT NOT NULL, red_command TEXT NOT NULL, red_outcome TEXT NOT NULL, green_command TEXT NOT NULL, green_outcome TEXT NOT NULL, refactor_summary TEXT NOT NULL, validation_command TEXT NOT NULL, validation_outcome TEXT NOT NULL, changed_paths TEXT NOT NULL, recorded_at TEXT NOT NULL, PRIMARY KEY(workflow_id, unit_id, revision));
 CREATE TABLE reviews (workflow_id TEXT NOT NULL REFERENCES workflows(id), unit_id TEXT NOT NULL REFERENCES work_units(id), revision INTEGER NOT NULL, actor TEXT NOT NULL, verdict TEXT NOT NULL, summary TEXT NOT NULL, findings TEXT NOT NULL, plan_impact TEXT NOT NULL, recorded_at TEXT NOT NULL, PRIMARY KEY(workflow_id, unit_id, revision));
 CREATE TABLE handles (claim_id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL REFERENCES workflows(id), unit_id TEXT NOT NULL REFERENCES work_units(id), state TEXT NOT NULL, secret_hash TEXT NOT NULL, actor_identity TEXT NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT NOT NULL, claim_generation INTEGER NOT NULL);
+`}, {Version: 2, Name: "workflow names and activities", SQL: `
+ALTER TABLE workflows ADD COLUMN name TEXT;
+CREATE TABLE activities (id INTEGER PRIMARY KEY AUTOINCREMENT, workflow_id TEXT NOT NULL REFERENCES workflows(id), unit_id TEXT REFERENCES work_units(id), action TEXT NOT NULL, actor TEXT NOT NULL, at TEXT NOT NULL, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL);
+CREATE INDEX activities_workflow_time ON activities(workflow_id, at, id);
+CREATE INDEX activities_subject ON activities(subject_kind, subject_id);
 `}}

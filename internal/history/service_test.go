@@ -114,9 +114,9 @@ func openHistory(t *testing.T, seeded bool) *store.Store {
 		t.Fatal(err)
 	}
 	statements := []string{
-		`INSERT INTO workflows VALUES('wf-old',4,'completed','shared-needle old goal','2024-01-01T00:00:00Z','2024-01-02T00:00:00Z')`,
-		`INSERT INTO workflows VALUES('wf-new',8,'abandoned','new goal','2025-01-01T00:00:00Z','2025-01-09T00:00:00Z')`,
-		`INSERT INTO workflows VALUES('wf-active',2,'planning','active goal','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')`,
+		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-old',4,'completed','shared-needle old goal','2024-01-01T00:00:00Z','2024-01-02T00:00:00Z')`,
+		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-new',8,'abandoned','new goal','2025-01-01T00:00:00Z','2025-01-09T00:00:00Z')`,
+		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-active',2,'planning','active goal','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')`,
 		`INSERT INTO events VALUES('wf-new','planning','abandoned','daimon','event-reason',8,'2025-01-03T00:00:00Z')`,
 		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-new','exploration','literal % _ "quoted" café ','explorer',2,'2025-01-04T00:00:00Z')`,
 		`INSERT INTO plans VALUES('wf-new','plan title','internal/history',1,'plan-text')`,
