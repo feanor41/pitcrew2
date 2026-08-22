@@ -65,12 +65,12 @@ func TestViewStatesAndResize(t *testing.T) {
 			}
 			model, _ := test.model.Update(tea.WindowSizeMsg{Width: width, Height: height})
 			got := model.View().Content
-			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.3.0"} {
+			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.4.0"} {
 				if !strings.Contains(got, identity) {
 					t.Fatalf("view missing identity %q:\n%s", identity, got)
 				}
 			}
-			if !strings.Contains(got, flight.version.Render("v0.3.0")) {
+			if !strings.Contains(got, flight.version.Render("v0.4.0")) {
 				t.Fatalf("view lacks version accent:\n%s", got)
 			}
 			for _, want := range test.want {
@@ -97,7 +97,7 @@ func TestViewGridMetadataTimelineAndVersionAccent(t *testing.T) {
 			t.Fatalf("grid missing %q:\n%s", want, grid.View().Content)
 		}
 	}
-	if !strings.Contains(grid.View().Content, flight.version.Render("v0.3.0")) {
+	if !strings.Contains(grid.View().Content, flight.version.Render("v0.4.0")) {
 		t.Fatalf("version lacks dedicated accent:\n%s", grid.View().Content)
 	}
 	detail, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 28})
@@ -134,7 +134,7 @@ func TestViewCompactIdentityAcrossLayouts(t *testing.T) {
 	for _, size := range []tea.WindowSizeMsg{{Width: 112, Height: 28}, {Width: 60, Height: 16}, {Width: 42, Height: 10}} {
 		model, _ := workflowViewModel().Update(size)
 		got := model.View().Content
-		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.3.0")) {
+		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.4.0")) {
 			t.Fatalf("%dx%d missing accessible identity or version accent:\n%s", size.Width, size.Height, got)
 		}
 		if strings.Contains(got, "╔═╗") {
