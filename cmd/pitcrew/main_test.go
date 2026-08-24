@@ -14,7 +14,7 @@ import (
 
 func TestRunDelegatesGlobalVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--version"}, strings.NewReader(""), &stdout, &stderr, t.TempDir()); code != 0 || stdout.String() != "pitcrew 0.3.0\n" || stderr.Len() != 0 {
+	if code := run([]string{"--version"}, strings.NewReader(""), &stdout, &stderr, t.TempDir()); code != 0 || stdout.String() != "pitcrew 0.4.0\n" || stderr.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

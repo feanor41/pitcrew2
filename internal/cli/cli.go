@@ -576,28 +576,7 @@ func equalArgs(got []string, want ...string) bool {
 	return true
 }
 func nextAction(state workflow.State) string {
-	switch state {
-	case workflow.Draft:
-		return "workflow explore"
-	case workflow.Exploring:
-		return "workflow spec"
-	case workflow.Specifying:
-		return "workflow design"
-	case workflow.Designing:
-		return "workflow plan"
-	case workflow.Planning:
-		return "workflow approve-plan"
-	case workflow.PlanApproved:
-		return "workflow begin-implementation"
-	case workflow.Implementing:
-		return "workflow list-ready-units"
-	case workflow.ReadyToComplete:
-		return "workflow complete"
-	case workflow.Completed, workflow.Abandoned:
-		return "none"
-	default:
-		return "workflow show"
-	}
+	return workflow.NextAction(state)
 }
 func writeHelp(w io.Writer, body string) {
 	fmt.Fprint(w, body)

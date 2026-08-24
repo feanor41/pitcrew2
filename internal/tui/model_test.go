@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -74,13 +75,13 @@ func TestModelSearchAcceptsVimTextAndOpensExactResult(t *testing.T) {
 	}
 }
 
-func TestModelVersionAndActivityDrillDown(t *testing.T) {
-	activity := history.Activity{ID: "activity:7", WorkflowID: "wf", Action: "specification_recorded", Actor: "pc2-specifier", At: "2026-08-22T03:18:00Z"}
+func TestModelVersionAndOccurrenceDrillDown(t *testing.T) {
 	record := history.Record{ID: "artifact:7", Kind: "specification", Content: "Scenario: exact Gherkin"}
-	want := history.Resolution{Detail: history.Detail{Timeline: []history.Activity{activity}, Records: []history.Record{record}}, Record: record}
-	model := New(fakeLoader{activityResolution: want})
+	occurrence := history.Occurrence{ID: "activity:7", RecordID: record.ID, Work: "Specification"}
+	want := history.Resolution{Detail: history.Detail{Occurrences: []history.Occurrence{occurrence}, Records: []history.Record{record}}, Record: record}
+	model := New(fakeLoader{occurrenceResolution: want})
 	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: want.Detail}})
-	if model.Version() != "0.3.0" {
+	if model.Version() != "0.4.0" {
 		t.Fatalf("Version() = %q", model.Version())
 	}
 	for _, key := range []tea.KeyPressMsg{special(tea.KeyEnter), special(tea.KeyRight), textKey("l")} {
@@ -89,35 +90,101 @@ func TestModelVersionAndActivityDrillDown(t *testing.T) {
 			t.Fatalf("%q did not open focused activity", key.String())
 		}
 		candidate, _ = candidate.Update(command())
-		if candidate.opened.Record.ID != "artifact:7" || candidate.detail.recordID != "artifact:7" {
+		if candidate.opened.Record.ID != "artifact:7" || candidate.detail.occurrenceID != "activity:7" {
 			t.Fatalf("%q opened %#v with cursor %#v", key.String(), candidate.opened.Record, candidate.detail)
 		}
 	}
 }
 
-func TestModelRepeatedActivityOccurrenceSurvivesResizeAndOpensExact(t *testing.T) {
+func TestModelSemanticOccurrenceSurvivesResizeAndBack(t *testing.T) {
 	seen := []string{}
-	shared := "artifact:7"
-	activities := []history.Activity{
-		{ID: "activity:1", RecordID: shared, Action: "specification_recorded", Actor: "one", At: "2026-08-22T03:18:00Z"},
-		{ID: "activity:2", RecordID: shared, Action: "specification_recorded", Actor: "two", At: "2026-08-22T03:19:00Z"},
+	occurrences := []history.Occurrence{
+		{ID: "activity:1", RecordID: "artifact:7"},
+		{ID: "activity:2", RecordID: "artifact:7"},
 	}
-	model := New(fakeLoader{activityIDs: &seen, activityResolution: history.Resolution{Detail: history.Detail{Timeline: activities}, Record: history.Record{ID: shared}}})
-	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: history.Detail{Timeline: activities}}})
-	for range 2 {
-		model, _ = model.Update(textKey("j"))
-	}
+	detail := history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: occurrences}
+	model := New(fakeLoader{occurrenceIDs: &seen, occurrenceResolution: history.Resolution{Detail: detail, Record: history.Record{ID: "artifact:7"}}})
+	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
+	model, _ = model.Update(textKey("j"))
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
-	if model.detail.recordID != "activity:2" {
+	if model.detail.occurrenceID != "activity:2" {
 		t.Fatalf("repeated activity focus = %#v", model.detail)
 	}
 	model, command := model.Update(special(tea.KeyEnter))
 	if command == nil {
 		t.Fatal("focused repeated activity did not open")
 	}
-	_ = command()
+	model, _ = model.Update(command())
 	if !reflect.DeepEqual(seen, []string{"activity:2"}) {
-		t.Fatalf("resolved activity occurrences = %v", seen)
+		t.Fatalf("resolved occurrences = %v", seen)
+	}
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	if model.opened.Record.ID != "artifact:7" || model.detail.occurrenceID != "activity:2" {
+		t.Fatalf("exact detail identity lost on resize: %#v", model.detail)
+	}
+	model, _ = model.Update(special(tea.KeyEscape))
+	if model.opened.Record.ID != "" || model.detail.occurrenceID != "activity:2" || model.screen != DetailScreen {
+		t.Fatalf("back did not restore semantic focus: %#v", model)
+	}
+}
+
+func TestModelOccurrenceNavigationPageHomeEndAndClamps(t *testing.T) {
+	occurrences := make([]history.Occurrence, 12)
+	for i := range occurrences {
+		occurrences[i] = history.Occurrence{ID: fmt.Sprintf("activity:%d", i), Work: fmt.Sprintf("unit-%d", i)}
+	}
+	detail := history.Detail{Synopsis: history.Synopsis{Current: &history.UnitStatus{Description: "unit-9", Status: "Claimed"}}, Occurrences: occurrences}
+	model, _ := (Model{width: 120, height: 20}).Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
+	if model.detail.occurrenceID != "activity:9" {
+		t.Fatalf("initial operational focus = %#v", model.detail)
+	}
+	model, _ = model.Update(special(tea.KeyHome))
+	arrow, _ := model.Update(special(tea.KeyDown))
+	vim, _ := model.Update(textKey("j"))
+	if arrow.detail.occurrenceID != "activity:1" || !reflect.DeepEqual(arrow.detail, vim.detail) {
+		t.Fatalf("semantic Arrow/Vim mismatch: arrow=%#v vim=%#v", arrow.detail, vim.detail)
+	}
+	model, _ = model.Update(special(tea.KeyPgDown))
+	if model.detail.occurrenceID != "activity:8" {
+		t.Fatalf("page down focus = %#v", model.detail)
+	}
+	model, _ = model.Update(special(tea.KeyPgUp))
+	if model.detail.occurrenceID != "activity:0" {
+		t.Fatalf("page up focus = %#v", model.detail)
+	}
+	model, _ = model.Update(special(tea.KeyEnd))
+	if model.detail.occurrenceID != "activity:9" {
+		t.Fatalf("end operational focus = %#v", model.detail)
+	}
+	for range 20 {
+		model, _ = model.Update(textKey("j"))
+	}
+	if model.detail.occurrenceID != "activity:11" {
+		t.Fatalf("lower clamp = %#v", model.detail)
+	}
+}
+
+func TestModelInitialOccurrenceFocusPrecedence(t *testing.T) {
+	occurrences := []history.Occurrence{{ID: "old", Work: "other"}, {ID: "unit", Work: "target"}, {ID: "aggregate", Outcome: "Corrections"}, {ID: "terminal", Activity: "workflow_completed"}, {ID: "latest", Work: "other"}}
+	for _, test := range []struct {
+		name     string
+		workflow history.Workflow
+		synopsis history.Synopsis
+		want     string
+	}{
+		{"correction", history.Workflow{}, history.Synopsis{Blocker: &history.UnitStatus{Description: "target", Status: "Correction"}}, "unit"},
+		{"aggregate correction", history.Workflow{}, history.Synopsis{Blocker: &history.UnitStatus{Description: "Aggregate review", Status: "Correction"}}, "aggregate"},
+		{"current", history.Workflow{}, history.Synopsis{Current: &history.UnitStatus{Description: "target", Status: "Reviewing"}}, "unit"},
+		{"terminal", history.Workflow{State: "completed"}, history.Synopsis{}, "terminal"},
+		{"blocked", history.Workflow{}, history.Synopsis{Blocker: &history.UnitStatus{Description: "target", Status: "Dependency waiting"}}, "unit"},
+		{"latest", history.Workflow{}, history.Synopsis{}, "latest"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model, _ := (Model{}).Update(detailLoadedMsg{resolution: history.Resolution{Detail: history.Detail{Workflow: test.workflow, Synopsis: test.synopsis, Occurrences: occurrences}}})
+			if model.detail.occurrenceID != test.want {
+				t.Fatalf("focus = %q, want %q", model.detail.occurrenceID, test.want)
+			}
+		})
 	}
 }
 
@@ -207,11 +274,11 @@ func TestModelDetailEvidenceArrowAndVimParityAndClamps(t *testing.T) {
 }
 
 type fakeLoader struct {
-	detail             history.Detail
-	results            []history.SearchResult
-	resolution         history.Resolution
-	activityResolution history.Resolution
-	activityIDs        *[]string
+	detail               history.Detail
+	results              []history.SearchResult
+	resolution           history.Resolution
+	occurrenceResolution history.Resolution
+	occurrenceIDs        *[]string
 }
 
 func (f fakeLoader) List(context.Context) ([]history.Workflow, error)       { return nil, nil }
@@ -222,11 +289,14 @@ func (f fakeLoader) Search(context.Context, string) ([]history.SearchResult, err
 func (f fakeLoader) Resolve(context.Context, history.SearchResult) (history.Resolution, error) {
 	return f.resolution, nil
 }
-func (f fakeLoader) ResolveActivity(_ context.Context, activity history.Activity) (history.Resolution, error) {
-	if f.activityIDs != nil {
-		*f.activityIDs = append(*f.activityIDs, activity.ID)
+func (f fakeLoader) ResolveActivity(context.Context, history.Activity) (history.Resolution, error) {
+	return history.Resolution{}, nil
+}
+func (f fakeLoader) ResolveOccurrence(_ context.Context, _, occurrenceID, _ string) (history.Resolution, error) {
+	if f.occurrenceIDs != nil {
+		*f.occurrenceIDs = append(*f.occurrenceIDs, occurrenceID)
 	}
-	return f.activityResolution, nil
+	return f.occurrenceResolution, nil
 }
 
 func special(code rune) tea.KeyPressMsg { return tea.KeyPressMsg(tea.Key{Code: code}) }

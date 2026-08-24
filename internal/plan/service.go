@@ -138,20 +138,25 @@ func (s *Service) Ready(ctx context.Context, workflowID string) ([]WorkUnit, err
 	for i := range p.Units {
 		p.Units[i].State = states[p.Units[i].ID]
 	}
-	handles := map[string]bool{}
-	rows, err = s.db.QueryContext(ctx, `SELECT unit_id FROM handles WHERE workflow_id=? AND state!='revoked'`, workflowID)
+	var claims []ClaimStatus
+	rows, err = s.db.QueryContext(ctx, `SELECT unit_id,state,expires_at,claim_generation FROM handles WHERE workflow_id=?`, workflowID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+		var claim ClaimStatus
+		var expiry string
+		if err = rows.Scan(&claim.UnitID, &claim.State, &expiry, &claim.Generation); err != nil {
 			return nil, err
 		}
-		handles[id] = true
+		claim.ExpiresAt, err = time.Parse(time.RFC3339Nano, expiry)
+		if err != nil {
+			return nil, err
+		}
+		claims = append(claims, claim)
 	}
-	return ReadyUnits(p, handles), rows.Err()
+	return ReadyUnitsAt(p, claims, s.now()), rows.Err()
 }
 
 func (s *Service) load(ctx context.Context, workflowID string) (Plan, error) {

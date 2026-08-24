@@ -1,0 +1,14 @@
+[1;38;2;224;242;254mPitCrew2[m  [38;2;148;163;184mControl Plane[m  [1;38;2;244;114;182mv0.4.0[m
+[1;38;2;226;232;240mRedesign TUI history  IMPLEMENTING  r7[m
+Goal  Ship read-only terminal inspection
+Progress  2/3 done · 1 reviewing
+Current [derived]  Reviewing · try 1 · Render diseño operativo
+Next  workflow list-ready-units
+
+[1;38;2;226;232;240mHISTORY[m  4 occurrences
+  When             │ Phase     │ Work               │ Try │ Activity               │ Actor          │ Outcome / reason
+  2026-08-22 03:17 │ Explore   │ Redesign TUI hist… │ —   │ Created workflow       │ daimon         │ Created workflow
+  2026-08-22 03:18 │ Specify   │ Diseño operativo   │ —   │ Recorded specification │ pc2-specifier  │ Recorded specific…
+  2026-08-22 03:19 │ Implement │ Render diseño ope… │ 1   │ Recorded TDD           │ pc2-implement… │ Validation record…
+[1;38;2;103;232;249m▶ [m2026-08-22 03:20 │ Review    │ Render diseño ope… │ 1   │ Recorded review        │ pc2-reviewer   │ Approved
+[38;2;203;213;225m↑/k ↓/j move • pg/home/end • enter evidence • row 4/4 • q quit  ·  120x28                                               [m

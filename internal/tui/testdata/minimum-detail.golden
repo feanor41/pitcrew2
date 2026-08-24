@@ -1,0 +1,11 @@
+[1;38;2;224;242;254mPitCrew2[m  [38;2;148;163;184mControl Plane[m  [1;38;2;244;114;182mv0.4.0[m
+[1;38;2;226;232;240mRedesign TUI history  IMPLEMENTING  r7[m
+Goal  Ship read-only terminal inspection
+Progress  2/3 done · 1 reviewing  |  Current [derived]  Rev…
+Next  workflow list-ready-units
+[1;38;2;226;232;240mHISTORY[m  4 occurrences
+  03:19 │ Impleme… │ 1   │ Validation recorded
+  ↳ Render diseño operativo · Recorded TDD
+[1;38;2;103;232;249m▶ [m03:20 │ Review   │ 1   │ Approved
+  ↳ Render diseño operativo · Recorded review
+[38;2;203;213;225mj/k move • pg/end • enter • row 4/4 • q quit  ·  60x16      [m
