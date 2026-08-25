@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestEmbeddedTUILeavesDatabaseBytesUnchanged(t *testing.T) {
+func TestEmbeddedTUIRefreshLeavesDatabaseBytesUnchanged(t *testing.T) {
 	root := t.TempDir()
 	if created := runAt(t, root, "workflow", "new", "--name", "Read only", "--goal", "prove TUI immutability", "--actor", "daimon"); created.code != 0 {
 		t.Fatalf("initialize workflow: %#v", created)
@@ -18,11 +18,18 @@ func TestEmbeddedTUILeavesDatabaseBytesUnchanged(t *testing.T) {
 	dbPath := filepath.Join(root, ".pitcrew", "state.db")
 	before := fileDigest(t, dbPath)
 	var output bytes.Buffer
-	if err := runEmbeddedTUI(root, strings.NewReader("q"), &output); err != nil {
+	if err := runEmbeddedTUI(root, strings.NewReader("rq"), &output); err != nil {
 		t.Fatal(err)
 	}
 	if after := fileDigest(t, dbPath); after != before {
 		t.Fatalf("embedded TUI mutated state.db: before=%x after=%x", before, after)
+	}
+
+	if err := runEmbeddedTUI(root, strings.NewReader("/r\x03"), &output); err != nil {
+		t.Fatal(err)
+	}
+	if after := fileDigest(t, dbPath); after != before {
+		t.Fatalf("search input mutated state.db: before=%x after=%x", before, after)
 	}
 }
 

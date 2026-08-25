@@ -11,4 +11,4 @@ Next  workflow list-ready-units
   2026-08-22 03:18 │ Specify   │ Diseño operativo                       │ —   │ Recorded specification │ pc2-specifier        │ Recorded specification
   2026-08-22 03:19 │ Implement │ Render diseño operativo                │ 1   │ Recorded TDD           │ pc2-implementer      │ Validation recorded
 [1;38;2;103;232;249m▶ [m2026-08-22 03:20 │ Review    │ Render diseño operativo                │ 1   │ Recorded review        │ pc2-reviewer         │ Approved
-[38;2;203;213;225m↑/k ↓/j move • pg/home/end • enter evidence • row 4/4 • q quit  ·  166x30                                                                                             [m
+[38;2;203;213;225m↑/k ↓/j move • pg/home/end • enter evidence • r refresh • row 4/4 • q quit  ·  166x30                                                                                 [m

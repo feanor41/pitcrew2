@@ -90,6 +90,26 @@ func TestViewStatesAndResize(t *testing.T) {
 	}
 }
 
+func TestViewDetailFootersAdvertiseRefresh(t *testing.T) {
+	occurrence := detailViewModel()
+	evidence := detailViewModel()
+	evidence.opened.Record = evidence.opened.Detail.Records[0]
+	for _, test := range []struct {
+		name string
+		Model
+	}{{"occurrence", occurrence}, {"evidence", evidence}} {
+		for _, width := range []int{60, 120} {
+			t.Run(fmt.Sprintf("%s/%d", test.name, width), func(t *testing.T) {
+				model, _ := test.Model.Update(tea.WindowSizeMsg{Width: width, Height: 16})
+				footer := model.footerHints()
+				check(t, strings.Contains(footer, "r refresh") && strings.Contains(footer, "q quit"), "detail footer = %q", footer)
+				used := lipgloss.Width(fmt.Sprintf("%s  ·  %dx%d", footer, width, 16))
+				check(t, used <= width, "detail footer width %d exceeds %d: %q", used, width, footer)
+			})
+		}
+	}
+}
+
 func TestViewGridMetadataTimelineAndVersionAccent(t *testing.T) {
 	grid, _ := workflowViewModel().Update(tea.WindowSizeMsg{Width: 112, Height: 28})
 	for _, want := range []string{"Started", "Work", "Status", "2026-08-22 03:17", "Redesign TUI history"} {
