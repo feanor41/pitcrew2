@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -148,7 +149,8 @@ func runPrinciples(args []string, deps Dependencies) int {
 	return 0
 }
 
-var workflowCommands = map[string]bool{"new": true, "show": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
+var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
+var workflowIDPattern = regexp.MustCompile(`^wf-[0-9a-f]{24}$`)
 
 func runWorkflow(args []string, deps Dependencies) int {
 	if equalArgs(args, "--help") {
@@ -169,6 +171,8 @@ func runWorkflow(args []string, deps Dependencies) int {
 	switch command {
 	case "new":
 		return runWorkflowNew(rest, deps)
+	case "continue":
+		return runWorkflowContinue(rest, deps)
 	case "show":
 		return runWorkflowShow(rest, deps)
 	case "explore", "spec", "design":
@@ -198,6 +202,23 @@ func runWorkflow(args []string, deps Dependencies) int {
 	default:
 		return fail(deps, ErrUsage, "unsupported command")
 	}
+}
+
+func runWorkflowContinue(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--from", "--actor"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if !workflowIDPattern.MatchString(values.one("--from")) {
+		return fail(deps, ErrUsage, "--from must be a workflow ID")
+	}
+	return withStore(deps, func(s *store.Store) error {
+		result, err := workflow.New(s, deps.Now).Continue(context.Background(), values.one("--from"), values.one("--actor"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, result, "workflow explore")
+	})
 }
 
 func runHandoffReview(args []string, deps Dependencies) int {
@@ -582,7 +603,7 @@ func classify(err error) envelope.ExitCode {
 		return envelope.CAS
 	case errors.Is(err, handles.ErrInvalid), errors.Is(err, handles.ErrExpired), errors.Is(err, handles.ErrUnsafePath), errors.Is(err, handles.ErrUnsafePermissions), errors.Is(err, evidence.ErrInvalidHandle):
 		return envelope.Handle
-	case errors.Is(err, ErrState), errors.Is(err, sql.ErrNoRows), errors.Is(err, workflow.ErrInvalidName), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
+	case errors.Is(err, ErrState), errors.Is(err, sql.ErrNoRows), errors.Is(err, workflow.ErrInvalidName), errors.Is(err, workflow.ErrInvalidActor), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
 		return envelope.State
 	default:
 		return envelope.Internal
@@ -620,7 +641,7 @@ const rootHelp = `Usage: pitcrew <command> [options]
 Commands:
   tui
   principles
-  workflow new|show|explore|spec|design|plan|approve-plan
+  workflow new|continue|show|explore|spec|design|plan|approve-plan
   workflow list-ready-units|begin-implementation|complete|abandon
   workflow claim-unit|recover-unit-claim|handoff-review|recover-review|unit-tdd|unit-review|unit-complete
 
@@ -630,7 +651,7 @@ Global options:
 `
 const workflowHelp = `Usage: pitcrew workflow <subcommand> [options]
 
-Commands: new, show, explore, spec, design, plan, approve-plan, list-ready-units,
+Commands: new, continue, show, explore, spec, design, plan, approve-plan, list-ready-units,
   begin-implementation, complete, abandon, claim-unit, recover-unit-claim, handoff-review, recover-review,
   unit-tdd, unit-review, unit-complete
 `

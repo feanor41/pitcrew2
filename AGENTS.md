@@ -44,6 +44,8 @@ Unit review is selective where early feedback materially reduces risk. Every ful
 
 The Implementer returns only the opaque implementation handle path to Daimon. When unit review is selected, Daimon creates independent reviewer authority with `workflow handoff-review` and passes only the resulting opaque review handle path to the Reviewer. If it expires before a verdict, Daimon may use `workflow recover-review` only with the originally handed-off reviewer identity. Handle contents never cross role boundaries.
 
+Terminal workflows are immutable. To resume related work, Daimon uses `workflow continue --from` to create a fresh linked draft; it never edits the completed or abandoned predecessor.
+
 ## References
 
 - [`docs/cli-reference.md`](docs/cli-reference.md) — exact command, flag, payload, envelope, and exit contracts.

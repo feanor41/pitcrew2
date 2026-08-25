@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,6 +17,7 @@ import (
 var (
 	ErrInvalidTransition = errors.New("invalid workflow transition")
 	ErrInvalidName       = errors.New("workflow name must contain 1 to 80 runes")
+	ErrInvalidActor      = errors.New("workflow actor is required")
 	ErrNotFound          = errors.New("workflow not found")
 )
 
@@ -53,6 +55,15 @@ type Workflow struct {
 	Goal        string `json:"goal"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
+}
+type Predecessor struct {
+	ID       string `json:"id"`
+	State    State  `json:"state"`
+	Revision int64  `json:"revision"`
+}
+type ContinuationResult struct {
+	Workflow    Workflow    `json:"workflow"`
+	Predecessor Predecessor `json:"predecessor"`
 }
 type Event struct {
 	WorkflowID    string `json:"workflow_id"`
@@ -148,6 +159,60 @@ func (s *Service) Create(ctx context.Context, name, goal, actor string) (Workflo
 		return Workflow{}, err
 	}
 	return Workflow{ID: id, Revision: 1, State: Draft, Name: name, Goal: goal, CreatedAt: at, UpdatedAt: at}, nil
+}
+
+func (s *Service) Continue(ctx context.Context, sourceID, actor string) (ContinuationResult, error) {
+	if strings.TrimSpace(actor) == "" {
+		return ContinuationResult{}, ErrInvalidActor
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ContinuationResult{}, err
+	}
+	defer tx.Rollback()
+	source, err := workflowInTx(ctx, tx, sourceID)
+	if err != nil {
+		return ContinuationResult{}, err
+	}
+	if source.State != Completed && source.State != Abandoned {
+		return ContinuationResult{}, &TransitionError{Current: source.State, Expected: []State{Completed, Abandoned}, Event: "continue"}
+	}
+	id, err := ids.NewWorkflow()
+	if err != nil {
+		return ContinuationResult{}, err
+	}
+	now := s.now()
+	at := ids.FormatTime(now)
+	child := Workflow{ID: id, Revision: 1, State: Draft, Name: source.Name, Goal: source.Goal, CreatedAt: at, UpdatedAt: at}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES(?,1,?,?,?,?,?)`, id, Draft, child.Name, child.Goal, at, at); err != nil {
+		return ContinuationResult{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,?,?,?,?,1,?)`, id, "", Draft, actor, "", at); err != nil {
+		return ContinuationResult{}, err
+	}
+	lineage, err := json.Marshal(struct {
+		ID       string `json:"predecessor_workflow_id"`
+		State    State  `json:"predecessor_state"`
+		Revision int64  `json:"predecessor_revision"`
+	}{source.ID, source.State, source.Revision})
+	if err != nil {
+		return ContinuationResult{}, err
+	}
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,'continuation',?,?,1,?)`, id, string(lineage), actor, at)
+	if err != nil {
+		return ContinuationResult{}, err
+	}
+	artifactID, err := inserted.LastInsertId()
+	if err != nil {
+		return ContinuationResult{}, err
+	}
+	if err = activity.AppendTx(ctx, tx, activity.New(id, "", activity.ContinuationRecorded, actor, now, activity.ArtifactSubject(artifactID))); err != nil {
+		return ContinuationResult{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return ContinuationResult{}, err
+	}
+	return ContinuationResult{Workflow: child, Predecessor: Predecessor{source.ID, source.State, source.Revision}}, nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Workflow, error) {
