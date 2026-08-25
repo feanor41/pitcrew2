@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fmazzalomo/pitcrew/internal/history"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
 
@@ -210,6 +211,77 @@ func TestWorkflowProgressRejectsInvalidStaleAndTerminalWithoutMutation(t *testin
 	}
 	mustOK(t, runAt(t, root, "workflow", "abandon", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--reason", "stop"))
 	if terminal := runAt(t, root, "workflow", "progress", "--workflow-id", wfID, "--revision", "2", "--actor", "daimon", "--input-file", valid); terminal.code != 3 {
+		t.Fatalf("terminal=%#v", terminal)
+	}
+}
+
+func TestWorkflowRequestCapabilityAppendsInspectableRequestsWithoutLifecycle(t *testing.T) {
+	root := t.TempDir()
+	wfID, revision := createWorkflow(t, root)
+	before := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	for i, body := range []string{`{"capability":"  browser tool  ","reason":"  verify UI  ","blocked_action":"  inspect page  "}`, `{"capability":"review transition","reason":"independent review","blocked_action":"handoff"}`} {
+		input := writeInput(t, root, "capability-"+itoa(int64(i))+".json", body)
+		result := mustOK(t, runAt(t, root, "workflow", "request-capability", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--input-file", input))
+		if !strings.Contains(string(result), `"capability_request":`) || !strings.Contains(string(result), `"next_action":"daimon coordinate requested capability"`) {
+			t.Fatalf("request=%s", result)
+		}
+	}
+	after := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	first, second := strings.Index(string(after), `\"capability\":\"browser tool\"`), strings.Index(string(after), `\"capability\":\"review transition\"`)
+	if workflowRevision(t, after) != revision || workflowState(t, after) != workflowState(t, before) || nestedWorkflowString(t, after, "updated_at") != nestedWorkflowString(t, before, "updated_at") || first < 0 || second < first || !strings.Contains(string(after), `"kind":"capability_request"`) || !strings.Contains(string(after), `"action":"capability_requested"`) {
+		t.Fatalf("show=%s", after)
+	}
+	for _, forbidden := range []string{"claim_secret", `\"fulfilled\"`, `\"resolved\"`, `\"owner\"`, `\"status\"`} {
+		if strings.Contains(string(after), forbidden) {
+			t.Fatalf("capability request inferred lifecycle or leaked secret %q: %s", forbidden, after)
+		}
+	}
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	results, err := history.New(s).Search(context.Background(), "browser tool")
+	if err != nil || len(results) == 0 || results[0].Kind != "capability_request" {
+		t.Fatalf("capability search=%#v err=%v", results, err)
+	}
+	resolved, err := history.New(s).Resolve(context.Background(), results[0])
+	if err != nil || resolved.Record.Kind != "capability_request" || strings.Contains(resolved.Record.Content, "secret") {
+		t.Fatalf("capability drill-down=%#v err=%v", resolved, err)
+	}
+}
+
+func TestWorkflowRequestCapabilityRejectsInvalidStaleAndTerminalWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	wfID, revision := createWorkflow(t, root)
+	for _, tt := range []struct {
+		name, body string
+		code       int
+	}{
+		{"unknown field", `{"capability":"tool","reason":"needed","blocked_action":"work","extra":true}`, 2},
+		{"missing capability", `{"reason":"needed","blocked_action":"work"}`, 3},
+		{"blank capability", `{"capability":" ","reason":"needed","blocked_action":"work"}`, 3},
+		{"blank reason", `{"capability":"tool","reason":" ","blocked_action":"work"}`, 3},
+		{"blank blocked action", `{"capability":"tool","reason":"needed","blocked_action":" "}`, 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+			input := writeInput(t, root, strings.ReplaceAll(tt.name, " ", "-")+".json", tt.body)
+			result := runAt(t, root, "workflow", "request-capability", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--input-file", input)
+			if result.code != tt.code || result.stdout != "" {
+				t.Fatalf("result=%#v", result)
+			}
+			if after := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID)); string(after) != string(before) {
+				t.Fatal("invalid capability request mutated workflow")
+			}
+		})
+	}
+	valid := writeInput(t, root, "valid-capability.json", `{"capability":"tool","reason":"needed","blocked_action":"work"}`)
+	if stale := runAt(t, root, "workflow", "request-capability", "--workflow-id", wfID, "--revision", "2", "--actor", "daimon", "--input-file", valid); stale.code != 4 {
+		t.Fatalf("stale=%#v", stale)
+	}
+	mustOK(t, runAt(t, root, "workflow", "abandon", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--reason", "stop"))
+	if terminal := runAt(t, root, "workflow", "request-capability", "--workflow-id", wfID, "--revision", "2", "--actor", "daimon", "--input-file", valid); terminal.code != 3 {
 		t.Fatalf("terminal=%#v", terminal)
 	}
 }

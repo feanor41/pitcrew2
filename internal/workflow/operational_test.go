@@ -75,3 +75,21 @@ func TestAppendOperationalRejectsStaleTerminalAndRollsBackActivityFailure(t *tes
 		})
 	}
 }
+
+func TestAppendOperationalRollsBackCapabilityActivityFailure(t *testing.T) {
+	svc, db := testService(t)
+	wf, err := svc.Create(context.Background(), "Work", "goal", "daimon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = db.Exec(`CREATE TRIGGER fail_capability BEFORE INSERT ON activities WHEN NEW.action='capability_requested' BEGIN SELECT RAISE(ABORT,'activity failure'); END`)
+	before, _ := svc.Get(context.Background(), wf.ID)
+	_, err = svc.AppendOperational(context.Background(), wf.ID, 1, "capability_request", `{}`, "daimon", activity.CapabilityRequested)
+	var artifacts, activities int
+	_ = db.QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=?`, wf.ID).Scan(&artifacts)
+	_ = db.QueryRow(`SELECT count(*) FROM activities WHERE workflow_id=? AND action='capability_requested'`, wf.ID).Scan(&activities)
+	after, _ := svc.Get(context.Background(), wf.ID)
+	if err == nil || after != before || artifacts != 0 || activities != 0 {
+		t.Fatalf("rollback error=%v before=%#v after=%#v artifacts=%d activities=%d", err, before, after, artifacts, activities)
+	}
+}

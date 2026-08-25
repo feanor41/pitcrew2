@@ -32,7 +32,6 @@ fi
 for runtime in Codex OpenCode 'Claude Code' Pi; do
   grep "$runtime" "$TMP_ROOT/unsupported.err" >/dev/null || fail "unsupported error omitted $runtime"
 done
-
 codex=$TMP_ROOT/codex
 CODEX_HOME=$codex sh "$INSTALLER"
 target=$codex/prompts
@@ -73,6 +72,10 @@ grep -F 'Continue terminal work only with `workflow continue --from`' "$target/a
 for progress_rule in 'short, truthful, non-repetitive user status' 'Silence is required until a meaningful fact changes' 'must not fabricate progress or repeat encouragement'; do
   grep -F "$progress_rule" "$target/daimon.md" >/dev/null || fail "Daimon progress contract omitted $progress_rule"
   grep -F "$progress_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract progress contract omitted $progress_rule"
+done
+for capability_rule in 'required tool, command, or transition is absent' 'workflow request-capability' 'does not imply fulfillment' 'must not invent or bypass'; do
+  grep -F "$capability_rule" "$target/daimon.md" >/dev/null || fail "Daimon capability contract omitted $capability_rule"
+  grep -F "$capability_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract capability contract omitted $capability_rule"
 done
 for review_rule in 'Unit review is selective' 'Final aggregate review is mandatory' 'requirements, specifications, design, tasks, implementation evidence, and tests'; do
   grep -F "$review_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract review rule omitted $review_rule"
@@ -201,7 +204,7 @@ assert_role_set "$spaced/prompts"
 for document in "$ROOT/AGENTS.md" "$ROOT/docs/cli-reference.md" "$ROOT/docs/contributing.md"; do
   assert_file "$document"
 done
-for command in new continue show progress explore spec design plan approve-plan list-ready-units begin-implementation complete abandon claim-unit recover-unit-claim handoff-review recover-review unit-tdd unit-review unit-complete; do
+for command in new continue show progress request-capability explore spec design plan approve-plan list-ready-units begin-implementation complete abandon claim-unit recover-unit-claim handoff-review recover-review unit-tdd unit-review unit-complete; do
   grep -F "workflow $command" "$ROOT/docs/cli-reference.md" >/dev/null || fail "CLI reference omitted workflow $command"
 done
 for code in '0 — ok' '1 — internal' '2 — usage' '3 — state' '4 — CAS' '5 — handle'; do
