@@ -284,6 +284,31 @@ func TestViewSynopsisMarksDerivedCurrentAndBlockerAtMinimum(t *testing.T) {
 	}
 }
 
+func TestViewSynopsisRendersAdvancedAndBlockedProgressAtResponsiveWidths(t *testing.T) {
+	for _, status := range []string{"advanced", "blocked"} {
+		for _, width := range []int{120, 80, 60} {
+			t.Run(fmt.Sprintf("%s/%d", status, width), func(t *testing.T) {
+				model := detailViewModel()
+				model.opened.Detail.Synopsis.Progress = &history.Progress{Status: status, Summary: "Focused tests pass", NextAction: "request review"}
+				height := 20
+				if width == 60 {
+					height = 16
+				}
+				model, _ = model.Update(tea.WindowSizeMsg{Width: width, Height: height})
+				got := model.View().Content
+				for _, want := range []string{"[" + strings.ToUpper(status) + "]", "Focused tests pass", "Report next  request review", "Next  workflow list-ready-units"} {
+					if !strings.Contains(got, want) {
+						t.Fatalf("progress synopsis missing %q:\n%s", want, got)
+					}
+				}
+				if width == 60 && (!strings.Contains(got, "HISTORY") || !strings.Contains(got, "  ↳ ")) {
+					t.Fatalf("minimum progress synopsis displaced operational history:\n%s", got)
+				}
+			})
+		}
+	}
+}
+
 func TestViewDetailEvidenceIsFullyReachable(t *testing.T) {
 	content := "FIRST FRAGMENT\n" + strings.Repeat("界", 120) + "\nMIDDLE FRAGMENT\n" + strings.Repeat("界", 120) + "\nFINAL FRAGMENT"
 	model := Model{screen: DetailScreen, opened: history.Resolution{Detail: history.Detail{

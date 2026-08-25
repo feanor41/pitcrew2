@@ -70,6 +70,10 @@ grep -F 'recover-review may rotate it only for the same reviewer after expiry' "
 grep -F 'recover-review` preserves the originally handed-off reviewer identity' "$target/agent-contract.md" >/dev/null || fail 'agent contract omitted review recovery identity'
 grep -F 'workflow continue --from to create a linked draft instead' "$target/daimon.md" >/dev/null || fail 'Daimon terminal continuation contract omitted'
 grep -F 'Continue terminal work only with `workflow continue --from`' "$target/agent-contract.md" >/dev/null || fail 'agent contract omitted terminal continuation'
+for progress_rule in 'short, truthful, non-repetitive user status' 'Silence is required until a meaningful fact changes' 'must not fabricate progress or repeat encouragement'; do
+  grep -F "$progress_rule" "$target/daimon.md" >/dev/null || fail "Daimon progress contract omitted $progress_rule"
+  grep -F "$progress_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract progress contract omitted $progress_rule"
+done
 for review_rule in 'Unit review is selective' 'Final aggregate review is mandatory' 'requirements, specifications, design, tasks, implementation evidence, and tests'; do
   grep -F "$review_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract review rule omitted $review_rule"
 done

@@ -327,12 +327,12 @@ func TestModelRefreshPreservesResultAndDetailIdentity(t *testing.T) {
 	model.results, model.selected = []history.SearchResult{{WorkflowID: "old", RecordID: "record:1"}, kept}, 1
 	model = runRefresh(t, model)
 	check(t, reflect.DeepEqual(model.results[model.selected], kept), "selected result = %#v, want %#v", model.results[model.selected], kept)
-	detail := history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: []history.Occurrence{{ID: "before"}, {ID: "activity:2"}, {ID: "after"}}}
+	detail := history.Detail{Workflow: history.Workflow{ID: "wf"}, Synopsis: history.Synopsis{Progress: &history.Progress{Status: "advanced", Summary: "new", NextAction: "review"}}, Occurrences: []history.Occurrence{{ID: "before"}, {ID: "activity:2"}, {ID: "after"}}}
 	model = Model{loader: fakeLoader{detail: detail}, screen: DetailScreen, generation: 1}
 	model.opened = history.Resolution{Detail: history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: []history.Occurrence{{ID: "activity:1"}, {ID: "activity:2"}}}}
 	model.detail.occurrenceID = "activity:2"
 	model = runRefresh(t, model)
-	check(t, model.detail.occurrenceID == "activity:2", "occurrence focus = %#v", model.detail)
+	check(t, model.detail.occurrenceID == "activity:2" && model.opened.Detail.Synopsis.Progress.Summary == "new", "refreshed progress/focus = detail:%#v synopsis:%#v", model.detail, model.opened.Detail.Synopsis)
 	model.loader = fakeLoader{detail: history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: []history.Occurrence{{ID: "fallback"}}}}
 	model = runRefresh(t, model)
 	check(t, model.detail.occurrenceID == "fallback", "missing occurrence fallback = %#v", model.detail)

@@ -12,9 +12,9 @@ import (
 
 func TestEmbeddedTUIRefreshLeavesDatabaseBytesUnchanged(t *testing.T) {
 	root := t.TempDir()
-	if created := runAt(t, root, "workflow", "new", "--name", "Read only", "--goal", "prove TUI immutability", "--actor", "daimon"); created.code != 0 {
-		t.Fatalf("initialize workflow: %#v", created)
-	}
+	wfID, revision := createWorkflow(t, root)
+	progress := writeInput(t, root, "progress.json", `{"status":"advanced","summary":"projection ready","next_action":"inspect"}`)
+	mustOK(t, runAt(t, root, "workflow", "progress", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--input-file", progress))
 	dbPath := filepath.Join(root, ".pitcrew", "state.db")
 	before := fileDigest(t, dbPath)
 	var output bytes.Buffer
