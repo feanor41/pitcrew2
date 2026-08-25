@@ -39,26 +39,27 @@ func (m Model) footerHints() string {
 	}
 	if m.screen == DetailScreen && (m.opened.Record.ID != "" || len(m.opened.Detail.Occurrences) == 0 && len(m.opened.Detail.Records) > 0) {
 		current, total := m.detailPosition()
-		if m.width < 80 {
-			return fmt.Sprintf("↑/k ↓/j • h back • line %d/%d • q quit", current, total)
+		if m.width < 96 {
+			return fmt.Sprintf("j/k • h back • r refresh • q quit • line %d/%d", current, total)
 		}
-		return fmt.Sprintf("↑/k ↓/j scroll • ←/h back • line %d/%d • q quit", current, total)
+		return fmt.Sprintf("↑/k ↓/j scroll • ←/h back • r refresh • line %d/%d • q quit", current, total)
 	}
 	if m.screen == DetailScreen {
 		current, total := m.detailPosition()
-		if m.width < 80 {
-			return fmt.Sprintf("j/k move • pg/end • enter • row %d/%d • q quit", current, total)
+		if m.width < 96 {
+			return fmt.Sprintf("j/k • enter • r refresh • q quit • row %d/%d", current, total)
 		}
-		return fmt.Sprintf("↑/k ↓/j move • pg/home/end • enter evidence • row %d/%d • q quit", current, total)
+		return fmt.Sprintf("↑/k ↓/j move • pg/home/end • enter evidence • r refresh • row %d/%d • q quit", current, total)
 	}
 	return m.Hints()
 }
 
 func (m Model) body() string {
-	if m.loading {
+	hasData := m.hasActiveData()
+	if m.loading && (!m.loadPreserves || !hasData) {
 		return statePanel("LOADING", "Reading project history…")
 	}
-	if m.err != nil {
+	if m.err != nil && (!m.loadPreserves || !hasData) {
 		if errors.Is(m.err, ErrUninitialized) {
 			return statePanel("NOT INITIALIZED", ErrUninitialized.Error())
 		}
@@ -70,13 +71,32 @@ func (m Model) body() string {
 	if m.screen == WorkflowsScreen && len(m.workflows) == 0 {
 		return statePanel("HISTORY", "No workflow history yet.")
 	}
+	var body string
 	switch m.screen {
 	case DetailScreen:
-		return m.detailView()
+		body = m.detailView()
 	case ResultsScreen:
-		return "SEARCH RESULTS\nquery: " + m.query + "\n" + m.list()
+		body = "SEARCH RESULTS\nquery: " + m.query + "\n" + m.list()
 	default:
-		return "WORKFLOWS\n" + m.list()
+		body = "WORKFLOWS\n" + m.list()
+	}
+	if m.loading {
+		return flight.muted.Render("REFRESHING · keeping current selection") + "\n" + body
+	}
+	if m.err != nil {
+		return flight.bad.Render("REFRESH FAILED · "+m.err.Error()+" · press r to retry") + "\n" + body
+	}
+	return body
+}
+
+func (m Model) hasActiveData() bool {
+	switch m.screen {
+	case ResultsScreen:
+		return len(m.results) > 0
+	case DetailScreen:
+		return m.opened.Detail.Workflow.ID != ""
+	default:
+		return len(m.workflows) > 0
 	}
 }
 

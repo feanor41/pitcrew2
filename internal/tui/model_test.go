@@ -275,16 +275,114 @@ func TestModelDetailEvidenceArrowAndVimParityAndClamps(t *testing.T) {
 
 type fakeLoader struct {
 	detail               history.Detail
+	workflows            []history.Workflow
 	results              []history.SearchResult
 	resolution           history.Resolution
 	occurrenceResolution history.Resolution
 	occurrenceIDs        *[]string
 }
 
-func (f fakeLoader) List(context.Context) ([]history.Workflow, error)       { return nil, nil }
+func (f fakeLoader) List(context.Context) ([]history.Workflow, error)       { return f.workflows, nil }
 func (f fakeLoader) Detail(context.Context, string) (history.Detail, error) { return f.detail, nil }
 func (f fakeLoader) Search(context.Context, string) ([]history.SearchResult, error) {
 	return f.results, nil
+}
+
+func TestModelRefreshLatestGenerationAndWorkflowIdentity(t *testing.T) {
+	model := New(fakeLoader{workflows: []history.Workflow{{ID: "old"}, {ID: "kept"}, {ID: "new"}}})
+	model.workflows = []history.Workflow{{ID: "first"}, {ID: "kept"}}
+	model.selected = 1
+	first, firstCmd := model.Update(textKey("r"))
+	second, secondCmd := first.Update(textKey("r"))
+	check(t, firstCmd != nil && secondCmd != nil && second.loading, "refresh commands = first:%v second:%v loading=%v", firstCmd != nil, secondCmd != nil, second.loading)
+	stale := firstCmd().(workflowsLoadedMsg)
+	stale.workflows = []history.Workflow{{ID: "stale"}}
+	secondMsg := secondCmd()
+	second, _ = second.Update(secondMsg)
+	second, _ = second.Update(stale)
+	duplicate := secondMsg.(workflowsLoadedMsg)
+	duplicate.workflows = []history.Workflow{{ID: "duplicate"}}
+	second, _ = second.Update(duplicate)
+	check(t, len(second.workflows) == 3 && second.workflows[second.selected].ID == "kept" && !second.loading && second.err == nil, "latest refresh state = %#v", second)
+	second.workflows = []history.Workflow{{ID: "gone"}, {ID: "also-gone"}}
+	second.selected = 1
+	second = runRefresh(t, second)
+	check(t, second.selected == 1 && second.workflows[1].ID == "kept", "deterministic fallback = selected %d in %#v", second.selected, second.workflows)
+	for _, refresh := range []bool{false, true} {
+		model := New(fakeLoader{workflows: []history.Workflow{{ID: "loaded"}}})
+		command := model.Init()
+		if refresh {
+			model.workflows = []history.Workflow{{ID: "existing"}}
+			model, command = model.Update(textKey("r"))
+		}
+		model, _ = model.Update(special(tea.KeyEscape))
+		model, _ = model.Update(command())
+		check(t, len(model.workflows) == 1 && model.workflows[0].ID == "loaded", "root load completion lost (refresh=%v): %#v", refresh, model)
+	}
+}
+func TestModelRefreshPreservesResultAndDetailIdentity(t *testing.T) {
+	kept := history.SearchResult{WorkflowID: "wf", RecordID: "record:2", Kind: "plan", UnitID: "u2", Revision: 3}
+	model := New(fakeLoader{results: []history.SearchResult{{WorkflowID: "new", RecordID: "record:0"}, kept}})
+	model.screen, model.query = ResultsScreen, "plan"
+	model.results, model.selected = []history.SearchResult{{WorkflowID: "old", RecordID: "record:1"}, kept}, 1
+	model = runRefresh(t, model)
+	check(t, reflect.DeepEqual(model.results[model.selected], kept), "selected result = %#v, want %#v", model.results[model.selected], kept)
+	detail := history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: []history.Occurrence{{ID: "before"}, {ID: "activity:2"}, {ID: "after"}}}
+	model = Model{loader: fakeLoader{detail: detail}, screen: DetailScreen, generation: 1}
+	model.opened = history.Resolution{Detail: history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: []history.Occurrence{{ID: "activity:1"}, {ID: "activity:2"}}}}
+	model.detail.occurrenceID = "activity:2"
+	model = runRefresh(t, model)
+	check(t, model.detail.occurrenceID == "activity:2", "occurrence focus = %#v", model.detail)
+	model.loader = fakeLoader{detail: history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: []history.Occurrence{{ID: "fallback"}}}}
+	model = runRefresh(t, model)
+	check(t, model.detail.occurrenceID == "fallback", "missing occurrence fallback = %#v", model.detail)
+	model = Model{loader: fakeLoader{detail: history.Detail{Workflow: history.Workflow{ID: "wf"}, Records: []history.Record{{ID: "record:1"}, {ID: "record:2", WorkflowID: "wf", Kind: "plan", Content: "updated"}}}}, screen: DetailScreen, generation: 1}
+	model.opened, model.detail = history.Resolution{Detail: history.Detail{Workflow: history.Workflow{ID: "wf"}}, Record: history.Record{ID: "record:2", WorkflowID: "wf", Content: "old"}}, detailCursor{recordID: "record:2", line: 1}
+	model = runRefresh(t, model)
+	check(t, model.opened.Record.Content == "updated" && model.detail.recordID == "record:2", "record identity/content = record %#v cursor %#v", model.opened.Record, model.detail)
+}
+func TestModelRefreshErrorRetainsDataFocusAndSearchOwnsR(t *testing.T) {
+	wantErr := errors.New("refresh failed")
+	model := Model{screen: WorkflowsScreen, workflows: []history.Workflow{{ID: "one", Name: "First"}, {ID: "two", Name: "Second"}}, selected: 1, width: 100, height: 24, generation: 4, loading: true, loadPreserves: true}
+	model, _ = model.Update(loadFailedMsg{loadMeta: loadMeta{kind: loadUnknown, generation: 4}, err: wantErr})
+	check(t, len(model.workflows) == 2 && model.selected == 1 && errors.Is(model.err, wantErr), "non-destructive failure = %#v", model)
+	check(t, strings.Contains(model.render(), "REFRESH FAILED") && strings.Contains(model.render(), "Second"), "refresh failure not visible with prior data:\n%s", model.render())
+	model.searchFocused, model.query = true, "sea"
+	model, command := model.Update(textKey("r"))
+	check(t, command == nil && model.query == "sear" && !model.loading, "focused search refresh key = query %q command=%v loading=%v", model.query, command != nil, model.loading)
+	model, command = NewUnavailable(errors.New("history unavailable")).Update(textKey("r"))
+	check(t, command == nil && model.err.Error() == "history unavailable" && !model.loading, "unavailable refresh = command:%v error:%v loading:%v", command != nil, model.err, model.loading)
+}
+func TestModelRefreshCompletionCannotRestoreViewAfterBack(t *testing.T) {
+	detail := history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: []history.Occurrence{{ID: "activity:1"}}}
+	result := history.SearchResult{WorkflowID: "wf", RecordID: "record:1", Kind: "plan"}
+	assertBackIgnoresRefresh(t, "detail", Model{loader: fakeLoader{detail: detail}, screen: DetailScreen, opened: history.Resolution{Detail: detail}, generation: 1})
+	assertBackIgnoresRefresh(t, "results", Model{loader: fakeLoader{results: []history.SearchResult{result}}, screen: ResultsScreen, results: []history.SearchResult{result}, query: "plan", generation: 1})
+}
+func assertBackIgnoresRefresh(t *testing.T, name string, model Model) {
+	t.Helper()
+	loading, command := model.Update(textKey("r"))
+	check(t, command != nil, "%s refresh command is nil", name)
+	meta := loadMeta{kind: loading.activeLoad, generation: loading.generation, preserve: loading.loadPreserves}
+	for _, msg := range []tea.Msg{command(), loadFailedMsg{loadMeta: meta, err: errors.New("late failure")}} {
+		navigated, _ := loading.Update(special(tea.KeyEscape))
+		want := navigated
+		navigated, _ = navigated.Update(msg)
+		check(t, reflect.DeepEqual(navigated, want), "%s late %T altered navigated view:\n got %#v\nwant %#v", name, msg, navigated, want)
+	}
+}
+func runRefresh(t *testing.T, model Model) Model {
+	t.Helper()
+	model, command := model.Update(textKey("r"))
+	check(t, command != nil, "refresh command is nil")
+	model, _ = model.Update(command())
+	return model
+}
+func check(t *testing.T, condition bool, format string, args ...any) {
+	t.Helper()
+	if !condition {
+		t.Fatalf(format, args...)
+	}
 }
 func (f fakeLoader) Resolve(context.Context, history.SearchResult) (history.Resolution, error) {
 	return f.resolution, nil

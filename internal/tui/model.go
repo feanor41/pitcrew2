@@ -43,6 +43,9 @@ type Model struct {
 	width         int
 	height        int
 	detail        detailCursor
+	generation    uint64
+	activeLoad    loadKind
+	loadPreserves bool
 }
 
 type detailCursor struct {
@@ -53,13 +56,39 @@ type detailCursor struct {
 	top           int
 }
 
-type workflowsLoadedMsg struct{ workflows []history.Workflow }
-type resultsLoadedMsg struct{ results []history.SearchResult }
-type detailLoadedMsg struct{ resolution history.Resolution }
-type loadFailedMsg struct{ err error }
+type loadKind uint8
+
+const (
+	loadUnknown loadKind = iota
+	loadWorkflows
+	loadResults
+	loadDetail
+)
+
+type loadMeta struct {
+	kind       loadKind
+	generation uint64
+	preserve   bool
+}
+type workflowsLoadedMsg struct {
+	loadMeta
+	workflows []history.Workflow
+}
+type resultsLoadedMsg struct {
+	loadMeta
+	results []history.SearchResult
+}
+type detailLoadedMsg struct {
+	loadMeta
+	resolution history.Resolution
+}
+type loadFailedMsg struct {
+	loadMeta
+	err error
+}
 
 func New(loader Loader) Model {
-	return Model{loader: loader, loading: true}
+	return Model{loader: loader, loading: true, generation: 1, activeLoad: loadWorkflows}
 }
 
 func (Model) Version() string { return version.Current }
@@ -68,27 +97,68 @@ func (m Model) Init() tea.Cmd {
 	return func() tea.Msg {
 		workflows, err := m.loader.List(context.Background())
 		if err != nil {
-			return loadFailedMsg{err}
+			return loadFailedMsg{loadMeta: loadMeta{kind: loadWorkflows, generation: m.generation}, err: err}
 		}
-		return workflowsLoadedMsg{workflows}
+		return workflowsLoadedMsg{loadMeta: loadMeta{kind: loadWorkflows, generation: m.generation}, workflows: workflows}
 	}
 }
 
 func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case workflowsLoadedMsg:
+		if !m.acceptLoad(msg.loadMeta) {
+			return m, nil
+		}
+		selectedID := ""
+		if m.selected >= 0 && m.selected < len(m.workflows) {
+			selectedID = m.workflows[m.selected].ID
+		}
 		m.workflows, m.loading, m.err = msg.workflows, false, nil
+		m.selected = reconcileIndex(len(m.workflows), m.selected, func(i int) bool { return m.workflows[i].ID == selectedID })
+		m.commitLoad(msg.generation)
 	case resultsLoadedMsg:
+		if !m.acceptLoad(msg.loadMeta) {
+			return m, nil
+		}
+		selectedResult, hadSelection := history.SearchResult{}, m.selected >= 0 && m.selected < len(m.results)
+		if hadSelection {
+			selectedResult = m.results[m.selected]
+		}
 		m.results, m.loading, m.err = msg.results, false, nil
-		m.screen, m.selected = ResultsScreen, 0
+		m.screen = ResultsScreen
+		if msg.preserve && hadSelection {
+			m.selected = reconcileIndex(len(m.results), m.selected, func(i int) bool {
+				result := m.results[i]
+				return result.WorkflowID == selectedResult.WorkflowID && result.RecordID == selectedResult.RecordID && result.Kind == selectedResult.Kind && result.UnitID == selectedResult.UnitID && result.Revision == selectedResult.Revision
+			})
+		} else {
+			m.selected = 0
+		}
+		m.commitLoad(msg.generation)
 	case detailLoadedMsg:
-		occurrenceID := m.detail.occurrenceID
+		if !m.acceptLoad(msg.loadMeta) {
+			return m, nil
+		}
+		cursor := m.detail
+		previousRecord := m.opened.Record
+		if msg.preserve {
+			msg.resolution.Record = refreshedRecord(msg.resolution.Detail, previousRecord)
+		}
 		m.opened, m.loading, m.err = msg.resolution, false, nil
 		m.screen = DetailScreen
-		m.detail = detailCursor{occurrenceID: occurrenceID, recordID: msg.resolution.Record.ID}
+		if msg.preserve {
+			m.detail = cursor
+		} else {
+			m.detail = detailCursor{occurrenceID: cursor.occurrenceID, recordID: msg.resolution.Record.ID}
+		}
 		m.reconcileDetail()
+		m.commitLoad(msg.generation)
 	case loadFailedMsg:
+		if !m.acceptLoad(msg.loadMeta) {
+			return m, nil
+		}
 		m.loading, m.err = false, msg.err
+		m.commitLoad(msg.generation)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.reconcileDetail()
@@ -114,10 +184,12 @@ func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 	case actionBack:
 		if m.screen == DetailScreen && m.opened.Record.ID != "" && m.detail.occurrenceID != "" {
+			m.cancelLoad()
 			m.opened.Record = history.Record{}
 			m.detail.recordID, m.detail.line, m.detail.top = "", 0, 0
 			m.reconcileDetail()
-		} else {
+		} else if m.screen != WorkflowsScreen {
+			m.cancelLoad()
 			m.screen = WorkflowsScreen
 		}
 	case actionPageUp:
@@ -141,14 +213,15 @@ func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 	case actionSearch:
 		m.searchFocused, m.query = true, ""
 	case actionSubmit:
-		m.searchFocused, m.loading = false, true
+		m.searchFocused = false
 		query := m.query
+		meta := m.startLoad(loadResults, false)
 		return m, func() tea.Msg {
 			results, err := m.loader.Search(context.Background(), query)
 			if err != nil {
-				return loadFailedMsg{err}
+				return loadFailedMsg{loadMeta: meta, err: err}
 			}
-			return resultsLoadedMsg{results}
+			return resultsLoadedMsg{loadMeta: meta, results: results}
 		}
 	case actionCancel:
 		m.searchFocused = false
@@ -161,6 +234,8 @@ func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.query += key.Text
 	case actionQuit:
 		return m, tea.Quit
+	case actionRefresh:
+		return m.refreshActive()
 	}
 	return m, nil
 }
@@ -173,41 +248,137 @@ func (m Model) openSelected() (Model, tea.Cmd) {
 				m.err = errors.New("history loader cannot resolve occurrences")
 				return m, nil
 			}
-			m.loading = true
+			meta := m.startLoad(loadDetail, false)
 			return m, func() tea.Msg {
 				resolution, err := resolver.ResolveOccurrence(context.Background(), m.opened.Detail.Workflow.ID, occurrence.ID, occurrence.RecordID)
 				if err != nil {
-					return loadFailedMsg{err}
+					return loadFailedMsg{loadMeta: meta, err: err}
 				}
-				return detailLoadedMsg{resolution}
+				return detailLoadedMsg{loadMeta: meta, resolution: resolution}
 			}
 		}
 	}
 	if m.screen == WorkflowsScreen && m.selected < len(m.workflows) {
 		workflowID := m.workflows[m.selected].ID
 		m.detail = detailCursor{}
-		m.loading = true
+		meta := m.startLoad(loadDetail, false)
 		return m, func() tea.Msg {
 			detail, err := m.loader.Detail(context.Background(), workflowID)
 			if err != nil {
-				return loadFailedMsg{err}
+				return loadFailedMsg{loadMeta: meta, err: err}
 			}
-			return detailLoadedMsg{history.Resolution{Detail: detail}}
+			return detailLoadedMsg{loadMeta: meta, resolution: history.Resolution{Detail: detail}}
 		}
 	}
 	if m.screen == ResultsScreen && m.selected < len(m.results) {
 		result := m.results[m.selected]
 		m.detail = detailCursor{}
-		m.loading = true
+		meta := m.startLoad(loadDetail, false)
 		return m, func() tea.Msg {
 			resolution, err := m.loader.Resolve(context.Background(), result)
 			if err != nil {
-				return loadFailedMsg{err}
+				return loadFailedMsg{loadMeta: meta, err: err}
 			}
-			return detailLoadedMsg{resolution}
+			return detailLoadedMsg{loadMeta: meta, resolution: resolution}
 		}
 	}
 	return m, nil
+}
+
+func (m Model) refreshActive() (Model, tea.Cmd) {
+	if m.loader == nil {
+		return m, nil
+	}
+	switch m.screen {
+	case ResultsScreen:
+		query := m.query
+		meta := m.startLoad(loadResults, true)
+		return m, func() tea.Msg {
+			results, err := m.loader.Search(context.Background(), query)
+			if err != nil {
+				return loadFailedMsg{loadMeta: meta, err: err}
+			}
+			return resultsLoadedMsg{loadMeta: meta, results: results}
+		}
+	case DetailScreen:
+		workflowID := m.opened.Detail.Workflow.ID
+		if workflowID == "" {
+			return m, nil
+		}
+		meta := m.startLoad(loadDetail, true)
+		return m, func() tea.Msg {
+			detail, err := m.loader.Detail(context.Background(), workflowID)
+			if err != nil {
+				return loadFailedMsg{loadMeta: meta, err: err}
+			}
+			return detailLoadedMsg{loadMeta: meta, resolution: history.Resolution{Detail: detail}}
+		}
+	default:
+		meta := m.startLoad(loadWorkflows, true)
+		return m, func() tea.Msg {
+			workflows, err := m.loader.List(context.Background())
+			if err != nil {
+				return loadFailedMsg{loadMeta: meta, err: err}
+			}
+			return workflowsLoadedMsg{loadMeta: meta, workflows: workflows}
+		}
+	}
+}
+
+func (m *Model) cancelLoad() {
+	if m.loading {
+		m.generation++
+		m.activeLoad = loadUnknown
+		m.loading, m.loadPreserves = false, false
+	}
+}
+
+func (m *Model) startLoad(kind loadKind, preserve bool) loadMeta {
+	m.generation++
+	m.activeLoad, m.loading, m.err, m.loadPreserves = kind, true, nil, preserve
+	return loadMeta{kind: kind, generation: m.generation, preserve: preserve}
+}
+
+func (m Model) acceptLoad(meta loadMeta) bool {
+	return meta.generation == 0 || meta.generation == m.generation && meta.kind == m.activeLoad
+}
+
+func (m *Model) commitLoad(generation uint64) {
+	if generation > 0 {
+		m.generation++
+		m.activeLoad = loadUnknown
+	}
+}
+
+func reconcileIndex(length, fallback int, matches func(int) bool) int {
+	for i := range length {
+		if matches(i) {
+			return i
+		}
+	}
+	if length == 0 {
+		return 0
+	}
+	return max(0, min(fallback, length-1))
+}
+
+func refreshedRecord(detail history.Detail, previous history.Record) history.Record {
+	workflow := detail.Workflow
+	if previous.ID == "" {
+		return history.Record{}
+	}
+	if previous.ID == "goal" {
+		return history.Record{ID: "goal", WorkflowID: workflow.ID, Kind: "goal", Title: "Goal", Content: workflow.Goal, At: workflow.UpdatedAt}
+	}
+	if previous.ID == "workflow:"+workflow.ID {
+		return history.Record{ID: previous.ID, WorkflowID: workflow.ID, Kind: "workflow", Title: workflow.Name, Content: workflow.Goal, At: workflow.CreatedAt}
+	}
+	for _, record := range detail.Records {
+		if record.ID == previous.ID {
+			return record
+		}
+	}
+	return history.Record{}
 }
 
 func (m Model) itemCount() int {
@@ -396,5 +567,8 @@ func (m Model) Hints() string {
 	if m.searchFocused {
 		return "enter search • esc cancel • ctrl+c quit"
 	}
-	return "↑/k up • ↓/j down • ←/h back • →/l/enter select • / search • q quit"
+	if m.width > 0 && m.width < 80 {
+		return "j/k move • enter • / search • r refresh • q quit"
+	}
+	return "↑/k up • ↓/j down • ←/h back • →/l/enter select • / search • r refresh • q quit"
 }

@@ -19,6 +19,7 @@ const (
 	actionCancel
 	actionDelete
 	actionQuit
+	actionRefresh
 	actionText
 )
 
@@ -62,6 +63,8 @@ func actionFor(key tea.KeyPressMsg, searchFocused bool) action {
 		return actionSearch
 	case "q":
 		return actionQuit
+	case "r":
+		return actionRefresh
 	default:
 		return actionNone
 	}
