@@ -124,7 +124,7 @@ func TestOpenReadOnlyPreservesLogicalStateAndRejectsMutation(t *testing.T) {
 			t.Fatalf("read-only store accepted %q", statement)
 		}
 	}
-	if err := readOnly.ApplyMigrations(ctx, []Migration{{Version: 3, Name: "forbidden", SQL: `CREATE TABLE migrated (id TEXT)`}}); err == nil {
+	if err := readOnly.ApplyMigrations(ctx, []Migration{{Version: 4, Name: "forbidden", SQL: `CREATE TABLE migrated (id TEXT)`}}); err == nil {
 		t.Fatal("read-only store accepted a migration")
 	}
 	if err := readOnly.Close(); err != nil {
@@ -343,8 +343,51 @@ func TestMigration2PreservesV1RowsAndAddsNameAndActivities(t *testing.T) {
 		t.Fatalf("historical activities = %d, %v; want none fabricated", activities, err)
 	}
 	var migrations int
-	if err := migrated.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != 2 {
-		t.Fatalf("migration count = %d, %v; want 2", migrations, err)
+	if err := migrated.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != 3 {
+		t.Fatalf("migration count = %d, %v; want 3", migrations, err)
+	}
+}
+
+func TestMigration3PreservesHandlesAsImplementationAuthority(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dir := filepath.Join(root, ".pitcrew")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := &Store{db: db}
+	if err := legacy.ApplyMigrations(ctx, schemaMigrations[:2]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-legacy',1,'implementing','goal','now','now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES('wu-legacy','wf-legacy','unit','internal','[]','[]',1,1,'pending',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation) VALUES('claim','wf-legacy','wu-legacy','active','hash','actor','now','later',4)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var purpose string
+	var generation int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT purpose,claim_generation FROM handles WHERE claim_id='claim'`).Scan(&purpose, &generation); err != nil {
+		t.Fatal(err)
+	}
+	if purpose != "implementation" || generation != 4 {
+		t.Fatalf("legacy handle purpose=%q generation=%d", purpose, generation)
 	}
 }
 

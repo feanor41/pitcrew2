@@ -139,7 +139,7 @@ func (s *Service) Ready(ctx context.Context, workflowID string) ([]WorkUnit, err
 		p.Units[i].State = states[p.Units[i].ID]
 	}
 	var claims []ClaimStatus
-	rows, err = s.db.QueryContext(ctx, `SELECT unit_id,state,expires_at,claim_generation FROM handles WHERE workflow_id=?`, workflowID)
+	rows, err = s.db.QueryContext(ctx, `SELECT unit_id,state,expires_at,claim_generation FROM handles WHERE workflow_id=? AND purpose='implementation'`, workflowID)
 	if err != nil {
 		return nil, err
 	}

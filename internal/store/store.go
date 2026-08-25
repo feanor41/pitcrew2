@@ -188,7 +188,7 @@ func destructive(statement string) bool {
 	for _, raw := range strings.Split(statement, ";") {
 		normalized := strings.ToUpper(strings.Join(strings.Fields(raw), " "))
 		for _, forbidden := range []string{"DROP ", "DELETE ", "UPDATE ", "REPLACE ", "TRUNCATE ", "ALTER TABLE", "VACUUM"} {
-			if strings.Contains(normalized, forbidden) && normalized != "ALTER TABLE WORKFLOWS ADD COLUMN NAME TEXT" {
+			if strings.Contains(normalized, forbidden) && normalized != "ALTER TABLE WORKFLOWS ADD COLUMN NAME TEXT" && normalized != "ALTER TABLE HANDLES ADD COLUMN PURPOSE TEXT NOT NULL DEFAULT 'IMPLEMENTATION'" {
 				return true
 			}
 		}
@@ -210,4 +210,6 @@ ALTER TABLE workflows ADD COLUMN name TEXT;
 CREATE TABLE activities (id INTEGER PRIMARY KEY AUTOINCREMENT, workflow_id TEXT NOT NULL REFERENCES workflows(id), unit_id TEXT REFERENCES work_units(id), action TEXT NOT NULL, actor TEXT NOT NULL, at TEXT NOT NULL, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL);
 CREATE INDEX activities_workflow_time ON activities(workflow_id, at, id);
 CREATE INDEX activities_subject ON activities(subject_kind, subject_id);
+`}, {Version: 3, Name: "purpose scoped handles", SQL: `
+ALTER TABLE handles ADD COLUMN purpose TEXT NOT NULL DEFAULT 'implementation';
 `}}

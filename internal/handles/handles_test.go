@@ -97,6 +97,72 @@ func TestUseRejectsSymlinksAndWrongModes(t *testing.T) {
 	}
 }
 
+func TestPurposeScopedHandlesKeepIndependentGenerationsAndUse(t *testing.T) {
+	m, db, _, wfID, unitID := testManager(t)
+	dir := filepath.Join(t.TempDir(), "handles")
+	implementation, err := m.IssueForPurpose(context.Background(), wfID, unitID, "implementer", dir, PurposeImplementation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UseForPurpose(context.Background(), implementation.Path, "implementer", TDD, PurposeImplementation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`UPDATE work_units SET state='reviewing' WHERE id=?`, unitID); err != nil {
+		t.Fatal(err)
+	}
+	review, err := m.IssueForPurpose(context.Background(), wfID, unitID, "reviewer", dir, PurposeReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if implementation.Generation != 1 || review.Generation != 1 {
+		t.Fatalf("implementation generation=%d review generation=%d", implementation.Generation, review.Generation)
+	}
+	if _, err := m.Use(context.Background(), review.Path, "reviewer", TDD); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("legacy use accepted review authority for TDD: %v", err)
+	}
+	mutationCalled := false
+	if _, err := m.UseForMutation(context.Background(), review.Path, wfID, unitID, 1, "reviewer", TDD, func(*sql.Tx, Handle) error {
+		mutationCalled = true
+		return nil
+	}); !errors.Is(err, ErrInvalid) || mutationCalled {
+		t.Fatalf("legacy mutation accepted review authority: error=%v called=%t", err, mutationCalled)
+	}
+	if _, err := m.UseForPurpose(context.Background(), implementation.Path, "implementer", TDD, PurposeImplementation); err != nil {
+		t.Fatalf("review generation invalidated implementation authority: %v", err)
+	}
+	if _, err := m.UseForPurpose(context.Background(), review.Path, "reviewer", TDD, PurposeImplementation); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("review authority used as implementation: %v", err)
+	}
+	if _, err := m.UseForPurpose(context.Background(), implementation.Path, "reviewer", Review, PurposeReview); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("implementation authority used as review: %v", err)
+	}
+	if err := m.RevokeForPurpose(context.Background(), review.Path, "reviewer", PurposeImplementation); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("review authority revoked as implementation: %v", err)
+	}
+	if _, err := m.UseForPurpose(context.Background(), review.Path, "reviewer", Review, PurposeReview); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Use(context.Background(), review.Path, "reviewer", Complete); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("legacy use accepted review authority for completion: %v", err)
+	}
+	if _, err := m.UseForMutationAtPurpose(context.Background(), review.Path, wfID, unitID, 1, "reviewer", Review, PurposeReview, func(tx *sql.Tx, h Handle) error {
+		_, err := tx.Exec(`UPDATE handles SET state='revoked' WHERE claim_id=?`, h.ClaimID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(review.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("consumed review handle still exists: %v", err)
+	}
+	var implementationState string
+	if err := db.DB().QueryRow(`SELECT state FROM handles WHERE claim_id=?`, implementation.ClaimID).Scan(&implementationState); err != nil {
+		t.Fatal(err)
+	}
+	if implementationState != "active" {
+		t.Fatalf("review revocation changed implementation state to %q", implementationState)
+	}
+}
+
 func TestIssueRejectsSymlinkHandleDirectory(t *testing.T) {
 	m, _, _, wfID, unitID := testManager(t)
 	root := t.TempDir()

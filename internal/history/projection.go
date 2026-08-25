@@ -181,8 +181,16 @@ func (s *Service) unitFacts(ctx context.Context, workflowID string) (map[string]
 	}
 	claimColumns, claimJoin := `'', '', 0`, ``
 	if handles != 0 {
+		var purposeColumns int
+		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('handles') WHERE name='purpose'`).Scan(&purposeColumns); err != nil {
+			return nil, err
+		}
+		purposeJoin, purposeLatest := "", ""
+		if purposeColumns != 0 {
+			purposeJoin, purposeLatest = " AND h.purpose='implementation'", " AND h2.purpose='implementation'"
+		}
 		claimColumns = `COALESCE(h.state,''),COALESCE(h.expires_at,''),COALESCE(h.claim_generation,0)`
-		claimJoin = ` LEFT JOIN handles h ON h.workflow_id=u.workflow_id AND h.unit_id=u.id AND h.claim_generation=(SELECT MAX(h2.claim_generation) FROM handles h2 WHERE h2.workflow_id=u.workflow_id AND h2.unit_id=u.id)`
+		claimJoin = ` LEFT JOIN handles h ON h.workflow_id=u.workflow_id AND h.unit_id=u.id` + purposeJoin + ` AND h.claim_generation=(SELECT MAX(h2.claim_generation) FROM handles h2 WHERE h2.workflow_id=u.workflow_id AND h2.unit_id=u.id` + purposeLatest + `)`
 	}
 	query := `SELECT u.id,u.description,u.depends_on,u.state,u.revision,COALESCE(r.verdict,''),COALESCE(r.findings,''),` + claimColumns + ` FROM work_units u LEFT JOIN reviews r ON r.workflow_id=u.workflow_id AND r.unit_id=u.id AND r.revision=u.revision-1` + claimJoin + ` WHERE u.workflow_id=? ORDER BY u.rowid`
 	rows, err := s.db.QueryContext(ctx, query, workflowID)
