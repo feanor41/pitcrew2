@@ -9,12 +9,14 @@ Define the closed CLI, command inputs, envelopes, errors, and caller identity se
 
 ### Requirement: Closed command and input contract
 
-The CLI SHALL expose only `principles`, global `--help`/`--version`, and the 16 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, plan, evidence, and review bodies.
+The CLI SHALL expose only `principles`, global `--help`/`--version`, and the 20 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, and review bodies.
 
 | Command | Required inputs |
 |---|---|
 | `new` | `--name <text> --goal <text> --actor <label>` |
+| `continue` | `--from <terminal-wf-id> --actor <label>` |
 | `show` | `--workflow-id <wf-id>` |
+| `progress` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `explore`, `spec`, `design` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `plan` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `approve-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> [--approve-exception <wu-id> ...]` |
@@ -22,19 +24,23 @@ The CLI SHALL expose only `principles`, global `--help`/`--version`, and the 16 
 | `begin-implementation` | `--workflow-id <wf-id> --revision <n> --actor <label>` |
 | `complete` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `abandon` | `--workflow-id <wf-id> --revision <n> --actor <label> --reason <text>` |
-| `claim-unit`, `recover-unit-claim` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
+| `claim-unit`, `recover-unit-claim`, `handoff-review`, `recover-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
 | `unit-tdd`, `unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
 
 Unknown flags, missing flags, unreadable/non-regular input files, or malformed JSON SHALL fail with exit code `2` before mutation. `--name` SHALL be explicit, non-empty after trimming, and bounded by the workflow name limit; it SHALL NOT be derived for new workflows. A well-formed payload that violates its domain contract SHALL fail with exit code `3` without mutation. `--handle-dir` is the only production handle-output selector. The hidden claim debug flag is defined by `claim-handles`.
-
-(Previously: `workflow new` required only `--goal` and `--actor` and had no explicit-name contract.)
 
 #### Scenario: Every command enforces its row
 
 - GIVEN each closed command
 - WHEN it is invoked with and without every input in its row
 - THEN only the complete valid invocation SHALL pass argument validation
+
+#### Scenario: Progress requires strict file transport
+
+- GIVEN `workflow progress` without its input file or with an unknown payload field
+- WHEN argument or JSON validation runs
+- THEN exit code `2` SHALL result before mutation
 
 #### Scenario: New workflow requires an explicit name
 
@@ -50,7 +56,7 @@ Each successful workflow command SHALL emit one JSON document:
 {"ok":true,"data":{},"warnings":[],"next_action":"..."}
 ```
 
-Failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.4.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
+Failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.5.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
 
 (Previously: Version output was plain text without a canonical baseline, SemVer policy, or shared CLI/TUI source.)
 

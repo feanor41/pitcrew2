@@ -1,6 +1,6 @@
 # PitCrew CLI reference
 
-PitCrew exposes `tui` and `principles`, two global flags, and exactly 19 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `tui` and `principles`, two global flags, and exactly 20 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
 ## Quick path
 
@@ -21,6 +21,7 @@ A full workflow progresses through exploration, specification, design, planning,
 | `workflow new` | `--name <text> --goal <text> --actor <label>` |
 | `workflow continue` | `--from <terminal-wf-id> --actor <label>` |
 | `workflow show` | `--workflow-id <wf-id>` |
+| `workflow progress` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow explore` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow spec` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow design` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
@@ -48,7 +49,7 @@ Global `--help` and `--version` are flags, not commands. `principles [--json]` p
 
 ## JSON input files
 
-`--input-file` is the only payload transport for stage artifacts, plans, TDD evidence, and reviews. PitCrew rejects symlinks, non-regular files, invalid UTF-8, unknown fields, malformed JSON, trailing data, and multiple documents before opening the project store.
+`--input-file` is the only payload transport for stage artifacts, operational reports, plans, TDD evidence, and reviews. PitCrew rejects symlinks, non-regular files, invalid UTF-8, unknown fields, malformed JSON, trailing data, and multiple documents before opening the project store.
 
 ### Stage artifact
 
@@ -57,6 +58,14 @@ Global `--help` and `--version` are flags, not commands. `principles [--json]` p
 ```
 
 The command infers `exploration`, `specification`, or `design`. While a workflow remains in `exploring`, `specifying`, or `designing`, its corresponding stage command may be repeated to append an amendment. The amendment increments the revision without advancing the state, and the response keeps the forward `next_action`. `workflow show` returns all accepted artifacts ordered by revision and insertion order. Later and terminal states still reject stage amendments.
+
+### Progress report
+
+```json
+{"status":"advanced","summary":"Unit tests pass","next_action":"workflow handoff-review"}
+```
+
+`status` is exactly `advanced` or `blocked`; every field is required and trimmed before canonical storage. Progress observes the supplied non-terminal workflow revision and appends an artifact plus linked activity without changing state, revision, timestamp, or events. Repeated reports remain ordered. Success returns the typed report and uses its submitted `next_action`.
 
 ### Plan
 

@@ -44,6 +44,7 @@ const (
 	AggregateReviewRecorded Action      = "aggregate_review_recorded"
 	UnitCompleted           Action      = "unit_completed"
 	ContinuationRecorded    Action      = "continuation_recorded"
+	ProgressRecorded        Action      = "progress_recorded"
 	Workflow                SubjectKind = "workflow"
 	Event                   SubjectKind = "event"
 	Artifact                SubjectKind = "artifact"
@@ -60,7 +61,7 @@ var (
 		WorkflowCreated: Workflow, ExplorationRecorded: Artifact, SpecificationRecorded: Artifact, DesignRecorded: Artifact,
 		PlanSubmitted: Plan, PlanApproved: Plan, ImplementationStarted: Event, WorkflowCompleted: Event,
 		WorkflowAbandoned: Event, UnitClaimed: WorkUnit, UnitClaimRecovered: WorkUnit, UnitTDDRecorded: Evidence, UnitReviewHandedOff: WorkUnit, UnitReviewRecovered: WorkUnit,
-		UnitReviewRecorded: Review, UnitCompleted: WorkUnit, AggregateReviewRecorded: Artifact, ContinuationRecorded: Artifact,
+		UnitReviewRecorded: Review, UnitCompleted: WorkUnit, AggregateReviewRecorded: Artifact, ContinuationRecorded: Artifact, ProgressRecorded: Artifact,
 	}
 )
 
