@@ -148,7 +148,7 @@ func runPrinciples(args []string, deps Dependencies) int {
 	return 0
 }
 
-var workflowCommands = map[string]bool{"new": true, "show": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
+var workflowCommands = map[string]bool{"new": true, "show": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "handoff-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
 
 func runWorkflow(args []string, deps Dependencies) int {
 	if equalArgs(args, "--help") {
@@ -187,6 +187,8 @@ func runWorkflow(args []string, deps Dependencies) int {
 		return runAbandon(rest, deps)
 	case "claim-unit", "recover-unit-claim":
 		return runClaim(command, rest, deps)
+	case "handoff-review":
+		return runHandoffReview(rest, deps)
 	case "unit-tdd":
 		return runUnitTDD(rest, deps)
 	case "unit-review":
@@ -196,6 +198,24 @@ func runWorkflow(args []string, deps Dependencies) int {
 	default:
 		return fail(deps, ErrUsage, "unsupported command")
 	}
+}
+
+func runHandoffReview(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--unit-id", "--revision", "--actor", "--handle-dir"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	revision, err := values.int64("--revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		result, err := handles.New(s, deps.Now, deps.Entropy).HandoffReviewAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"handle_path": result.Path}, "workflow unit-review")
+	})
 }
 
 func runWorkflowNew(args []string, deps Dependencies) int {
@@ -460,7 +480,7 @@ func runUnitTDD(args []string, deps Dependencies) int {
 		}); err != nil {
 			return err
 		}
-		return writeSuccess(deps, map[string]any{"unit_id": values.one("--unit-id"), "unit_revision": revision, "state": "reviewing"}, "workflow unit-review")
+		return writeSuccess(deps, map[string]any{"unit_id": values.one("--unit-id"), "unit_revision": revision, "state": "reviewing"}, "workflow handoff-review")
 	})
 }
 func runUnitReview(args []string, deps Dependencies) int {
@@ -487,9 +507,12 @@ func runUnitReview(args []string, deps Dependencies) int {
 		ctx := context.Background()
 		service := evidence.New(s, deps.Now)
 		var outcome evidence.ReviewOutcome
-		_, err := manager.UseForMutation(ctx, values.one("--claim-handle"), review.WorkflowID, review.UnitID, revision, review.Actor, handles.Review, func(tx *sql.Tx, _ handles.Handle) error {
+		_, err := manager.UseForMutationAtPurpose(ctx, values.one("--claim-handle"), review.WorkflowID, review.UnitID, revision, review.Actor, handles.Review, handles.PurposeReview, func(tx *sql.Tx, handle handles.Handle) error {
 			var mutationErr error
 			outcome, mutationErr = service.RecordReviewTx(ctx, tx, review)
+			if mutationErr == nil {
+				_, mutationErr = tx.ExecContext(ctx, `UPDATE handles SET state='revoked' WHERE claim_id=?`, handle.ClaimID)
+			}
 			return mutationErr
 		})
 		if err != nil {
@@ -593,7 +616,7 @@ Commands:
   principles
   workflow new|show|explore|spec|design|plan|approve-plan
   workflow list-ready-units|begin-implementation|complete|abandon
-  workflow claim-unit|recover-unit-claim|unit-tdd|unit-review|unit-complete
+  workflow claim-unit|recover-unit-claim|handoff-review|unit-tdd|unit-review|unit-complete
 
 Global options:
   --help
@@ -602,7 +625,7 @@ Global options:
 const workflowHelp = `Usage: pitcrew workflow <subcommand> [options]
 
 Commands: new, show, explore, spec, design, plan, approve-plan, list-ready-units,
-  begin-implementation, complete, abandon, claim-unit, recover-unit-claim,
+  begin-implementation, complete, abandon, claim-unit, recover-unit-claim, handoff-review,
   unit-tdd, unit-review, unit-complete
 `
 const principlesHelp = `Usage: pitcrew principles [--json]
