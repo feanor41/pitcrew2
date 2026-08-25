@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -17,10 +18,16 @@ type UnitStatus struct {
 	Attempt                         int64
 	Derived                         bool
 }
+type Progress struct {
+	Status     string `json:"status"`
+	Summary    string `json:"summary"`
+	NextAction string `json:"next_action"`
+}
 type Synopsis struct {
 	Total, Done, Ready, Claimed, Reviewing, DependencyWaiting, Correction, Recovery int
 	Current, Blocker                                                                *UnitStatus
 	NextAction                                                                      string
+	Progress                                                                        *Progress
 }
 type Occurrence struct {
 	ID, RecordID, At, Phase, Work, Activity, Actor, Outcome, Reason string
@@ -44,6 +51,11 @@ type recordFact struct {
 
 func (s *Service) project(ctx context.Context, detail *Detail) error {
 	detail.Synopsis.NextAction = workflow.NextAction(workflow.State(detail.Workflow.State))
+	var err error
+	detail.Synopsis.Progress, err = s.latestProgress(ctx, detail.Workflow.ID)
+	if err != nil {
+		return err
+	}
 	units, err := s.unitFacts(ctx, detail.Workflow.ID)
 	if err != nil {
 		return err
@@ -100,6 +112,28 @@ func (s *Service) project(ctx context.Context, detail *Detail) error {
 	}
 	detail.Occurrences = coalesce(detail, units, facts)
 	return nil
+}
+
+func (s *Service) latestProgress(ctx context.Context, workflowID string) (*Progress, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT content FROM artifacts WHERE workflow_id=? AND kind='progress' ORDER BY id DESC`, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var content string
+		if err = rows.Scan(&content); err != nil {
+			return nil, err
+		}
+		var progress Progress
+		decoder := json.NewDecoder(strings.NewReader(content))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&progress) != nil || decoder.Decode(&struct{}{}) != io.EOF || progress.Status != "advanced" && progress.Status != "blocked" || progress.Summary == "" || progress.Summary != strings.TrimSpace(progress.Summary) || progress.NextAction == "" || progress.NextAction != strings.TrimSpace(progress.NextAction) {
+			continue
+		}
+		return &progress, nil
+	}
+	return nil, rows.Err()
 }
 
 func classify(unit unitFact, states map[string]string, ready bool, now time.Time) (string, string) {

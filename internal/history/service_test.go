@@ -109,6 +109,53 @@ func TestServiceClassifiesCorrectionsDependenciesAndClaimExpiry(t *testing.T) {
 	}
 }
 
+func TestServiceProjectsLatestValidProgressByInsertionOrder(t *testing.T) {
+	ctx, root := context.Background(), t.TempDir()
+	s, err := store.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-progress',3,'implementing','Progress','goal','created','updated')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-progress','progress','not-json','daimon',3,'one')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-progress','progress','{"status":"advanced","summary":"first","next_action":"test"}','daimon',3,'two')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-progress','exploration','ignore me','explorer',3,'three')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-progress','progress','{"status":"blocked","summary":"waiting","next_action":"unblock"}','daimon',3,'four')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-progress','progress','{"status":"blocked","summary":"invalid","next_action":"none","extra":true}','daimon',3,'five')`,
+		`INSERT INTO activities(workflow_id,action,actor,at,subject_kind,subject_id) VALUES('wf-progress','progress_recorded','daimon','four','artifact','4')`,
+	} {
+		if _, err = s.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := operationalSnapshot(t, s.DB(), "wf-progress")
+	detail, err := New(s).Detail(ctx, "wf-progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Synopsis.Progress == nil || detail.Synopsis.Progress.Status != "blocked" || detail.Synopsis.Progress.Summary != "waiting" || detail.Synopsis.Progress.NextAction != "unblock" {
+		t.Fatalf("progress=%#v", detail.Synopsis.Progress)
+	}
+	entry := timelineEntry(detail.Timeline, "progress_recorded")
+	resolved, err := New(s).ResolveActivity(ctx, entry)
+	if err != nil || resolved.Record.Kind != "progress" || resolved.Record.Content == "" {
+		t.Fatalf("progress drill-down=%#v err=%v", resolved, err)
+	}
+	if after := operationalSnapshot(t, s.DB(), "wf-progress"); after != before {
+		t.Fatalf("history projection mutated database: %q -> %q", before, after)
+	}
+}
+
+func operationalSnapshot(t *testing.T, db *sql.DB, workflowID string) string {
+	t.Helper()
+	var snapshot string
+	if err := db.QueryRow(`SELECT revision||':'||state||':'||updated_at||':'||(SELECT count(*) FROM events WHERE workflow_id=w.id)||':'||(SELECT count(*) FROM artifacts WHERE workflow_id=w.id)||':'||(SELECT count(*) FROM activities WHERE workflow_id=w.id) FROM workflows w WHERE id=?`, workflowID).Scan(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
 func TestServiceUsesLatestAggregateAuthorityAndResolvesCoalescedOccurrence(t *testing.T) {
 	service := New(openHistory(t, true))
 	detail, err := service.Detail(context.Background(), "wf-old")

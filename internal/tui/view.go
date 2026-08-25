@@ -184,6 +184,15 @@ func (m Model) synopsisLines() []string {
 	if s.Blocker != nil {
 		lines = append(lines, flight.bad.Render(fitText(derivedLabel("Blocked", s.Blocker.Derived)+"  "+s.Blocker.Reason, m.width)))
 	}
+	if s.Progress != nil {
+		marker, style := "[ADVANCED]", flight.good
+		if s.Progress.Status == "blocked" {
+			marker, style = "[BLOCKED]", flight.bad
+		}
+		prefix := "Report " + marker + " "
+		lines = append(lines, "Report "+style.Render(marker)+" "+ellipsize(s.Progress.Summary, max(1, m.width-lipgloss.Width(prefix))))
+		lines = append(lines, fitText("Report next  "+s.Progress.NextAction, m.width))
+	}
 	lines = append(lines, fitText("Next  "+zeroDash(s.NextAction), m.width))
 	return lines
 }

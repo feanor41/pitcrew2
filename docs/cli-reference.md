@@ -67,6 +67,8 @@ The command infers `exploration`, `specification`, or `design`. While a workflow
 
 `status` is exactly `advanced` or `blocked`; every field is required and trimmed before canonical storage. Progress observes the supplied non-terminal workflow revision and appends an artifact plus linked activity without changing state, revision, timestamp, or events. Repeated reports remain ordered. Success returns the typed report and uses its submitted `next_action`.
 
+The TUI synopsis shows only the latest valid progress report, with a non-color advanced or blocked marker, its summary, and its report-specific next action. Lifecycle/unit facts and their executable next action remain separate. Every progress artifact remains available in chronological history and drill-down. Refresh reads the latest report without polling or writing. Daimon reports concise status only for a real transition, completed unit, resolved correction, achieved small objective, or observed blocker; otherwise it stays silent rather than fabricating movement or repeating encouragement.
+
 ### Plan
 
 ```json
