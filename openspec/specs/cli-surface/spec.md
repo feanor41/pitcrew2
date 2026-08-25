@@ -9,7 +9,7 @@ Define the closed CLI, command inputs, envelopes, errors, and caller identity se
 
 ### Requirement: Closed command and input contract
 
-The CLI SHALL expose only `principles`, global `--help`/`--version`, and the 21 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, and review bodies.
+The CLI SHALL expose only `principles`, `tui`, global `--help`/`--version`, and the 21 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, and review bodies.
 
 | Command | Required inputs |
 |---|---|
