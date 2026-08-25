@@ -28,6 +28,7 @@ func TestActivityAppendAcceptsOnlyTypedNavigationSafeSubjects(t *testing.T) {
 		{"workflow", New("wf-000000000000000000000001", "", WorkflowCreated, "actor", time.Now(), WorkflowSubject("wf-000000000000000000000001")), false},
 		{"evidence", New("wf-000000000000000000000001", "wu-000000000000000000000001", UnitTDDRecorded, "actor", time.Now(), EvidenceSubject("wu-000000000000000000000001", 2)), false},
 		{"review handoff", New("wf-000000000000000000000001", "wu-000000000000000000000001", UnitReviewHandedOff, "reviewer", time.Now(), UnitSubject("wu-000000000000000000000001")), false},
+		{"review recovery", New("wf-000000000000000000000001", "wu-000000000000000000000001", UnitReviewRecovered, "reviewer", time.Now(), UnitSubject("wu-000000000000000000000001")), false},
 		{"aggregate review", New("wf-000000000000000000000001", "", AggregateReviewRecorded, "reviewer", time.Now(), ArtifactSubject(1)), false},
 		{"path rejected", New("wf-000000000000000000000001", "", WorkflowCreated, "actor", time.Now(), Subject{Kind: Workflow, ID: "/tmp/handle.json"}), true},
 		{"claim-like kind rejected", New("wf-000000000000000000000001", "wu-000000000000000000000001", UnitClaimed, "actor", time.Now(), Subject{Kind: "claim", ID: "secret"}), true},

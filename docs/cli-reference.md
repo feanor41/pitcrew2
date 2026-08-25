@@ -1,6 +1,6 @@
 # PitCrew CLI reference
 
-PitCrew exposes `tui` and `principles`, two global flags, and exactly 17 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `tui` and `principles`, two global flags, and exactly 18 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
 ## Quick path
 
@@ -32,6 +32,7 @@ A full workflow progresses through exploration, specification, design, planning,
 | `workflow claim-unit` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
 | `workflow recover-unit-claim` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
 | `workflow handoff-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <reviewer-label> --handle-dir <dir>` |
+| `workflow recover-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <reviewer-label> --handle-dir <dir>` |
 | `workflow unit-tdd` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
@@ -106,7 +107,7 @@ Corrections:
 
 Outside-plan corrections use `"plan_impact":"outside"` and return `daimon revise plan`, requiring Daimon to revise the plan through a new OpenSpec change.
 
-Unit review is optional: current TDD evidence plus the active implementation handle can complete a unit without an approval. When selected, Daimon uses `handoff-review` to issue independent reviewer-owned authority and passes only its opaque path to the Reviewer; `unit-review` consumes that handle atomically with the verdict. A corrections verdict still reopens the unit and requires fresh evidence.
+Unit review is optional: current TDD evidence plus the active implementation handle can complete a unit without an approval. When selected, Daimon uses `handoff-review` to issue independent reviewer-owned authority and passes only its opaque path to the Reviewer; `unit-review` consumes that handle atomically with the verdict. If it expires before a verdict, `recover-review` rotates only review authority for the same reviewer. A corrections verdict reopens the unit, returns `recover-unit-claim`, and requires fresh evidence. During reviewing, that recovery command is restricted to the current evidence actor and yields completion-ready implementation authority.
 
 ### Aggregate review
 

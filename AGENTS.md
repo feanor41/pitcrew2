@@ -42,7 +42,7 @@ Unit review is selective where early feedback materially reduces risk. Every ful
 
 ## Hand-off rule
 
-The Implementer returns only the opaque implementation handle path to Daimon. When unit review is selected, Daimon creates independent reviewer authority with `workflow handoff-review` and passes only the resulting opaque review handle path to the Reviewer. Handle contents never cross role boundaries.
+The Implementer returns only the opaque implementation handle path to Daimon. When unit review is selected, Daimon creates independent reviewer authority with `workflow handoff-review` and passes only the resulting opaque review handle path to the Reviewer. If it expires before a verdict, Daimon may use `workflow recover-review` only with the originally handed-off reviewer identity. Handle contents never cross role boundaries.
 
 ## References
 

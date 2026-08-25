@@ -148,7 +148,7 @@ func runPrinciples(args []string, deps Dependencies) int {
 	return 0
 }
 
-var workflowCommands = map[string]bool{"new": true, "show": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "handoff-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
+var workflowCommands = map[string]bool{"new": true, "show": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
 
 func runWorkflow(args []string, deps Dependencies) int {
 	if equalArgs(args, "--help") {
@@ -185,7 +185,7 @@ func runWorkflow(args []string, deps Dependencies) int {
 		return runComplete(rest, deps)
 	case "abandon":
 		return runAbandon(rest, deps)
-	case "claim-unit", "recover-unit-claim":
+	case "claim-unit", "recover-unit-claim", "recover-review":
 		return runClaim(command, rest, deps)
 	case "handoff-review":
 		return runHandoffReview(rest, deps)
@@ -428,7 +428,9 @@ func runClaim(command string, args []string, deps Dependencies) int {
 		manager := handles.New(s, deps.Now, deps.Entropy)
 		var result handles.IssueResult
 		var err error
-		if command == "recover-unit-claim" {
+		if command == "recover-review" {
+			result, err = manager.RecoverReviewAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
+		} else if command == "recover-unit-claim" {
 			result, err = manager.RecoverAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
 		} else if values.one("--print-claim-handle-secret-once") != "" {
 			result, err = manager.IssueDebugAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
@@ -444,7 +446,11 @@ func runClaim(command string, args []string, deps Dependencies) int {
 		} else {
 			data["handle_path"] = result.Path
 		}
-		return writeSuccess(deps, data, "workflow unit-tdd")
+		next := "workflow unit-tdd"
+		if command == "recover-review" {
+			next = "workflow unit-review"
+		}
+		return writeSuccess(deps, data, next)
 	})
 }
 func unitValues(args []string, withInput bool) (flagValues, int64, error) {
@@ -520,7 +526,7 @@ func runUnitReview(args []string, deps Dependencies) int {
 		}
 		next := "workflow unit-complete"
 		if review.Verdict == evidence.Corrections {
-			next = "workflow claim-unit"
+			next = "workflow recover-unit-claim"
 		}
 		if outcome.PlanRevisionRequired {
 			next = "daimon revise plan"
@@ -616,7 +622,7 @@ Commands:
   principles
   workflow new|show|explore|spec|design|plan|approve-plan
   workflow list-ready-units|begin-implementation|complete|abandon
-  workflow claim-unit|recover-unit-claim|handoff-review|unit-tdd|unit-review|unit-complete
+  workflow claim-unit|recover-unit-claim|handoff-review|recover-review|unit-tdd|unit-review|unit-complete
 
 Global options:
   --help
@@ -625,7 +631,7 @@ Global options:
 const workflowHelp = `Usage: pitcrew workflow <subcommand> [options]
 
 Commands: new, show, explore, spec, design, plan, approve-plan, list-ready-units,
-  begin-implementation, complete, abandon, claim-unit, recover-unit-claim, handoff-review,
+  begin-implementation, complete, abandon, claim-unit, recover-unit-claim, handoff-review, recover-review,
   unit-tdd, unit-review, unit-complete
 `
 const principlesHelp = `Usage: pitcrew principles [--json]
