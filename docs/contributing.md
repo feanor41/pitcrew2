@@ -34,6 +34,12 @@ A work unit targets at most 400 authored changed lines and 60 review minutes. Wh
 
 ## Architecture guardrails
 
+Before every design decision, ask: **Is this solution overkill for the context?** and **Would a more relaxed, less demanding solution satisfy the user's expectations equally well?** Choose the least demanding solution that
+fully satisfies the goal, material risks, and existing constraints. Only when
+selecting stronger rigor, briefly name the protected constraint and
+explain why the simpler option is insufficient in the design-bearing output.
+Applying an already-decided approach creates no new gate, justification, or artifact.
+
 - One local project store at `.pitcrew/state.db` per invocation.
 - One SQLite connection; no daemon, IPC, network, shared cache, or remote API.
 - `MAXIMS.md` is canonical. Change it only through its own OpenSpec change.

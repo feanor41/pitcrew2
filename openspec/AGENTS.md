@@ -30,7 +30,11 @@ before they read `MAXIMS.md`. See `MAXIMS.md` for the canonical wording.
    conversation around it.
 
 2. **The harness serves the result, never the other way around.** Defaults
-   are safe; every default has a documented, auditable escape hatch.
+   are safe; every default has a documented, auditable escape hatch. Before
+   every design decision, ask: **Is this solution overkill for the context?**
+   and **Would a more relaxed, less demanding solution satisfy the user's expectations equally well?** Choose the least demanding sufficient solution.
+   When stronger rigor is necessary, the design-bearing output must briefly name the protected constraint and explain why the simpler option is insufficient.
+   Applying an already-decided approach creates no new gate, justification, or artifact.
 
 3. **The harness is the usual path, not the only path.** Use proportional
    direct, delegated-direct, or full-workflow routing according to risk and uncertainty.
@@ -39,8 +43,8 @@ before they read `MAXIMS.md`. See `MAXIMS.md` for the canonical wording.
    stacked changes. A change that grows past its budget is split, not merged
    by exception.
 
-A principle is changed only by an explicit edit to `## Principles` (here and
-in the foundation proposal), which becomes its own OpenSpec change.
+A principle is changed only by an explicit OpenSpec change that updates active
+guidance and the canonical `MAXIMS.md`. Archived changes remain immutable.
 
 ---
 

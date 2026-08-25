@@ -21,6 +21,25 @@ assert_role_set() {
   assert_absent "$1/master.md"
   for role in $legacy_roles; do assert_absent "$1/$role.md"; done
 }
+assert_proportional_contract() {
+  destination=$1
+  for role in $roles; do
+    maxim_lines=$(wc -l < "$ROOT/MAXIMS.md" | tr -d ' ')
+    sed -n "3,$((maxim_lines + 2))p" "$destination/$role.md" > "$TMP_ROOT/$role.proportional.maxims"
+    cmp "$ROOT/MAXIMS.md" "$TMP_ROOT/$role.proportional.maxims" || fail "$role proportional maxims drift in $destination"
+  done
+  for contract in \
+    'exists only to help the user achieve the stated goal' \
+    'Is this solution overkill for the context?' \
+    "Would a more relaxed, less demanding solution satisfy the user's expectations equally well?" \
+    'least demanding solution that fully satisfies' \
+    'name the protected constraint and explain why the simpler option is insufficient' \
+    'claim secrecy' 'opaque-handle boundaries' 'reviewer independence' 'truthful evidence and progress' \
+    'CAS inspection requirements' 'workflow integrity' 'terminal immutability' 'safety boundaries'; do
+    grep -F "$contract" "$destination/agent-contract.md" >/dev/null || fail "agent contract proportional-design rule omitted $contract in $destination"
+  done
+  grep -F 'Applying an already-decided approach creates no new gate, justification, or artifact.' "$destination/agent-contract.md" >/dev/null || fail "agent contract omitted mechanical-execution exemption in $destination"
+}
 
 sh -n "$INSTALLER" || fail "installer is not POSIX-shell parseable"
 
@@ -36,6 +55,7 @@ codex=$TMP_ROOT/codex
 CODEX_HOME=$codex sh "$INSTALLER"
 target=$codex/prompts
 assert_role_set "$target"
+assert_proportional_contract "$target"
 for role in $roles; do
   file=$target/$role.md
   assert_file "$file"
@@ -194,7 +214,7 @@ for runtime in opencode claude pi; do
     pi) PI_AGENT_HOME=$home sh "$INSTALLER"; installed=$home/agents ;;
   esac
   assert_role_set "$installed"
-  assert_file "$installed/agent-contract.md"
+  assert_proportional_contract "$installed"
 done
 
 spaced=$TMP_ROOT/'home with spaces'
@@ -212,5 +232,14 @@ for code in '0 — ok' '1 — internal' '2 — usage' '3 — state' '4 — CAS' 
 done
 grep -F 'go test ./...' "$ROOT/docs/contributing.md" >/dev/null || fail 'contributing guide omitted Go validation'
 grep -F 'sh scripts/tests/run.sh' "$ROOT/docs/contributing.md" >/dev/null || fail 'contributing guide omitted installer validation'
+for document in "$ROOT/AGENTS.md" "$ROOT/openspec/AGENTS.md" "$ROOT/docs/contributing.md"; do
+  grep -F 'Is this solution overkill for the context?' "$document" >/dev/null || fail "active guidance omitted overkill question in $document"
+  grep -F "Would a more relaxed, less demanding solution satisfy the user's expectations equally well?" "$document" >/dev/null || fail "active guidance omitted relaxed-solution question in $document"
+  grep -F 'name the protected constraint' "$document" >/dev/null || fail "active guidance omitted named-constraint justification in $document"
+  grep -F 'why the simpler option is insufficient' "$document" >/dev/null || fail "active guidance omitted simpler-option justification in $document"
+done
+for document in "$ROOT/AGENTS.md" "$ROOT/openspec/AGENTS.md" "$ROOT/docs/contributing.md"; do
+  grep -F 'Applying an already-decided approach creates no new gate, justification, or artifact.' "$document" >/dev/null || fail "active guidance omitted mechanical-execution exemption in $document"
+done
 
 printf 'installer_smoke_tests=passed\n'

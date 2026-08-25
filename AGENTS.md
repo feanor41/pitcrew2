@@ -38,6 +38,11 @@ When a required tool, command, or workflow transition is absent, sub-agents surf
 
 ## Proportional routing
 
+PitCrew exists only to help the user achieve the stated goal. Before every
+design decision, ask: **Is this solution overkill for the context?** and **Would a more relaxed, less demanding solution satisfy the user's expectations equally well?** Choose the least demanding sufficient solution. When stronger
+rigor is necessary, the design-bearing output must briefly name the protected constraint and explain why the simpler option is insufficient.
+Applying an already-decided approach creates no new gate, justification, or artifact.
+
 - Direct: Daimon implements and verifies well-understood, low-risk work affecting at most three files. It never calls its own verification independent approval.
 - Delegated direct: simple work affecting four or more files goes to `pc2-implementer`, followed by one complete-change review from `pc2-reviewer`, without synthetic workflow artifacts.
 - Full workflow: complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty require the complete workflow regardless of file count.
