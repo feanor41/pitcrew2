@@ -84,7 +84,7 @@ func (m *Manager) Issue(ctx context.Context, workflowID, unitID, actor, dir stri
 }
 
 func (m *Manager) IssueForPurpose(ctx context.Context, workflowID, unitID, actor, dir string, purpose Purpose) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, 0, actor, dir, purpose, false, false)
+	return m.issue(ctx, workflowID, unitID, 0, actor, dir, purpose, false, false, issueAction(purpose))
 }
 
 func (m *Manager) IssueAt(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string) (IssueResult, error) {
@@ -92,15 +92,19 @@ func (m *Manager) IssueAt(ctx context.Context, workflowID, unitID string, revisi
 }
 
 func (m *Manager) IssueAtForPurpose(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string, purpose Purpose) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, revision, actor, dir, purpose, false, false)
+	return m.issue(ctx, workflowID, unitID, revision, actor, dir, purpose, false, false, issueAction(purpose))
+}
+
+func (m *Manager) HandoffReviewAt(ctx context.Context, workflowID, unitID string, revision int64, reviewer, dir string) (IssueResult, error) {
+	return m.IssueAtForPurpose(ctx, workflowID, unitID, revision, reviewer, dir, PurposeReview)
 }
 
 func (m *Manager) IssueDebug(ctx context.Context, workflowID, unitID, actor, dir string) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, 0, actor, dir, PurposeImplementation, false, true)
+	return m.issue(ctx, workflowID, unitID, 0, actor, dir, PurposeImplementation, false, true, "")
 }
 
 func (m *Manager) IssueDebugAt(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, revision, actor, dir, PurposeImplementation, false, true)
+	return m.issue(ctx, workflowID, unitID, revision, actor, dir, PurposeImplementation, false, true, "")
 }
 
 func (m *Manager) Recover(ctx context.Context, workflowID, unitID, actor, dir string) (IssueResult, error) {
@@ -108,7 +112,7 @@ func (m *Manager) Recover(ctx context.Context, workflowID, unitID, actor, dir st
 }
 
 func (m *Manager) RecoverForPurpose(ctx context.Context, workflowID, unitID, actor, dir string, purpose Purpose) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, 0, actor, dir, purpose, true, false)
+	return m.issue(ctx, workflowID, unitID, 0, actor, dir, purpose, true, false, "")
 }
 
 func (m *Manager) RecoverAt(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string) (IssueResult, error) {
@@ -116,10 +120,10 @@ func (m *Manager) RecoverAt(ctx context.Context, workflowID, unitID string, revi
 }
 
 func (m *Manager) RecoverAtForPurpose(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string, purpose Purpose) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, revision, actor, dir, purpose, true, false)
+	return m.issue(ctx, workflowID, unitID, revision, actor, dir, purpose, true, false, "")
 }
 
-func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expectedRevision int64, actor, dir string, purpose Purpose, recovery, debug bool) (IssueResult, error) {
+func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expectedRevision int64, actor, dir string, purpose Purpose, recovery, debug bool, action activity.Action) (IssueResult, error) {
 	if strings.TrimSpace(actor) == "" {
 		return IssueResult{}, ErrIdentityCollision
 	}
@@ -138,6 +142,9 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	if workflowState != "plan_approved" && workflowState != "implementing" {
 		return IssueResult{}, fmt.Errorf("%w: current state %s; expected plan_approved or implementing", ErrInvalidState, workflowState)
 	}
+	if action == activity.UnitReviewHandedOff && workflowState != "implementing" {
+		return IssueResult{}, fmt.Errorf("%w: current state %s; expected implementing", ErrInvalidState, workflowState)
+	}
 	var unitState string
 	var unitRevision int64
 	if err = tx.QueryRowContext(ctx, `SELECT state,revision FROM work_units WHERE workflow_id=? AND id=?`, workflowID, unitID).Scan(&unitState, &unitRevision); err != nil {
@@ -152,6 +159,22 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	}
 	if !recovery && unitState != wantUnitState {
 		return IssueResult{}, fmt.Errorf("%w: current state %s; expected %s", ErrInvalidState, unitState, wantUnitState)
+	}
+	if action == activity.UnitReviewHandedOff {
+		var evidenceActor string
+		if err = tx.QueryRowContext(ctx, `SELECT actor FROM evidence WHERE workflow_id=? AND unit_id=? AND revision=?`, workflowID, unitID, unitRevision).Scan(&evidenceActor); err != nil {
+			return IssueResult{}, ErrInvalidState
+		}
+		if actor == evidenceActor {
+			return IssueResult{}, ErrIdentityCollision
+		}
+		var verdicts int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews WHERE workflow_id=? AND unit_id=? AND revision=?`, workflowID, unitID, unitRevision).Scan(&verdicts); err != nil {
+			return IssueResult{}, err
+		}
+		if verdicts != 0 {
+			return IssueResult{}, ErrInvalidState
+		}
 	}
 	var existing, generation int
 	if err = tx.QueryRowContext(ctx, `SELECT count(*),coalesce(max(claim_generation),0) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose=?`, workflowID, unitID, purpose).Scan(&existing, &generation); err != nil {
@@ -172,7 +195,23 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 			return IssueResult{}, err
 		}
 	} else if existing != 0 {
-		return IssueResult{}, ErrAlreadyClaimed
+		if action != activity.UnitReviewHandedOff {
+			return IssueResult{}, ErrAlreadyClaimed
+		}
+		var live, previousCorrections int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review' AND state!='revoked'`, workflowID, unitID).Scan(&live); err != nil {
+			return IssueResult{}, err
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews WHERE workflow_id=? AND unit_id=? AND revision=? AND verdict='corrections'`, workflowID, unitID, unitRevision-1).Scan(&previousCorrections); err != nil {
+			return IssueResult{}, err
+		}
+		var latestHandoff, previousReview int64
+		if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(CASE WHEN action='unit_review_handed_off' THEN id END),0),coalesce(max(CASE WHEN action='unit_review_recorded' AND subject_id=? THEN id END),0) FROM activities WHERE workflow_id=? AND unit_id=?`, fmt.Sprintf("%s@%d", unitID, unitRevision-1), workflowID, unitID).Scan(&latestHandoff, &previousReview); err != nil {
+			return IssueResult{}, err
+		}
+		if live != 0 || previousCorrections != 1 || previousReview <= latestHandoff {
+			return IssueResult{}, ErrAlreadyClaimed
+		}
 	}
 	if err = prepareDirectory(dir); err != nil {
 		return IssueResult{}, err
@@ -194,9 +233,11 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	if _, err = tx.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES(?,?,?,?,?,?,?,?,?,?)`, claimID, workflowID, unitID, Intent, h.SecretHash, actor, h.IssuedAt, h.ExpiresAt, generation, purpose); err != nil {
 		return IssueResult{}, err
 	}
-	action := activity.UnitClaimed
-	if recovery {
-		action = activity.UnitClaimRecovered
+	if action == "" {
+		action = activity.UnitClaimed
+		if recovery {
+			action = activity.UnitClaimRecovered
+		}
 	}
 	if err = activity.AppendTx(ctx, tx, activity.New(workflowID, unitID, action, actor, issued, activity.UnitSubject(unitID))); err != nil {
 		return IssueResult{}, err
@@ -449,6 +490,13 @@ func (o Operation) purpose() Purpose {
 		return PurposeReview
 	}
 	return PurposeImplementation
+}
+
+func issueAction(p Purpose) activity.Action {
+	if p == PurposeReview {
+		return activity.UnitReviewHandedOff
+	}
+	return ""
 }
 
 func RemoveRevokedFile(path string) error {

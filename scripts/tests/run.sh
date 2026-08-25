@@ -193,7 +193,7 @@ assert_role_set "$spaced/prompts"
 for document in "$ROOT/AGENTS.md" "$ROOT/docs/cli-reference.md" "$ROOT/docs/contributing.md"; do
   assert_file "$document"
 done
-for command in new show explore spec design plan approve-plan list-ready-units begin-implementation complete abandon claim-unit recover-unit-claim unit-tdd unit-review unit-complete; do
+for command in new show explore spec design plan approve-plan list-ready-units begin-implementation complete abandon claim-unit recover-unit-claim handoff-review unit-tdd unit-review unit-complete; do
   grep -F "workflow $command" "$ROOT/docs/cli-reference.md" >/dev/null || fail "CLI reference omitted workflow $command"
 done
 for code in '0 — ok' '1 — internal' '2 — usage' '3 — state' '4 — CAS' '5 — handle'; do

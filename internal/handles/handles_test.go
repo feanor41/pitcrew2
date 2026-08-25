@@ -110,6 +110,9 @@ func TestPurposeScopedHandlesKeepIndependentGenerationsAndUse(t *testing.T) {
 	if _, err := db.DB().Exec(`UPDATE work_units SET state='reviewing' WHERE id=?`, unitID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.DB().Exec(`INSERT INTO evidence(workflow_id,unit_id,revision,actor,red_command,red_outcome,green_command,green_outcome,refactor_summary,validation_command,validation_outcome,changed_paths,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, wfID, unitID, 1, "implementer", "red", "exit 1", "green", "exit 0", "", "all", "exit 0", "internal", "now"); err != nil {
+		t.Fatal(err)
+	}
 	review, err := m.IssueForPurpose(context.Background(), wfID, unitID, "reviewer", dir, PurposeReview)
 	if err != nil {
 		t.Fatal(err)

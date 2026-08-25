@@ -39,9 +39,13 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 		t.Fatalf("handle=%v %v", info, err)
 	}
 	tddFile := writeInput(t, root, "tdd.json", `{"red_command":"go test -run X","red_outcome":"exit 1","green_command":"go test -run X","green_outcome":"exit 0","refactor_summary":"clean","validation_command":"go test ./...","validation_outcome":"exit 0","changed_paths":"internal/feature"}`)
-	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handlePath, "--input-file", tddFile))
+	tddResult := mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handlePath, "--input-file", tddFile))
+	if !strings.Contains(string(tddResult), `"next_action":"workflow handoff-review"`) {
+		t.Fatalf("TDD next action=%s", tddResult)
+	}
+	reviewHandlePath := handoffReview(t, root, wfID, unitID, "reviewer")
 	reviewFile := writeInput(t, root, "review.json", `{"verdict":"approved","summary":"good","findings":""}`)
-	mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", handlePath, "--input-file", reviewFile))
+	mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewHandlePath, "--input-file", reviewFile))
 	completed := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handlePath))
 	if _, err := os.Stat(handlePath); !os.IsNotExist(err) {
 		t.Fatalf("completed handle remains: %v", err)
@@ -84,11 +88,132 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 	if !strings.Contains(strings.Join(kinds, ","), "plan") || !strings.Contains(strings.Join(kinds, ","), "evidence") || !strings.Contains(strings.Join(kinds, ","), "review") || !strings.Contains(strings.Join(kinds, ","), "aggregate_review") || len(document.Data.Timeline) == 0 || strings.Contains(string(shown), "claim_secret") || strings.Contains(string(shown), handlePath) {
 		t.Fatalf("review inspection incomplete or leaked: %s", shown)
 	}
-	wantActions := []string{"workflow_created", "exploration_recorded", "specification_recorded", "design_recorded", "plan_submitted", "plan_approved", "implementation_started", "unit_claimed", "unit_tdd_recorded", "unit_review_recorded", "unit_completed", "aggregate_review_recorded", "workflow_completed"}
-	wantSubjects := []string{wfID, "1", "2", "3", wfID, wfID, wfID + "@7", unitID, unitID + "@1", unitID + "@1", unitID, "4", wfID + "@9"}
+	wantActions := []string{"workflow_created", "exploration_recorded", "specification_recorded", "design_recorded", "plan_submitted", "plan_approved", "implementation_started", "unit_claimed", "unit_tdd_recorded", "unit_review_handed_off", "unit_review_recorded", "unit_completed", "aggregate_review_recorded", "workflow_completed"}
+	wantSubjects := []string{wfID, "1", "2", "3", wfID, wfID, wfID + "@7", unitID, unitID + "@1", unitID, unitID + "@1", unitID, "4", wfID + "@9"}
 	got, subjects := storedActivities(t, root, wfID)
 	if strings.Join(got, ",") != strings.Join(wantActions, ",") || strings.Join(subjects, ",") != strings.Join(wantSubjects, ",") {
 		t.Fatalf("activities=%v want=%v", got, wantActions)
+	}
+}
+
+func TestReviewHandoffIssuesIndependentOpaqueAuthority(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, implementationPath := setupReviewingUnit(t, root, "implementer")
+	handoff := mustOK(t, runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--handle-dir", filepath.Join(root, "review-handles")))
+	reviewPath := stringField(t, handoff, "handle_path")
+	if reviewPath == implementationPath || !strings.Contains(string(handoff), `"next_action":"workflow unit-review"`) {
+		t.Fatalf("handoff=%s", handoff)
+	}
+	data, err := os.ReadFile(reviewPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "reviewer") || strings.Contains(string(data), "implementer") {
+		t.Fatalf("handle leaked actor identity: %s", data)
+	}
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var implementationState, reviewState string
+	if err = s.DB().QueryRow(`SELECT state FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='implementation'`, wfID, unitID).Scan(&implementationState); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB().QueryRow(`SELECT state FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review'`, wfID, unitID).Scan(&reviewState); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if implementationState != "active" || reviewState != "intent" {
+		t.Fatalf("implementation=%s review=%s", implementationState, reviewState)
+	}
+	if duplicate := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--handle-dir", filepath.Join(root, "duplicate")); duplicate.code != 3 {
+		t.Fatalf("duplicate=%#v", duplicate)
+	}
+	reviewFile := writeInput(t, root, "handoff-review.json", `{"verdict":"approved","summary":"good","findings":""}`)
+	if wrong := runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", implementationPath, "--input-file", reviewFile); wrong.code != 5 {
+		t.Fatalf("implementation authority reviewed unit: %#v", wrong)
+	}
+	mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewPath, "--input-file", reviewFile))
+	if _, err := os.Stat(reviewPath); !os.IsNotExist(err) {
+		t.Fatalf("consumed review handle remains: %v", err)
+	}
+	if _, err := os.Stat(implementationPath); err != nil {
+		t.Fatalf("review consumed implementation authority: %v", err)
+	}
+	actions, _ := storedActivities(t, root, wfID)
+	if !strings.Contains(strings.Join(actions, ","), "unit_review_handed_off,unit_review_recorded") {
+		t.Fatalf("activities=%v", actions)
+	}
+}
+
+func TestReviewHandoffRejectsInvalidAuthorityWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, _ := setupReviewingUnit(t, root, "implementer")
+	for name, test := range map[string]struct {
+		revision, actor string
+		want            int
+	}{
+		"stale revision": {"2", "reviewer", 4},
+		"same actor":     {"1", "implementer", 3},
+	} {
+		dir := filepath.Join(root, strings.ReplaceAll(name, " ", "-"))
+		failed := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", test.revision, "--actor", test.actor, "--handle-dir", dir)
+		if failed.code != test.want {
+			t.Fatalf("%s=%#v", name, failed)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("%s created handle directory: %v", name, err)
+		}
+	}
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB().Exec(`DELETE FROM evidence WHERE workflow_id=? AND unit_id=?`, wfID, unitID); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if failed := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--handle-dir", filepath.Join(root, "missing-evidence")); failed.code != 3 {
+		t.Fatalf("missing evidence=%#v", failed)
+	}
+	root = t.TempDir()
+	wfID, unitID, _ = setupReviewingUnit(t, root, "implementer")
+	expiringPath := handoffReview(t, root, wfID, unitID, "reviewer")
+	reviewInput := writeInput(t, root, "expired-review.json", `{"verdict":"approved","summary":"good","findings":""}`)
+	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC), "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", expiringPath, "--input-file", reviewInput); expired.code != 5 {
+		t.Fatalf("expired review=%#v", expired)
+	}
+	if replacement := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "other-reviewer", "--handle-dir", filepath.Join(root, "forbidden-replacement")); replacement.code != 3 {
+		t.Fatalf("handoff replaced expired current authority=%#v", replacement)
+	}
+	root = t.TempDir()
+	wfID, unitID, _ = setupImplementingUnit(t, root)
+	if failed := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--handle-dir", filepath.Join(root, "pending")); failed.code != 3 {
+		t.Fatalf("pending unit=%#v", failed)
+	}
+	root = t.TempDir()
+	wfID, unitID, _ = setupReviewingUnit(t, root, "implementer")
+	realDir := filepath.Join(root, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	unsafeDir := filepath.Join(root, "unsafe")
+	if err := os.Symlink(realDir, unsafeDir); err != nil {
+		t.Fatal(err)
+	}
+	if failed := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--handle-dir", unsafeDir); failed.code != 5 {
+		t.Fatalf("unsafe directory=%#v", failed)
+	}
+	s, err = store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB().Exec(`UPDATE workflows SET state='completed' WHERE id=?`, wfID); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if failed := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--handle-dir", filepath.Join(root, "terminal")); failed.code != 3 {
+		t.Fatalf("terminal workflow=%#v", failed)
 	}
 }
 
@@ -235,6 +360,49 @@ func TestActivityFailureRollsBackDomainAndHandleMutations(t *testing.T) {
 	if !bytes.Equal(before, after) || state != "pending" || count != 0 {
 		t.Fatalf("failed evidence mutated file=%t state=%s evidence=%d", !bytes.Equal(before, after), state, count)
 	}
+
+	root = t.TempDir()
+	wfID, unitID, _ = setupReviewingUnit(t, root, "implementer")
+	installFailingActivityTrigger(t, root)
+	handoffDir := filepath.Join(root, "failed-handoff")
+	if failed := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--handle-dir", handoffDir); failed.code != 1 {
+		t.Fatalf("handoff failure=%#v", failed)
+	}
+	entries, err = os.ReadDir(handoffDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed handoff left files=%v error=%v", entries, err)
+	}
+	s, _ = store.Open(context.Background(), root)
+	defer s.Close()
+	var reviewHandles int
+	_ = s.DB().QueryRow(`SELECT count(*) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review'`, wfID, unitID).Scan(&reviewHandles)
+	if reviewHandles != 0 {
+		t.Fatalf("failed handoff persisted %d review handles", reviewHandles)
+	}
+	_ = s.Close()
+
+	root = t.TempDir()
+	wfID, unitID, _ = setupReviewingUnit(t, root, "implementer")
+	reviewPath := handoffReview(t, root, wfID, unitID, "reviewer")
+	before, _ = os.ReadFile(reviewPath)
+	installFailingActivityTrigger(t, root)
+	reviewInput := writeInput(t, root, "failed-review.json", `{"verdict":"approved","summary":"good","findings":""}`)
+	if failed := runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewPath, "--input-file", reviewInput); failed.code != 1 {
+		t.Fatalf("review failure=%#v", failed)
+	}
+	after, err = os.ReadFile(reviewPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("failed review changed handle: equal=%t error=%v", bytes.Equal(before, after), err)
+	}
+	s, _ = store.Open(context.Background(), root)
+	defer s.Close()
+	var reviews int
+	var reviewState string
+	_ = s.DB().QueryRow(`SELECT count(*) FROM reviews WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&reviews)
+	_ = s.DB().QueryRow(`SELECT state FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review'`, wfID, unitID).Scan(&reviewState)
+	if reviews != 0 || reviewState != "intent" {
+		t.Fatalf("failed review persisted verdict=%d handle=%s", reviews, reviewState)
+	}
 }
 
 func storedActivities(t *testing.T, root, wfID string) ([]string, []string) {
@@ -290,7 +458,8 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	}
 
 	root = t.TempDir()
-	wfID, unitID, handlePath := setupReviewingUnit(t, root, "implementer")
+	wfID, unitID, _ := setupReviewingUnit(t, root, "implementer")
+	handlePath := handoffReview(t, root, wfID, unitID, "reviewer")
 	before, err := os.ReadFile(handlePath)
 	if err != nil {
 		t.Fatal(err)
@@ -317,6 +486,31 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	if actions, _ := storedActivities(t, root, wfID); actions[len(actions)-1] != "unit_claim_recovered" {
 		t.Fatalf("recovery activity=%v", actions)
 	}
+	recoveredPath := stringField(t, recovered, "handle_path")
+	tdd2 := writeInput(t, root, "tdd-revision-2.json", `{"red_command":"red again","red_outcome":"exit 1","green_command":"green again","green_outcome":"exit 0","refactor_summary":"corrected","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)
+	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--claim-handle", recoveredPath, "--input-file", tdd2))
+	review2 := mustOK(t, runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "reviewer", "--handle-dir", filepath.Join(root, "review-revision-2")))
+	review2Path := stringField(t, review2, "handle_path")
+	if review2Path == handlePath {
+		t.Fatal("later revision reused review handle")
+	}
+	s, openErr := store.Open(context.Background(), root)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	var reviewGeneration int
+	_ = s.DB().QueryRow(`SELECT max(claim_generation) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review'`, wfID, unitID).Scan(&reviewGeneration)
+	_ = s.Close()
+	if reviewGeneration != 2 {
+		t.Fatalf("later review generation=%d", reviewGeneration)
+	}
+	approval := writeInput(t, root, "expired-revision-2-review.json", `{"verdict":"approved","summary":"good","findings":""}`)
+	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC), "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "reviewer", "--claim-handle", review2Path, "--input-file", approval); expired.code != 5 {
+		t.Fatalf("later review expiry=%#v", expired)
+	}
+	if bypass := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "other-reviewer", "--handle-dir", filepath.Join(root, "forbidden-revision-2-replacement")); bypass.code != 3 {
+		t.Fatalf("later review handoff bypassed recovery=%#v", bypass)
+	}
 
 	debugRoot := t.TempDir()
 	debugWF, debugUnit, _ := setupImplementingUnit(t, debugRoot)
@@ -341,7 +535,7 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("debug handles=%v, %v", entries, err)
 	}
-	s, err := store.Open(context.Background(), debugRoot)
+	s, err = store.Open(context.Background(), debugRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +554,8 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 
 func TestOutsidePlanCorrectionNamesDaimonAsNextCoordinator(t *testing.T) {
 	root := t.TempDir()
-	wfID, unitID, handlePath := setupReviewingUnit(t, root, "implementer")
+	wfID, unitID, _ := setupReviewingUnit(t, root, "implementer")
+	handlePath := handoffReview(t, root, wfID, unitID, "reviewer")
 	reviewFile := writeInput(t, root, "outside-correction.json", `{"verdict":"corrections","summary":"plan change","findings":"split the unit","plan_impact":"outside"}`)
 	correction := mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", handlePath, "--input-file", reviewFile))
 	var response struct {
@@ -431,6 +626,9 @@ func TestFailedUnitCommandsPreserveClaimAtomically(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
 			wfID, unitID, handlePath := setupReviewingUnit(t, root, "implementer")
+			if tt.name == "review domain rejection" {
+				handlePath = handoffReview(t, root, wfID, unitID, "reviewer")
+			}
 			if tt.prepare != nil {
 				tt.prepare(t, root, wfID, unitID)
 			}
@@ -637,6 +835,12 @@ func setupReviewingUnit(t *testing.T, root, actor string) (string, string, strin
 	tdd := writeInput(t, root, "tdd.json", `{"red_command":"test red","red_outcome":"exit 1","green_command":"test green","green_outcome":"exit 0","refactor_summary":"","validation_command":"test all","validation_outcome":"exit 0","changed_paths":"internal"}`)
 	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", actor, "--claim-handle", handlePath, "--input-file", tdd))
 	return wfID, unitID, handlePath
+}
+
+func handoffReview(t *testing.T, root, wfID, unitID, reviewer string) string {
+	t.Helper()
+	result := mustOK(t, runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", reviewer, "--handle-dir", filepath.Join(root, "review-handles")))
+	return stringField(t, result, "handle_path")
 }
 
 func mustOK(t *testing.T, result result) []byte {

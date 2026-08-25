@@ -38,6 +38,7 @@ const (
 	UnitClaimed             Action      = "unit_claimed"
 	UnitClaimRecovered      Action      = "unit_claim_recovered"
 	UnitTDDRecorded         Action      = "unit_tdd_recorded"
+	UnitReviewHandedOff     Action      = "unit_review_handed_off"
 	UnitReviewRecorded      Action      = "unit_review_recorded"
 	AggregateReviewRecorded Action      = "aggregate_review_recorded"
 	UnitCompleted           Action      = "unit_completed"
@@ -56,7 +57,7 @@ var (
 	allowed    = map[Action]SubjectKind{
 		WorkflowCreated: Workflow, ExplorationRecorded: Artifact, SpecificationRecorded: Artifact, DesignRecorded: Artifact,
 		PlanSubmitted: Plan, PlanApproved: Plan, ImplementationStarted: Event, WorkflowCompleted: Event,
-		WorkflowAbandoned: Event, UnitClaimed: WorkUnit, UnitClaimRecovered: WorkUnit, UnitTDDRecorded: Evidence,
+		WorkflowAbandoned: Event, UnitClaimed: WorkUnit, UnitClaimRecovered: WorkUnit, UnitTDDRecorded: Evidence, UnitReviewHandedOff: WorkUnit,
 		UnitReviewRecorded: Review, UnitCompleted: WorkUnit, AggregateReviewRecorded: Artifact,
 	}
 )
