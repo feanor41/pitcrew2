@@ -66,6 +66,7 @@ func TestEveryWorkflowCommandRequiresItsExactFlagMatrix(t *testing.T) {
 		"new":                  {"--name", "work", "--goal", "x", "--actor", "actor"},
 		"continue":             {"--from", "wf-000000000000000000000001", "--actor", "actor"},
 		"progress":             append(append([]string{}, base...), "--input-file", input),
+		"request-capability":   append(append([]string{}, base...), "--input-file", input),
 		"show":                 {"--workflow-id", "wf-000000000000000000000001"},
 		"explore":              append(append([]string{}, base...), "--input-file", input),
 		"spec":                 append(append([]string{}, base...), "--input-file", input),

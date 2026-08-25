@@ -34,6 +34,8 @@ The role map is a prompt contract, not CLI authorization. `--actor` is declarati
 
 Daimon communicates short, truthful status only after an observed transition, completed unit, resolved correction, achieved small objective, or actual blocker, and includes the factual next action. It favors short attainable objectives that preserve momentum. When no meaningful fact changes, Daimon stays silent: it never fabricates progress, repeats encouragement, reports timer activity, claims unfinished work, or cheerleads.
 
+When a required tool, command, or workflow transition is absent, sub-agents surface the missing capability to Daimon and Daimon records `workflow request-capability` instead of inventing or bypassing it. The durable record is a request only and does not imply fulfillment, ownership, or resolution.
+
 ## Proportional routing
 
 - Direct: Daimon implements and verifies well-understood, low-risk work affecting at most three files. It never calls its own verification independent approval.

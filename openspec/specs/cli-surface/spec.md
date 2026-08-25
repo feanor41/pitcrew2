@@ -9,7 +9,7 @@ Define the closed CLI, command inputs, envelopes, errors, and caller identity se
 
 ### Requirement: Closed command and input contract
 
-The CLI SHALL expose only `principles`, global `--help`/`--version`, and the 20 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, and review bodies.
+The CLI SHALL expose only `principles`, global `--help`/`--version`, and the 21 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, and review bodies.
 
 | Command | Required inputs |
 |---|---|
@@ -17,6 +17,7 @@ The CLI SHALL expose only `principles`, global `--help`/`--version`, and the 20 
 | `continue` | `--from <terminal-wf-id> --actor <label>` |
 | `show` | `--workflow-id <wf-id>` |
 | `progress` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
+| `request-capability` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `explore`, `spec`, `design` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `plan` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `approve-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> [--approve-exception <wu-id> ...]` |
@@ -36,9 +37,9 @@ Unknown flags, missing flags, unreadable/non-regular input files, or malformed J
 - WHEN it is invoked with and without every input in its row
 - THEN only the complete valid invocation SHALL pass argument validation
 
-#### Scenario: Progress requires strict file transport
+#### Scenario: Operational reports require strict file transport
 
-- GIVEN `workflow progress` without its input file or with an unknown payload field
+- GIVEN `workflow progress` or `workflow request-capability` without its input file or with an unknown payload field
 - WHEN argument or JSON validation runs
 - THEN exit code `2` SHALL result before mutation
 

@@ -1,6 +1,6 @@
 # PitCrew CLI reference
 
-PitCrew exposes `tui` and `principles`, two global flags, and exactly 20 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `tui` and `principles`, two global flags, and exactly 21 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
 ## Quick path
 
@@ -22,6 +22,7 @@ A full workflow progresses through exploration, specification, design, planning,
 | `workflow continue` | `--from <terminal-wf-id> --actor <label>` |
 | `workflow show` | `--workflow-id <wf-id>` |
 | `workflow progress` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
+| `workflow request-capability` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow explore` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow spec` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow design` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
@@ -68,6 +69,14 @@ The command infers `exploration`, `specification`, or `design`. While a workflow
 `status` is exactly `advanced` or `blocked`; every field is required and trimmed before canonical storage. Progress observes the supplied non-terminal workflow revision and appends an artifact plus linked activity without changing state, revision, timestamp, or events. Repeated reports remain ordered. Success returns the typed report and uses its submitted `next_action`.
 
 The TUI synopsis shows only the latest valid progress report, with a non-color advanced or blocked marker, its summary, and its report-specific next action. Lifecycle/unit facts and their executable next action remain separate. Every progress artifact remains available in chronological history and drill-down. Refresh reads the latest report without polling or writing. Daimon reports concise status only for a real transition, completed unit, resolved correction, achieved small objective, or observed blocker; otherwise it stays silent rather than fabricating movement or repeating encouragement.
+
+### Capability request
+
+```json
+{"capability":"browser tool","reason":"UI behavior needs verification","blocked_action":"inspect the running page"}
+```
+
+Every field is required, trimmed, and stored canonically. The command observes an exact non-terminal revision, appends `capability_request` plus `capability_requested`, and returns `next_action: "daimon coordinate requested capability"` without changing lifecycle state. Repeated requests remain ordered and generically inspectable. A request records a missing tool, command, or transition; it has no fulfillment, ownership, resolution, or status lifecycle and does not imply the capability exists.
 
 ### Plan
 

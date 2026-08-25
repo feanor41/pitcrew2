@@ -50,6 +50,11 @@ type progressInput struct {
 	Summary    string `json:"summary"`
 	NextAction string `json:"next_action"`
 }
+type capabilityRequestInput struct {
+	Capability    string `json:"capability"`
+	Reason        string `json:"reason"`
+	BlockedAction string `json:"blocked_action"`
+}
 type reviewInput struct {
 	Verdict    *evidence.Verdict    `json:"verdict"`
 	Summary    *string              `json:"summary"`
@@ -155,7 +160,7 @@ func runPrinciples(args []string, deps Dependencies) int {
 	return 0
 }
 
-var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
+var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "request-capability": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
 var workflowIDPattern = regexp.MustCompile(`^wf-[0-9a-f]{24}$`)
 
 func runWorkflow(args []string, deps Dependencies) int {
@@ -183,6 +188,8 @@ func runWorkflow(args []string, deps Dependencies) int {
 		return runWorkflowShow(rest, deps)
 	case "progress":
 		return runProgress(rest, deps)
+	case "request-capability":
+		return runRequestCapability(rest, deps)
 	case "explore", "spec", "design":
 		return runStage(command, rest, deps)
 	case "plan":
@@ -210,6 +217,36 @@ func runWorkflow(args []string, deps Dependencies) int {
 	default:
 		return fail(deps, ErrUsage, "unsupported command")
 	}
+}
+
+func runRequestCapability(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--revision", "--actor", "--input-file"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	revision, err := values.int64("--revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input, err := decodeInputFile[capabilityRequestInput](values.one("--input-file"))
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input.Capability, input.Reason, input.BlockedAction = strings.TrimSpace(input.Capability), strings.TrimSpace(input.Reason), strings.TrimSpace(input.BlockedAction)
+	if input.Capability == "" || input.Reason == "" || input.BlockedAction == "" {
+		return fail(deps, ErrState, "capability request requires capability, reason, and blocked_action")
+	}
+	content, err := json.Marshal(input)
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		_, err := workflow.New(s, deps.Now).AppendOperational(context.Background(), values.one("--workflow-id"), revision, "capability_request", string(content), values.one("--actor"), activity.CapabilityRequested)
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"capability_request": input}, "daimon coordinate requested capability")
+	})
 }
 
 func runProgress(args []string, deps Dependencies) int {
@@ -679,7 +716,7 @@ const rootHelp = `Usage: pitcrew <command> [options]
 Commands:
   tui
   principles
-  workflow new|continue|show|progress|explore|spec|design|plan|approve-plan
+  workflow new|continue|show|progress|request-capability|explore|spec|design|plan|approve-plan
   workflow list-ready-units|begin-implementation|complete|abandon
   workflow claim-unit|recover-unit-claim|handoff-review|recover-review|unit-tdd|unit-review|unit-complete
 
@@ -689,7 +726,7 @@ Global options:
 `
 const workflowHelp = `Usage: pitcrew workflow <subcommand> [options]
 
-Commands: new, continue, show, progress, explore, spec, design, plan, approve-plan, list-ready-units,
+Commands: new, continue, show, progress, request-capability, explore, spec, design, plan, approve-plan, list-ready-units,
   begin-implementation, complete, abandon, claim-unit, recover-unit-claim, handoff-review, recover-review,
   unit-tdd, unit-review, unit-complete
 `
