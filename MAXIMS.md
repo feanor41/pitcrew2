@@ -38,6 +38,19 @@ obstacle. Defaults are chosen to be safe, but every default has a documented,
 auditable escape hatch. When a rule blocks a legitimate delivery, the rule
 bends.
 
+PitCrew exists only to help the user achieve the stated goal. Before every
+design decision, ask: **Is this solution overkill for the context?** Then ask:
+**Would a more relaxed, less demanding solution satisfy the user's expectations
+equally well?** Choose the least demanding solution that fully satisfies the
+expected outcome, material risks, and existing constraints.
+
+Stronger rigor remains necessary when the simpler choice is materially
+insufficient. When selecting added rigor, name the protected constraint and
+explain why the simpler option is insufficient. Proportionality never weakens
+claim secrecy, opaque-handle boundaries, reviewer independence, truthful
+evidence and progress, CAS inspection requirements, workflow integrity,
+terminal immutability, or safety boundaries.
+
 ## Maxim III — The Usual Path, Not the Only Path
 
 > **The harness is the usual path, not the only path.**

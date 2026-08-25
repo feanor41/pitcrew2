@@ -50,3 +50,22 @@ func TestCanonicalMaximsNameDaimonWithoutRewritingThePrinciples(t *testing.T) {
 		t.Fatal("canonical maxims retain the obsolete coordinator name")
 	}
 }
+
+func TestCanonicalMaximsRequireProportionalDesignDecisions(t *testing.T) {
+	text := strings.Join(strings.Fields(Text()), " ")
+	required := []string{
+		"PitCrew exists only to help the user achieve the stated goal.",
+		"Is this solution overkill for the context?",
+		"Would a more relaxed, less demanding solution satisfy the user's expectations equally well?",
+		"Choose the least demanding solution that fully satisfies the expected outcome, material risks, and existing constraints.",
+		"name the protected constraint and explain why the simpler option is insufficient",
+		"claim secrecy",
+		"reviewer independence",
+		"terminal immutability",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("canonical maxims omit proportional-design contract %q", phrase)
+		}
+	}
+}
