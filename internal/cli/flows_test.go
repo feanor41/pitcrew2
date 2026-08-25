@@ -161,6 +161,59 @@ func TestWorkflowContinueRejectsMalformedSourceBeforeOpeningStore(t *testing.T) 
 	}
 }
 
+func TestWorkflowProgressAppendsCanonicalReportsWithoutTransition(t *testing.T) {
+	root := t.TempDir()
+	wfID, revision := createWorkflow(t, root)
+	before := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	for i, body := range []string{`{"status":"advanced","summary":"  unit done  ","next_action":"  test  "}`, `{"status":"blocked","summary":" waiting ","next_action":" unblock "}`} {
+		input := writeInput(t, root, "progress-"+itoa(int64(i))+".json", body)
+		result := mustOK(t, runAt(t, root, "workflow", "progress", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--input-file", input))
+		if !strings.Contains(string(result), `"progress":`) || !strings.Contains(string(result), `"next_action":"`+[]string{"test", "unblock"}[i]+`"`) {
+			t.Fatalf("progress=%s", result)
+		}
+	}
+	after := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	advanced, blocked := strings.Index(string(after), `\"summary\":\"unit done\"`), strings.Index(string(after), `\"summary\":\"waiting\"`)
+	if workflowRevision(t, after) != revision || workflowState(t, after) != workflowState(t, before) || advanced < 0 || blocked < advanced || !strings.Contains(string(after), `"action":"progress_recorded"`) {
+		t.Fatalf("show=%s", after)
+	}
+}
+
+func TestWorkflowProgressRejectsInvalidStaleAndTerminalWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	wfID, revision := createWorkflow(t, root)
+	for _, tt := range []struct {
+		name, body string
+		code       int
+	}{
+		{"unknown field", `{"status":"advanced","summary":"done","next_action":"test","extra":true}`, 2},
+		{"unknown status", `{"status":"moving","summary":"done","next_action":"test"}`, 3},
+		{"padded status", `{"status":" advanced ","summary":"done","next_action":"test"}`, 3},
+		{"blank summary", `{"status":"advanced","summary":" ","next_action":"test"}`, 3},
+		{"missing next action", `{"status":"advanced","summary":"done"}`, 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+			input := writeInput(t, root, strings.ReplaceAll(tt.name, " ", "-")+".json", tt.body)
+			result := runAt(t, root, "workflow", "progress", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--input-file", input)
+			if result.code != tt.code || result.stdout != "" {
+				t.Fatalf("result=%#v", result)
+			}
+			if after := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID)); string(after) != string(before) {
+				t.Fatalf("invalid progress mutated workflow")
+			}
+		})
+	}
+	valid := writeInput(t, root, "valid-progress.json", `{"status":"advanced","summary":"done","next_action":"test"}`)
+	if stale := runAt(t, root, "workflow", "progress", "--workflow-id", wfID, "--revision", "2", "--actor", "daimon", "--input-file", valid); stale.code != 4 {
+		t.Fatalf("stale=%#v", stale)
+	}
+	mustOK(t, runAt(t, root, "workflow", "abandon", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--reason", "stop"))
+	if terminal := runAt(t, root, "workflow", "progress", "--workflow-id", wfID, "--revision", "2", "--actor", "daimon", "--input-file", valid); terminal.code != 3 {
+		t.Fatalf("terminal=%#v", terminal)
+	}
+}
+
 func TestReviewHandoffIssuesIndependentOpaqueAuthority(t *testing.T) {
 	root := t.TempDir()
 	wfID, unitID, implementationPath := setupReviewingUnit(t, root, "implementer")

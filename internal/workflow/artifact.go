@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/fmazzalomo/pitcrew/internal/activity"
@@ -71,6 +72,42 @@ func (s *Service) RecordArtifact(ctx context.Context, workflowID string, expecte
 	}
 	current.State, current.Revision, current.UpdatedAt = next, revision, at
 	return current, nil
+}
+
+// AppendOperational records an observed fact without authorizing a lifecycle transition.
+func (s *Service) AppendOperational(ctx context.Context, workflowID string, expected int64, kind, content, actor string, action activity.Action) (Artifact, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Artifact{}, err
+	}
+	defer tx.Rollback()
+	current, err := workflowInTx(ctx, tx, workflowID)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if current.Revision != expected {
+		return Artifact{}, store.ErrCASMismatch
+	}
+	if !slices.Contains(nonTerminalStates, current.State) {
+		return Artifact{}, &TransitionError{Current: current.State, Expected: nonTerminalStates, Event: "operational_report"}
+	}
+	now := s.now()
+	at := ids.FormatTime(now)
+	result, err := tx.ExecContext(ctx, `INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,?,?,?,?,?)`, workflowID, kind, content, actor, expected, at)
+	if err != nil {
+		return Artifact{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return Artifact{}, err
+	}
+	if err = activity.AppendTx(ctx, tx, activity.New(workflowID, "", action, actor, now, activity.ArtifactSubject(id))); err != nil {
+		return Artifact{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Artifact{}, err
+	}
+	return Artifact{Kind: kind, Content: content, Actor: actor, Revision: expected, RecordedAt: at}, nil
 }
 
 func (s *Service) Artifacts(ctx context.Context, workflowID string) ([]Artifact, error) {
