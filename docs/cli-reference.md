@@ -1,6 +1,6 @@
 # PitCrew CLI reference
 
-PitCrew exposes `tui` and `principles`, two global flags, and exactly 18 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `tui` and `principles`, two global flags, and exactly 19 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
 ## Quick path
 
@@ -19,6 +19,7 @@ A full workflow progresses through exploration, specification, design, planning,
 |---|---|
 | `tui` | None; extra arguments are rejected. |
 | `workflow new` | `--name <text> --goal <text> --actor <label>` |
+| `workflow continue` | `--from <terminal-wf-id> --actor <label>` |
 | `workflow show` | `--workflow-id <wf-id>` |
 | `workflow explore` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow spec` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
@@ -38,6 +39,8 @@ A full workflow progresses through exploration, specification, design, planning,
 | `workflow unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
 
 Global `--help` and `--version` are flags, not commands. `principles [--json]` prints the embedded maxims as exact text or a raw structured JSON array.
+
+`workflow continue` accepts only a completed or abandoned predecessor. It atomically creates a fresh revision-1 draft with the same name and exact goal, plus a child-owned `continuation` artifact that records the predecessor ID, terminal state, and revision. The predecessor receives no row, event, artifact, or activity writes, and one predecessor may have multiple independent successors. Success returns `data.workflow`, `data.predecessor`, and `next_action: "workflow explore"`.
 
 ## Read-only terminal inspection
 

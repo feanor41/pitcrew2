@@ -68,6 +68,8 @@ for handle_rule in 'must not disclose handle contents or secrets' 'must pass onl
 done
 grep -F 'recover-review may rotate it only for the same reviewer after expiry' "$target/daimon.md" >/dev/null || fail 'Daimon review recovery contract omitted actor continuity'
 grep -F 'recover-review` preserves the originally handed-off reviewer identity' "$target/agent-contract.md" >/dev/null || fail 'agent contract omitted review recovery identity'
+grep -F 'workflow continue --from to create a linked draft instead' "$target/daimon.md" >/dev/null || fail 'Daimon terminal continuation contract omitted'
+grep -F 'Continue terminal work only with `workflow continue --from`' "$target/agent-contract.md" >/dev/null || fail 'agent contract omitted terminal continuation'
 for review_rule in 'Unit review is selective' 'Final aggregate review is mandatory' 'requirements, specifications, design, tasks, implementation evidence, and tests'; do
   grep -F "$review_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract review rule omitted $review_rule"
 done
@@ -195,7 +197,7 @@ assert_role_set "$spaced/prompts"
 for document in "$ROOT/AGENTS.md" "$ROOT/docs/cli-reference.md" "$ROOT/docs/contributing.md"; do
   assert_file "$document"
 done
-for command in new show explore spec design plan approve-plan list-ready-units begin-implementation complete abandon claim-unit recover-unit-claim handoff-review recover-review unit-tdd unit-review unit-complete; do
+for command in new continue show explore spec design plan approve-plan list-ready-units begin-implementation complete abandon claim-unit recover-unit-claim handoff-review recover-review unit-tdd unit-review unit-complete; do
   grep -F "workflow $command" "$ROOT/docs/cli-reference.md" >/dev/null || fail "CLI reference omitted workflow $command"
 done
 for code in '0 — ok' '1 — internal' '2 — usage' '3 — state' '4 — CAS' '5 — handle'; do

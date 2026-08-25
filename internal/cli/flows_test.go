@@ -96,6 +96,71 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 	}
 }
 
+func TestWorkflowContinueCreatesInspectableSuccessorAndPreservesSource(t *testing.T) {
+	for _, tt := range []struct {
+		state    string
+		revision int64
+	}{{"abandoned", 2}, {"completed", 9}} {
+		t.Run(tt.state, func(t *testing.T) {
+			root := t.TempDir()
+			created := mustOK(t, runAt(t, root, "workflow", "new", "--name", "Ship", "--goal", "exact goal", "--actor", "daimon"))
+			sourceID := workflowID(t, created)
+			if tt.state == "abandoned" {
+				mustOK(t, runAt(t, root, "workflow", "abandon", "--workflow-id", sourceID, "--revision", "1", "--actor", "daimon", "--reason", "continue separately"))
+			} else {
+				s, err := store.Open(context.Background(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = s.DB().Exec(`UPDATE workflows SET state='completed',revision=? WHERE id=?`, tt.revision, sourceID)
+				_ = s.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", sourceID))
+			continued := mustOK(t, runAt(t, root, "workflow", "continue", "--from", sourceID, "--actor", "daimon"))
+			var response struct {
+				Data struct {
+					Workflow struct {
+						ID, State, Name, Goal string
+						Revision              int64
+					} `json:"workflow"`
+					Predecessor struct {
+						ID, State string
+						Revision  int64
+					} `json:"predecessor"`
+				} `json:"data"`
+				NextAction string `json:"next_action"`
+			}
+			if err := json.Unmarshal(continued, &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Data.Workflow.ID == sourceID || response.Data.Workflow.State != "draft" || response.Data.Workflow.Revision != 1 || response.Data.Workflow.Name != "Ship" || response.Data.Workflow.Goal != "exact goal" || response.Data.Predecessor.ID != sourceID || response.Data.Predecessor.State != tt.state || response.Data.Predecessor.Revision != tt.revision || response.NextAction != "workflow explore" {
+				t.Fatalf("continue=%s", continued)
+			}
+			shown := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", response.Data.Workflow.ID))
+			if !strings.Contains(string(shown), `"kind":"continuation"`) || !strings.Contains(string(shown), `"action":"continuation_recorded"`) || !strings.Contains(string(shown), sourceID) || !strings.Contains(string(shown), `\"predecessor_state\":\"`+tt.state+`\"`) {
+				t.Fatalf("successor show=%s", shown)
+			}
+			if after := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", sourceID)); string(after) != string(before) {
+				t.Fatalf("source changed:\nbefore=%s\nafter=%s", before, after)
+			}
+		})
+	}
+}
+
+func TestWorkflowContinueRejectsMalformedSourceBeforeOpeningStore(t *testing.T) {
+	root := t.TempDir()
+	result := runAt(t, root, "workflow", "continue", "--from", "wf-bad", "--actor", "daimon")
+	if result.code != 2 || result.stdout != "" {
+		t.Fatalf("result=%#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".pitcrew")); !os.IsNotExist(err) {
+		t.Fatalf("store opened: %v", err)
+	}
+}
+
 func TestReviewHandoffIssuesIndependentOpaqueAuthority(t *testing.T) {
 	root := t.TempDir()
 	wfID, unitID, implementationPath := setupReviewingUnit(t, root, "implementer")
