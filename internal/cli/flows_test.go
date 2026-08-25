@@ -217,6 +217,74 @@ func TestReviewHandoffRejectsInvalidAuthorityWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestRecoverReviewRotatesOnlyReviewAuthorityAndRestoresCompletion(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, implementationPath := setupReviewingUnit(t, root, "implementer")
+	reviewPath := handoffReview(t, root, wfID, unitID, "reviewer")
+	args := []string{"workflow", "recover-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--handle-dir", filepath.Join(root, "recovered-review")}
+	if live := runAt(t, root, args...); live.code != 3 {
+		t.Fatalf("live recovery=%#v", live)
+	}
+	stale := append([]string{}, args...)
+	stale[7] = "2"
+	if failed := runAt(t, root, stale...); failed.code != 4 {
+		t.Fatalf("stale recovery=%#v", failed)
+	}
+	reviewInput := writeInput(t, root, "recovery-review.json", `{"verdict":"approved","summary":"good","findings":""}`)
+	now := time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC)
+	wrongActor := append([]string{}, args...)
+	wrongActor[9] = "other-reviewer"
+	if wrong := runAtTime(t, root, now, wrongActor...); wrong.code != 3 {
+		t.Fatalf("wrong actor recovery=%#v", wrong)
+	}
+	recovered := mustOK(t, runAtTime(t, root, now, args...))
+	recoveredReviewPath := stringField(t, recovered, "handle_path")
+	if recoveredReviewPath == reviewPath || strings.Contains(string(recovered), "claim_secret") {
+		t.Fatalf("review recovery=%s", recovered)
+	}
+	if staleHandle := runAtTime(t, root, now, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewPath, "--input-file", reviewInput); staleHandle.code != 5 {
+		t.Fatalf("stale review authority=%#v", staleHandle)
+	}
+	if duplicate := runAtTime(t, root, now, args...); duplicate.code != 3 {
+		t.Fatalf("duplicate recovery=%#v", duplicate)
+	}
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var implementationGeneration, reviewGeneration int
+	_ = s.DB().QueryRow(`SELECT max(claim_generation) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='implementation'`, wfID, unitID).Scan(&implementationGeneration)
+	_ = s.DB().QueryRow(`SELECT max(claim_generation) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review'`, wfID, unitID).Scan(&reviewGeneration)
+	_ = s.Close()
+	if implementationGeneration != 1 || reviewGeneration != 2 {
+		t.Fatalf("implementation generation=%d review generation=%d", implementationGeneration, reviewGeneration)
+	}
+	mustOK(t, runAtTime(t, root, now, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", recoveredReviewPath, "--input-file", reviewInput))
+	if verdict := runAtTime(t, root, now, args...); verdict.code != 3 {
+		t.Fatalf("verdict recovery=%#v", verdict)
+	}
+	if wrong := runAtTime(t, root, now, "workflow", "recover-unit-claim", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "other-implementer", "--handle-dir", filepath.Join(root, "wrong-implementation")); wrong.code != 3 {
+		t.Fatalf("wrong implementation recovery=%#v", wrong)
+	}
+	implementation := mustOK(t, runAtTime(t, root, now, "workflow", "recover-unit-claim", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--handle-dir", filepath.Join(root, "recovered-implementation")))
+	if stringField(t, implementation, "handle_path") == implementationPath {
+		t.Fatal("implementation recovery reused expired authority")
+	}
+	mustOK(t, runAtTime(t, root, now, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", stringField(t, implementation, "handle_path")))
+	if terminal := runAtTime(t, root, now, args...); terminal.code != 3 {
+		t.Fatalf("terminal recovery=%#v", terminal)
+	}
+	actions, _ := storedActivities(t, root, wfID)
+	if !strings.Contains(strings.Join(actions, ","), "unit_review_recovered,unit_review_recorded") {
+		t.Fatalf("activities=%v", actions)
+	}
+	pendingRoot := t.TempDir()
+	pendingWF, pendingUnit, _ := setupImplementingUnit(t, pendingRoot)
+	if pending := runAt(t, pendingRoot, "workflow", "recover-review", "--workflow-id", pendingWF, "--unit-id", pendingUnit, "--revision", "1", "--actor", "reviewer", "--handle-dir", filepath.Join(pendingRoot, "review")); pending.code != 3 {
+		t.Fatalf("pending recovery=%#v", pending)
+	}
+}
+
 func TestAggregateReviewCorrectionsCASActorAndTerminalIntegrity(t *testing.T) {
 	root := t.TempDir()
 	wfID, unitID, handlePath := setupReviewingUnit(t, root, "implementer")
@@ -403,6 +471,31 @@ func TestActivityFailureRollsBackDomainAndHandleMutations(t *testing.T) {
 	if reviews != 0 || reviewState != "intent" {
 		t.Fatalf("failed review persisted verdict=%d handle=%s", reviews, reviewState)
 	}
+	_ = s.Close()
+
+	root = t.TempDir()
+	wfID, unitID, _ = setupReviewingUnit(t, root, "implementer")
+	reviewPath = handoffReview(t, root, wfID, unitID, "reviewer")
+	reviewInput = writeInput(t, root, "expire-before-recovery.json", `{"verdict":"approved","summary":"good","findings":""}`)
+	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC), "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewPath, "--input-file", reviewInput); expired.code != 5 {
+		t.Fatalf("review expiry=%#v", expired)
+	}
+	installFailingActivityTrigger(t, root)
+	recoveryDir := filepath.Join(root, "failed-review-recovery")
+	if failed := runAt(t, root, "workflow", "recover-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--handle-dir", recoveryDir); failed.code != 1 {
+		t.Fatalf("review recovery failure=%#v", failed)
+	}
+	entries, err = os.ReadDir(recoveryDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed review recovery left files=%v error=%v", entries, err)
+	}
+	s, _ = store.Open(context.Background(), root)
+	defer s.Close()
+	var recoveryGeneration int
+	_ = s.DB().QueryRow(`SELECT count(*),max(claim_generation) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review'`, wfID, unitID).Scan(&reviewHandles, &recoveryGeneration)
+	if reviewHandles != 1 || recoveryGeneration != 1 {
+		t.Fatalf("failed recovery handles=%d generation=%d", reviewHandles, recoveryGeneration)
+	}
 }
 
 func storedActivities(t *testing.T, root, wfID string) ([]string, []string) {
@@ -476,7 +569,7 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 		t.Fatalf("collision=%#v", collision)
 	}
 	correction := mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", handlePath, "--input-file", reviewFile))
-	if !strings.Contains(string(correction), `"unit_revision":2`) || !strings.Contains(string(correction), `"next_action":"workflow claim-unit"`) {
+	if !strings.Contains(string(correction), `"unit_revision":2`) || !strings.Contains(string(correction), `"next_action":"workflow recover-unit-claim"`) {
 		t.Fatal(string(correction))
 	}
 	recovered := mustOK(t, runAt(t, root, "workflow", "recover-unit-claim", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--handle-dir", filepath.Join(root, "recovered")))
@@ -489,6 +582,9 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	recoveredPath := stringField(t, recovered, "handle_path")
 	tdd2 := writeInput(t, root, "tdd-revision-2.json", `{"red_command":"red again","red_outcome":"exit 1","green_command":"green again","green_outcome":"exit 0","refactor_summary":"corrected","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)
 	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--claim-handle", recoveredPath, "--input-file", tdd2))
+	if premature := runAt(t, root, "workflow", "recover-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "reviewer", "--handle-dir", filepath.Join(root, "premature-review-recovery")); premature.code != 3 {
+		t.Fatalf("review recovery bypassed handoff=%#v", premature)
+	}
 	review2 := mustOK(t, runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "reviewer", "--handle-dir", filepath.Join(root, "review-revision-2")))
 	review2Path := stringField(t, review2, "handle_path")
 	if review2Path == handlePath {

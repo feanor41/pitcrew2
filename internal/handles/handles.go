@@ -123,6 +123,10 @@ func (m *Manager) RecoverAtForPurpose(ctx context.Context, workflowID, unitID st
 	return m.issue(ctx, workflowID, unitID, revision, actor, dir, purpose, true, false, "")
 }
 
+func (m *Manager) RecoverReviewAt(ctx context.Context, workflowID, unitID string, revision int64, reviewer, dir string) (IssueResult, error) {
+	return m.issue(ctx, workflowID, unitID, revision, reviewer, dir, PurposeReview, true, false, activity.UnitReviewRecovered)
+}
+
 func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expectedRevision int64, actor, dir string, purpose Purpose, recovery, debug bool, action activity.Action) (IssueResult, error) {
 	if strings.TrimSpace(actor) == "" {
 		return IssueResult{}, ErrIdentityCollision
@@ -142,7 +146,7 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	if workflowState != "plan_approved" && workflowState != "implementing" {
 		return IssueResult{}, fmt.Errorf("%w: current state %s; expected plan_approved or implementing", ErrInvalidState, workflowState)
 	}
-	if action == activity.UnitReviewHandedOff && workflowState != "implementing" {
+	if (action == activity.UnitReviewHandedOff || action == activity.UnitReviewRecovered) && workflowState != "implementing" {
 		return IssueResult{}, fmt.Errorf("%w: current state %s; expected implementing", ErrInvalidState, workflowState)
 	}
 	var unitState string
@@ -160,7 +164,7 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	if !recovery && unitState != wantUnitState {
 		return IssueResult{}, fmt.Errorf("%w: current state %s; expected %s", ErrInvalidState, unitState, wantUnitState)
 	}
-	if action == activity.UnitReviewHandedOff {
+	if action == activity.UnitReviewHandedOff || action == activity.UnitReviewRecovered {
 		var evidenceActor string
 		if err = tx.QueryRowContext(ctx, `SELECT actor FROM evidence WHERE workflow_id=? AND unit_id=? AND revision=?`, workflowID, unitID, unitRevision).Scan(&evidenceActor); err != nil {
 			return IssueResult{}, ErrInvalidState
@@ -181,15 +185,44 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 		return IssueResult{}, err
 	}
 	if recovery {
-		var evidence int
-		if unitState == "reviewing" {
-			return IssueResult{}, ErrRecoveryForbidden
-		}
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM evidence WHERE workflow_id=? AND unit_id=? AND revision=?`, workflowID, unitID, unitRevision).Scan(&evidence); err != nil {
-			return IssueResult{}, err
-		}
-		if evidence != 0 {
-			return IssueResult{}, ErrRecoveryForbidden
+		if action == activity.UnitReviewRecovered {
+			if unitState != "reviewing" || existing == 0 {
+				return IssueResult{}, ErrRecoveryForbidden
+			}
+			var owner, state, expires string
+			if err = tx.QueryRowContext(ctx, `SELECT actor_identity,state,expires_at FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review' ORDER BY claim_generation DESC LIMIT 1`, workflowID, unitID).Scan(&owner, &state, &expires); err != nil {
+				return IssueResult{}, err
+			}
+			if actor != owner {
+				return IssueResult{}, ErrIdentityCollision
+			}
+			var latestHandoff, previousReview int64
+			if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(CASE WHEN action='unit_review_handed_off' THEN id END),0),coalesce(max(CASE WHEN action='unit_review_recorded' AND subject_id=? THEN id END),0) FROM activities WHERE workflow_id=? AND unit_id=?`, fmt.Sprintf("%s@%d", unitID, unitRevision-1), workflowID, unitID).Scan(&latestHandoff, &previousReview); err != nil {
+				return IssueResult{}, err
+			}
+			if latestHandoff <= previousReview {
+				return IssueResult{}, ErrRecoveryForbidden
+			}
+			expiresAt, parseErr := time.Parse(timestampLayout, expires)
+			if state != "revoked" && (parseErr != nil || m.now().Before(expiresAt)) {
+				return IssueResult{}, ErrAlreadyClaimed
+			}
+		} else if unitState == "reviewing" {
+			if existing == 0 {
+				return IssueResult{}, ErrRecoveryForbidden
+			}
+			var evidenceActor string
+			if err = tx.QueryRowContext(ctx, `SELECT actor FROM evidence WHERE workflow_id=? AND unit_id=? AND revision=?`, workflowID, unitID, unitRevision).Scan(&evidenceActor); err != nil || actor != evidenceActor {
+				return IssueResult{}, ErrRecoveryForbidden
+			}
+		} else {
+			var evidence int
+			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM evidence WHERE workflow_id=? AND unit_id=? AND revision=?`, workflowID, unitID, unitRevision).Scan(&evidence); err != nil {
+				return IssueResult{}, err
+			}
+			if evidence != 0 {
+				return IssueResult{}, ErrRecoveryForbidden
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE handles SET state='revoked' WHERE workflow_id=? AND unit_id=? AND purpose=? AND state!='revoked'`, workflowID, unitID, purpose); err != nil {
 			return IssueResult{}, err
@@ -227,10 +260,14 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	digest := sha256.Sum256([]byte(secret))
 	issued := m.now().UTC()
 	expires := issued.Add(handleLifetime)
-	h := Handle{Version: 1, State: Intent, WorkflowID: workflowID, UnitID: unitID, ClaimID: claimID, SecretHash: hex.EncodeToString(digest[:]), IssuedAt: ids.FormatTime(issued), ExpiresAt: ids.FormatTime(expires)}
+	issuedState := Intent
+	if recovery && purpose == PurposeImplementation && unitState == "reviewing" {
+		issuedState = Active
+	}
+	h := Handle{Version: 1, State: issuedState, WorkflowID: workflowID, UnitID: unitID, ClaimID: claimID, SecretHash: hex.EncodeToString(digest[:]), IssuedAt: ids.FormatTime(issued), ExpiresAt: ids.FormatTime(expires)}
 	path := filepath.Join(dir, claimID+".json")
 	generation++
-	if _, err = tx.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES(?,?,?,?,?,?,?,?,?,?)`, claimID, workflowID, unitID, Intent, h.SecretHash, actor, h.IssuedAt, h.ExpiresAt, generation, purpose); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES(?,?,?,?,?,?,?,?,?,?)`, claimID, workflowID, unitID, issuedState, h.SecretHash, actor, h.IssuedAt, h.ExpiresAt, generation, purpose); err != nil {
 		return IssueResult{}, err
 	}
 	if action == "" {
