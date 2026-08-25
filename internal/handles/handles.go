@@ -38,6 +38,7 @@ var (
 
 type State string
 type Operation string
+type Purpose string
 
 const (
 	Intent   State     = "intent"
@@ -45,6 +46,9 @@ const (
 	TDD      Operation = "tdd"
 	Review   Operation = "review"
 	Complete Operation = "complete"
+
+	PurposeImplementation Purpose = "implementation"
+	PurposeReview         Purpose = "review"
 )
 
 type Handle struct {
@@ -76,32 +80,51 @@ func New(s *store.Store, now func() time.Time, entropy io.Reader) *Manager {
 }
 
 func (m *Manager) Issue(ctx context.Context, workflowID, unitID, actor, dir string) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, 0, actor, dir, false, false)
+	return m.IssueForPurpose(ctx, workflowID, unitID, actor, dir, PurposeImplementation)
+}
+
+func (m *Manager) IssueForPurpose(ctx context.Context, workflowID, unitID, actor, dir string, purpose Purpose) (IssueResult, error) {
+	return m.issue(ctx, workflowID, unitID, 0, actor, dir, purpose, false, false)
 }
 
 func (m *Manager) IssueAt(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, revision, actor, dir, false, false)
+	return m.IssueAtForPurpose(ctx, workflowID, unitID, revision, actor, dir, PurposeImplementation)
+}
+
+func (m *Manager) IssueAtForPurpose(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string, purpose Purpose) (IssueResult, error) {
+	return m.issue(ctx, workflowID, unitID, revision, actor, dir, purpose, false, false)
 }
 
 func (m *Manager) IssueDebug(ctx context.Context, workflowID, unitID, actor, dir string) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, 0, actor, dir, false, true)
+	return m.issue(ctx, workflowID, unitID, 0, actor, dir, PurposeImplementation, false, true)
 }
 
 func (m *Manager) IssueDebugAt(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, revision, actor, dir, false, true)
+	return m.issue(ctx, workflowID, unitID, revision, actor, dir, PurposeImplementation, false, true)
 }
 
 func (m *Manager) Recover(ctx context.Context, workflowID, unitID, actor, dir string) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, 0, actor, dir, true, false)
+	return m.RecoverForPurpose(ctx, workflowID, unitID, actor, dir, PurposeImplementation)
+}
+
+func (m *Manager) RecoverForPurpose(ctx context.Context, workflowID, unitID, actor, dir string, purpose Purpose) (IssueResult, error) {
+	return m.issue(ctx, workflowID, unitID, 0, actor, dir, purpose, true, false)
 }
 
 func (m *Manager) RecoverAt(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string) (IssueResult, error) {
-	return m.issue(ctx, workflowID, unitID, revision, actor, dir, true, false)
+	return m.RecoverAtForPurpose(ctx, workflowID, unitID, revision, actor, dir, PurposeImplementation)
 }
 
-func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expectedRevision int64, actor, dir string, recovery, debug bool) (IssueResult, error) {
+func (m *Manager) RecoverAtForPurpose(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string, purpose Purpose) (IssueResult, error) {
+	return m.issue(ctx, workflowID, unitID, revision, actor, dir, purpose, true, false)
+}
+
+func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expectedRevision int64, actor, dir string, purpose Purpose, recovery, debug bool) (IssueResult, error) {
 	if strings.TrimSpace(actor) == "" {
 		return IssueResult{}, ErrIdentityCollision
+	}
+	if !purpose.valid() {
+		return IssueResult{}, ErrInvalid
 	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -123,11 +146,15 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	if expectedRevision > 0 && unitRevision != expectedRevision {
 		return IssueResult{}, store.ErrCASMismatch
 	}
-	if !recovery && unitState != "pending" {
-		return IssueResult{}, fmt.Errorf("%w: current state %s; expected pending", ErrInvalidState, unitState)
+	wantUnitState := "pending"
+	if purpose == PurposeReview {
+		wantUnitState = "reviewing"
+	}
+	if !recovery && unitState != wantUnitState {
+		return IssueResult{}, fmt.Errorf("%w: current state %s; expected %s", ErrInvalidState, unitState, wantUnitState)
 	}
 	var existing, generation int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*),coalesce(max(claim_generation),0) FROM handles WHERE workflow_id=? AND unit_id=?`, workflowID, unitID).Scan(&existing, &generation); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*),coalesce(max(claim_generation),0) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose=?`, workflowID, unitID, purpose).Scan(&existing, &generation); err != nil {
 		return IssueResult{}, err
 	}
 	if recovery {
@@ -141,7 +168,7 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 		if evidence != 0 {
 			return IssueResult{}, ErrRecoveryForbidden
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE handles SET state='revoked' WHERE workflow_id=? AND unit_id=? AND state!='revoked'`, workflowID, unitID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE handles SET state='revoked' WHERE workflow_id=? AND unit_id=? AND purpose=? AND state!='revoked'`, workflowID, unitID, purpose); err != nil {
 			return IssueResult{}, err
 		}
 	} else if existing != 0 {
@@ -164,7 +191,7 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	h := Handle{Version: 1, State: Intent, WorkflowID: workflowID, UnitID: unitID, ClaimID: claimID, SecretHash: hex.EncodeToString(digest[:]), IssuedAt: ids.FormatTime(issued), ExpiresAt: ids.FormatTime(expires)}
 	path := filepath.Join(dir, claimID+".json")
 	generation++
-	if _, err = tx.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation) VALUES(?,?,?,?,?,?,?,?,?)`, claimID, workflowID, unitID, Intent, h.SecretHash, actor, h.IssuedAt, h.ExpiresAt, generation); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES(?,?,?,?,?,?,?,?,?,?)`, claimID, workflowID, unitID, Intent, h.SecretHash, actor, h.IssuedAt, h.ExpiresAt, generation, purpose); err != nil {
 		return IssueResult{}, err
 	}
 	action := activity.UnitClaimed
@@ -195,27 +222,42 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 }
 
 func (m *Manager) Use(ctx context.Context, path, actor string, operation Operation) (Handle, error) {
-	return m.use(ctx, path, "", "", 0, actor, operation)
+	return m.use(ctx, path, "", "", 0, actor, operation, "")
+}
+
+func (m *Manager) UseForPurpose(ctx context.Context, path, actor string, operation Operation, purpose Purpose) (Handle, error) {
+	return m.use(ctx, path, "", "", 0, actor, operation, purpose)
 }
 
 func (m *Manager) UseFor(ctx context.Context, path, workflowID, unitID string, revision int64, actor string, operation Operation) (Handle, error) {
-	return m.use(ctx, path, workflowID, unitID, revision, actor, operation)
+	return m.use(ctx, path, workflowID, unitID, revision, actor, operation, "")
+}
+
+func (m *Manager) UseForAtPurpose(ctx context.Context, path, workflowID, unitID string, revision int64, actor string, operation Operation, purpose Purpose) (Handle, error) {
+	return m.use(ctx, path, workflowID, unitID, revision, actor, operation, purpose)
 }
 
 // UseForMutation validates the claim and commits its promotion or refresh in
 // the same transaction as mutate. A failed mutation leaves both the database
 // claim and the on-disk handle unchanged.
 func (m *Manager) UseForMutation(ctx context.Context, path, workflowID, unitID string, revision int64, actor string, operation Operation, mutate func(*sql.Tx, Handle) error) (Handle, error) {
-	return m.useForMutation(ctx, path, workflowID, unitID, revision, actor, operation, mutate)
+	return m.useForMutation(ctx, path, workflowID, unitID, revision, actor, operation, "", mutate)
 }
 
-func (m *Manager) use(ctx context.Context, path, workflowID, unitID string, revision int64, actor string, operation Operation) (Handle, error) {
-	return m.useForMutation(ctx, path, workflowID, unitID, revision, actor, operation, nil)
+func (m *Manager) UseForMutationAtPurpose(ctx context.Context, path, workflowID, unitID string, revision int64, actor string, operation Operation, purpose Purpose, mutate func(*sql.Tx, Handle) error) (Handle, error) {
+	return m.useForMutation(ctx, path, workflowID, unitID, revision, actor, operation, purpose, mutate)
 }
 
-func (m *Manager) useForMutation(ctx context.Context, path, workflowID, unitID string, revision int64, actor string, operation Operation, mutate func(*sql.Tx, Handle) error) (Handle, error) {
+func (m *Manager) use(ctx context.Context, path, workflowID, unitID string, revision int64, actor string, operation Operation, purpose Purpose) (Handle, error) {
+	return m.useForMutation(ctx, path, workflowID, unitID, revision, actor, operation, purpose, nil)
+}
+
+func (m *Manager) useForMutation(ctx context.Context, path, workflowID, unitID string, revision int64, actor string, operation Operation, purpose Purpose, mutate func(*sql.Tx, Handle) error) (Handle, error) {
 	if strings.TrimSpace(actor) == "" {
 		return Handle{}, ErrIdentityCollision
+	}
+	if purpose != "" && !purpose.valid() {
+		return Handle{}, ErrInvalid
 	}
 	h, err := readSecure(path)
 	if err != nil {
@@ -240,15 +282,19 @@ func (m *Manager) useForMutation(ctx context.Context, path, workflowID, unitID s
 	}
 	var dbState State
 	var hash, owner, expires string
+	var storedPurpose Purpose
 	var generation, latestGeneration int
-	err = tx.QueryRowContext(ctx, `SELECT state,secret_hash,actor_identity,expires_at,claim_generation FROM handles WHERE claim_id=? AND workflow_id=? AND unit_id=?`, h.ClaimID, h.WorkflowID, h.UnitID).Scan(&dbState, &hash, &owner, &expires, &generation)
+	err = tx.QueryRowContext(ctx, `SELECT state,secret_hash,actor_identity,expires_at,claim_generation,purpose FROM handles WHERE claim_id=? AND workflow_id=? AND unit_id=?`, h.ClaimID, h.WorkflowID, h.UnitID).Scan(&dbState, &hash, &owner, &expires, &generation, &storedPurpose)
 	if errors.Is(err, sql.ErrNoRows) || dbState == "revoked" {
 		return Handle{}, ErrInvalid
 	}
 	if err != nil {
 		return Handle{}, err
 	}
-	if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(claim_generation),0) FROM handles WHERE workflow_id=? AND unit_id=?`, h.WorkflowID, h.UnitID).Scan(&latestGeneration); err != nil {
+	if (purpose == "" && storedPurpose != PurposeImplementation) || (purpose != "" && storedPurpose != purpose) {
+		return Handle{}, ErrInvalid
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(claim_generation),0) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose=?`, h.WorkflowID, h.UnitID, storedPurpose).Scan(&latestGeneration); err != nil {
 		return Handle{}, err
 	}
 	if generation != latestGeneration {
@@ -274,17 +320,26 @@ func (m *Manager) useForMutation(ctx context.Context, path, workflowID, unitID s
 		}
 		return Handle{}, ErrExpired
 	}
+	if purpose != "" && purpose != operation.purpose() {
+		return Handle{}, ErrInvalid
+	}
 	switch operation {
 	case TDD:
 		if actor != owner {
 			return Handle{}, ErrIdentityCollision
 		}
 	case Review:
-		if actor == owner {
-			return Handle{}, ErrIdentityCollision
-		}
-		if h.State != Active {
-			return Handle{}, ErrInvalid
+		if purpose == PurposeReview {
+			if actor != owner {
+				return Handle{}, ErrIdentityCollision
+			}
+		} else {
+			if actor == owner {
+				return Handle{}, ErrIdentityCollision
+			}
+			if h.State != Active {
+				return Handle{}, ErrInvalid
+			}
 		}
 	case Complete:
 		if actor != owner {
@@ -300,7 +355,7 @@ func (m *Manager) useForMutation(ctx context.Context, path, workflowID, unitID s
 		if err = mutate(tx, h); err != nil {
 			return Handle{}, err
 		}
-		if operation == Complete {
+		if operation == Complete || purpose == PurposeReview && operation == Review {
 			var completedState State
 			if err = tx.QueryRowContext(ctx, `SELECT state FROM handles WHERE claim_id=?`, h.ClaimID).Scan(&completedState); err != nil {
 				return Handle{}, err
@@ -342,6 +397,14 @@ func (m *Manager) useForMutation(ctx context.Context, path, workflowID, unitID s
 }
 
 func (m *Manager) Revoke(ctx context.Context, path, actor string) error {
+	return m.revoke(ctx, path, actor, "")
+}
+
+func (m *Manager) RevokeForPurpose(ctx context.Context, path, actor string, purpose Purpose) error {
+	return m.revoke(ctx, path, actor, purpose)
+}
+
+func (m *Manager) revoke(ctx context.Context, path, actor string, purpose Purpose) error {
 	if strings.TrimSpace(actor) == "" {
 		return ErrIdentityCollision
 	}
@@ -350,13 +413,17 @@ func (m *Manager) Revoke(ctx context.Context, path, actor string) error {
 		return err
 	}
 	var owner, state string
-	if err = m.db.QueryRowContext(ctx, `SELECT actor_identity,state FROM handles WHERE claim_id=?`, h.ClaimID).Scan(&owner, &state); errors.Is(err, sql.ErrNoRows) || state == "revoked" {
+	var storedPurpose Purpose
+	if err = m.db.QueryRowContext(ctx, `SELECT actor_identity,state,purpose FROM handles WHERE claim_id=?`, h.ClaimID).Scan(&owner, &state, &storedPurpose); errors.Is(err, sql.ErrNoRows) || state == "revoked" {
 		return ErrInvalid
 	} else if err != nil {
 		return err
 	}
 	if actor != owner {
 		return ErrIdentityCollision
+	}
+	if purpose != "" && (!purpose.valid() || purpose != storedPurpose) {
+		return ErrInvalid
 	}
 	if err = os.Remove(path); err != nil {
 		return err
@@ -373,6 +440,15 @@ func (m *Manager) Revoke(ctx context.Context, path, actor string) error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+func (p Purpose) valid() bool { return p == PurposeImplementation || p == PurposeReview }
+
+func (o Operation) purpose() Purpose {
+	if o == Review {
+		return PurposeReview
+	}
+	return PurposeImplementation
 }
 
 func RemoveRevokedFile(path string) error {
