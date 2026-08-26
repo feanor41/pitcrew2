@@ -2,10 +2,12 @@
 
 PitCrew exposes `tui` and `principles`, two global flags, and exactly 21 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
+The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon interviews, clarifies intent, preserves conversational continuity, and reports only Aion-acknowledged facts or questions. Aion alone owns routing and workflow coordination. Mid-flight input remains requested, not applied, until Aion admits it against current state; concurrent Daimon availability depends on host support for addressable agents, not a PitCrew daemon, service, IPC, polling, or inbox.
+
 ## Quick path
 
 ```sh
-pitcrew workflow new --name "Ship the change" --goal "Deliver the accepted behavior" --actor daimon
+pitcrew workflow new --name "Ship the change" --goal "Deliver the accepted behavior" --actor aion
 pitcrew workflow show --workflow-id wf-<24hex>
 pitcrew tui
 pitcrew principles
@@ -76,7 +78,7 @@ The TUI synopsis shows only the latest valid progress report, with a non-color a
 {"capability":"browser tool","reason":"UI behavior needs verification","blocked_action":"inspect the running page"}
 ```
 
-Every field is required, trimmed, and stored canonically. The command observes an exact non-terminal revision, appends `capability_request` plus `capability_requested`, and returns `next_action: "daimon coordinate requested capability"` without changing lifecycle state. Repeated requests remain ordered and generically inspectable. A request records a missing tool, command, or transition; it has no fulfillment, ownership, resolution, or status lifecycle and does not imply the capability exists.
+Every field is required, trimmed, and stored canonically. The command observes an exact non-terminal revision, appends `capability_request` plus `capability_requested`, and returns `next_action: "aion coordinate requested capability"` without changing lifecycle state. Repeated requests remain ordered and generically inspectable. A request records a missing tool, command, or transition; it has no fulfillment, ownership, resolution, or status lifecycle and does not imply the capability exists.
 
 ### Plan
 
@@ -128,13 +130,13 @@ Corrections:
 {"verdict":"corrections","summary":"Boundary missing","findings":"Add the expiry case","plan_impact":"inside"}
 ```
 
-Outside-plan corrections use `"plan_impact":"outside"` and return `daimon revise plan`, requiring Daimon to revise the plan through a new OpenSpec change.
+Outside-plan corrections use `"plan_impact":"outside"` and return `aion revise plan`, requiring Aion to revise the plan through a new OpenSpec change.
 
-Unit review is optional: current TDD evidence plus the active implementation handle can complete a unit without an approval. When selected, Daimon uses `handoff-review` to issue independent reviewer-owned authority and passes only its opaque path to the Reviewer; `unit-review` consumes that handle atomically with the verdict. If it expires before a verdict, `recover-review` rotates only review authority for the same reviewer. A corrections verdict reopens the unit, returns `recover-unit-claim`, and requires fresh evidence. During reviewing, that recovery command is restricted to the current evidence actor and yields completion-ready implementation authority.
+Unit review is optional: current TDD evidence plus the active implementation handle can complete a unit without an approval. When selected, Aion uses `handoff-review` to issue independent reviewer-owned authority and passes only its opaque path to the Reviewer; `unit-review` consumes that handle atomically with the verdict. If it expires before a verdict, `recover-review` rotates only review authority for the same reviewer. A corrections verdict reopens the unit, returns `recover-unit-claim`, and requires fresh evidence. During reviewing, that recovery command is restricted to the current evidence actor and yields completion-ready implementation authority.
 
 ### Aggregate review
 
-`workflow complete` uses the approved review shape above, or a corrections payload without `plan_impact`. The independent reviewer compares the repository result and tests with requirements, every specification/design amendment, the approved plan and tasks, current implementation evidence, and unit reviews. Approval records the review and completes atomically. Corrections record the review, advance workflow CAS, remain `ready_to_complete`, and return control to Daimon for a fresh correction/review cycle.
+`workflow complete` uses the approved review shape above, or a corrections payload without `plan_impact`. The independent reviewer compares the repository result and tests with requirements, every specification/design amendment, the approved plan and tasks, current implementation evidence, and unit reviews. Approval records the review and completes atomically. Corrections record the review, advance workflow CAS, remain `ready_to_complete`, return `aion coordinate aggregate corrections`, and require Aion to run a fresh correction/review cycle.
 
 ## Envelopes and exit codes
 

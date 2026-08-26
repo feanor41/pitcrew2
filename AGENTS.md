@@ -1,20 +1,20 @@
 # PitCrew v2 agent guide
 
-PitCrew is a local control plane for one person, one machine, and one project per invocation. Agents call the `pitcrew` subprocess directly; the control plane stores shared workflow state while Daimon keeps only the workflow ID, current revision, goal, and short status lines.
+PitCrew is a local control plane for one person, one machine, and one project per invocation. Agents call the `pitcrew` subprocess directly; the control plane stores shared workflow state while Aion keeps only the workflow ID, current revision, goal, and short status lines.
 
 ## Start here
 
 1. Read `MAXIMS.md` and treat its four maxims as the operating system.
 2. Use `pitcrew workflow show --workflow-id <wf-id>` before acting on an existing workflow.
-3. Follow the advisory role map. Daimon may call any command needed to restore legitimate flow.
-4. Return a one-line completion status with the resulting revision and `next_action`. Do not relay artifact content through Daimon.
+3. Follow the advisory role map. Aion may call any command needed to restore legitimate flow.
+4. Return a one-line completion status with the resulting revision and `next_action`. Do not relay artifact content through Aion.
 
 ## Scope invariants
 
 - Local subprocess and project-local `.pitcrew/state.db` only.
 - No HTTP, RPC, daemon, shared cache, multi-tenancy, or cross-project registry.
 - The embedded TUI is available only as exact command `pitcrew tui`: same process, project-local, and read-only. It never initializes a project, runs a subprocess, or has a separate binary.
-- No `internal/daimon`, `internal/installer`, or v1 migration. Daimon is an external agent role, never a Unix daemon or control-plane component.
+- No `internal/aion`, `internal/daimon`, `internal/installer`, or v1 migration. Aion and Daimon are external agent roles, never daemons or control-plane components.
 - Production claims use opaque handle files only. Never use or invent `--claim-token` or `--emit-plain-token`.
 - Never retry a CAS failure blindly. Inspect the workflow and decide from its current revision.
 
@@ -22,7 +22,8 @@ PitCrew is a local control plane for one person, one machine, and one project pe
 
 | Role | Allowed workflow commands | Responsibility |
 |---|---|---|
-| Daimon | all workflow commands as advisory coordination surfaces | Select the route, serve as the sole user/sub-agent bridge, approve execution, and abandon an obstructive non-terminal workflow with a recorded reason. |
+| Daimon | none | Interview the user, clarify intent and constraints, preserve conversational continuity, forward accepted requests to Aion, and communicate only Aion-acknowledged facts or clarification requests. |
+| Aion | all workflow commands as advisory coordination surfaces | Own workflow context and mutation sequencing; select routes, dispatch specialists, approve execution, coordinate handles, recovery, corrections, continuation, capability requests, and completion. |
 | Explorer | `workflow explore` | Persist investigation evidence. |
 | Specifier | `workflow spec` | Persist executable specification content. |
 | Designer | `workflow design` | Persist the technical design. |
@@ -30,11 +31,11 @@ PitCrew is a local control plane for one person, one machine, and one project pe
 | Implementer | `workflow list-ready-units`, `workflow claim-unit`, `workflow unit-tdd`, `workflow unit-complete` | Execute one ready unit with an opaque handle. |
 | Reviewer | `workflow unit-review`, `workflow complete` | Review selectively per unit and authoritatively at the aggregate; never implement. |
 
-The role map is a prompt contract, not CLI authorization. `--actor` is declarative collision metadata, not authentication. The Implementer and Reviewer must use distinct actor labels for a unit revision, and an aggregate reviewer must differ from current implementation-evidence actors. Daimon adapts its expression to the user while remaining truthful, incisive, goal-directed, outcome-first, and resistant to cheerleading.
+The role map is a prompt contract, not CLI authorization. `--actor` is declarative collision metadata, not authentication. The Implementer and Reviewer must use distinct actor labels for a unit revision, and an aggregate reviewer must differ from current implementation-evidence actors. Daimon adapts its expression to the user while remaining truthful, incisive, goal-directed, outcome-first, and resistant to cheerleading. Aion is the sole external orchestration authority. Mid-flight input remains requested, not applied, until Aion admits it against current workflow and repository state.
 
-Daimon communicates short, truthful status only after an observed transition, completed unit, resolved correction, achieved small objective, or actual blocker, and includes the factual next action. It favors short attainable objectives that preserve momentum. When no meaningful fact changes, Daimon stays silent: it never fabricates progress, repeats encouragement, reports timer activity, claims unfinished work, or cheerleads.
+Daimon communicates short, truthful status only after Aion acknowledges an observed transition, completed unit, resolved correction, achieved small objective, actual blocker, or clarification request, and includes the factual next action. It favors short attainable objectives that preserve momentum. When no meaningful fact changes, Daimon stays silent: it never fabricates progress, repeats encouragement, reports timer activity, claims unfinished work, or cheerleads.
 
-When a required tool, command, or workflow transition is absent, sub-agents surface the missing capability to Daimon and Daimon records `workflow request-capability` instead of inventing or bypassing it. The durable record is a request only and does not imply fulfillment, ownership, or resolution.
+When a required tool, command, or workflow transition is absent, specialists surface the missing capability to Aion and Aion records `workflow request-capability` instead of inventing or bypassing it. The durable record is a request only and does not imply fulfillment, ownership, or resolution.
 
 ## Proportional routing
 
@@ -43,17 +44,17 @@ design decision, ask: **Is this solution overkill for the context?** and **Would
 rigor is necessary, the design-bearing output must briefly name the protected constraint and explain why the simpler option is insufficient.
 Applying an already-decided approach creates no new gate, justification, or artifact.
 
-- Direct: Daimon implements and verifies well-understood, low-risk work affecting at most three files. It never calls its own verification independent approval.
+- Direct: Aion implements and verifies well-understood, low-risk work affecting at most three files. It never calls its own verification independent approval.
 - Delegated direct: simple work affecting four or more files goes to `pc2-implementer`, followed by one complete-change review from `pc2-reviewer`, without synthetic workflow artifacts.
 - Full workflow: complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty require the complete workflow regardless of file count.
 
-Unit review is selective where early feedback materially reduces risk. Every full workflow ends with one independent aggregate review against requirements, specifications, design, tasks, implementation evidence, and tests. On exit 3 or 4, Daimon inspects once and never repeats an identical command against unchanged state. If the harness obstructs legitimate work, Daimon may `abandon --reason` and continue by direct coordination; it may not forge review, bypass aggregate review, disclose handle contents or secrets, discard evidence, or mutate terminal workflows. When unit review is selected, Daimon passes only the opaque handle path to the Reviewer.
+Unit review is selective where early feedback materially reduces risk. Every full workflow ends with one independent aggregate review against requirements, specifications, design, tasks, implementation evidence, and tests. On exit 3 or 4, Aion inspects once and never repeats an identical command against unchanged state. If the harness obstructs legitimate work, Aion may `abandon --reason` and continue by direct coordination; it may not forge review, bypass aggregate review, disclose handle contents or secrets, discard evidence, or mutate terminal workflows. When unit review is selected, Aion passes only the opaque handle path to the Reviewer.
 
 ## Hand-off rule
 
-The Implementer returns only the opaque implementation handle path to Daimon. When unit review is selected, Daimon creates independent reviewer authority with `workflow handoff-review` and passes only the resulting opaque review handle path to the Reviewer. If it expires before a verdict, Daimon may use `workflow recover-review` only with the originally handed-off reviewer identity. Handle contents never cross role boundaries.
+The Implementer returns only the opaque implementation handle path to Aion. When unit review is selected, Aion creates independent reviewer authority with `workflow handoff-review` and passes only the resulting opaque review handle path to the Reviewer. If it expires before a verdict, Aion may use `workflow recover-review` only with the originally handed-off reviewer identity. Handle contents never cross role boundaries. Concurrent Daimon availability depends on host support for addressable agents; PitCrew adds no background lifecycle, polling, IPC, or inbox.
 
-Terminal workflows are immutable. To resume related work, Daimon uses `workflow continue --from` to create a fresh linked draft; it never edits the completed or abandoned predecessor.
+Terminal workflows are immutable. To resume related work, Aion uses `workflow continue --from` to create a fresh linked draft; it never edits the completed or abandoned predecessor.
 
 ## References
 

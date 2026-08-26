@@ -69,10 +69,10 @@ Recovery SHALL issue a fresh secret and increment `claim_generation` only when t
 
 ### Requirement: Hand-off
 
-The Implementer SHALL return only the handle path to Daimon, which SHALL pass only that path to the Reviewer.
+The Implementer SHALL return only the handle path to Aion. For selected unit review, Aion SHALL create reviewer authority and pass only the resulting opaque review handle path to the Reviewer.
 
 #### Scenario: Hand-off contains no secret
 
 - GIVEN a successful production claim
-- WHEN the Implementer reports to Daimon
+- WHEN the Implementer reports to Aion
 - THEN only the handle path SHALL be handed off

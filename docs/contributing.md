@@ -54,19 +54,19 @@ Applying an already-decided approach creates no new gate, justification, or arti
 
 When changing `scripts/install-templates.sh`, prove all of these:
 
-- every supported runtime installs seven role fragments plus `agent-contract.md`;
+- every supported runtime installs eight role fragments (`daimon.md`, `aion.md`, and six specialists) plus `agent-contract.md`;
 - every role contains the exact filesystem `MAXIMS.md` bytes and hand-off reminder;
 - a byte-identical reinstall is a no-op;
-- an existing `master.md` or customized `daimon.md` is protected unless `--overwrite` is explicit;
+- an existing `master.md`, customized `daimon.md`, or differing `aion.md` is protected unless `--overwrite` is explicit;
 - a partial failure restores every touched file;
 - unsupported runtime detection names Codex, OpenCode, Claude Code, and Pi.
 
 Run `sh scripts/tests/run.sh` with `/bin/sh`, not Bash. If `shellcheck` is available, run it with shell dialect `sh` and resolve applicable findings.
 
-Before an overwrite migration, preserve any custom instructions needed from legacy `master.md`. The installer warns before the explicit destructive cutover to canonical `daimon.md`; arbitrary customization is not translated automatically.
+Before an overwrite migration, preserve any custom instructions needed from legacy `master.md`, customized `daimon.md`, or a pre-existing `aion.md`. Any differing managed prompt is refused without `--overwrite`; explicit overwrite uses the same transactional rollback and arbitrary customization is not translated automatically.
 
 ## Scope changes
 
-Proposals involving HTTP, RPC, authentication, multi-user state, cross-project coordination, TUI mutation or a separate TUI process, v1 migration, `internal/daimon`, or `internal/installer` require a separate explicit OpenSpec change. Daimon is an external agent role, not a Unix daemon or control-plane package. Do not smuggle architectural expansion into an implementation patch.
+Proposals involving HTTP, RPC, authentication, multi-user state, cross-project coordination, TUI mutation or a separate TUI process, v1 migration, `internal/aion`, `internal/daimon`, or `internal/installer` require a separate explicit OpenSpec change. Aion and Daimon are external agent roles, not daemons or control-plane packages. Concurrent Daimon availability depends on host support for addressable agents; do not smuggle a service, IPC, polling, durable inbox, or new database state into an implementation patch.
 
 For TUI changes, use direct `Model.Update` tests and deterministic wide/narrow goldens. Then build `cmd/pitcrew` and exercise wide, minimum, Arrow/Vim, activity drill-down, and `q` through a real PTY while snapshotting the database. The harness must observe the shared current version, preserve exact focus across resize, exit successfully, and leave the snapshot unchanged. Routing tests still require exact `tui` dispatch, rejected extras, and an injected subprocess trap.

@@ -39,6 +39,7 @@ file it modified and SHALL exit non-zero.
 The installer SHALL write one prompt fragment per role:
 
 - `daimon.md`
+- `aion.md`
 - `pc2-explorer.md`
 - `pc2-specifier.md`
 - `pc2-designer.md`
@@ -56,7 +57,7 @@ prefixed with:
 
 - GIVEN a supported runtime
 - WHEN installation succeeds
-- THEN all seven named role fragments SHALL exist
+- THEN all eight named role fragments SHALL exist
 - AND obsolete unprefixed role fragments and `pc2-archivist.md` SHALL be absent
 
 ### Requirement: Agent-contract fragment
@@ -78,7 +79,7 @@ the prohibitions common to every role. The prohibitions SHALL include:
 
 ### Requirement: Prompt overwrite protection
 
-The installer SHALL refuse to overwrite any differing current or obsolete prompt
+The installer SHALL refuse to overwrite any differing current or obsolete prompt, including customized `daimon.md` and pre-existing `aion.md`,
 without an explicit `--overwrite` flag. Overwrite installation SHALL transactionally
 refresh current prompts and remove obsolete prompts, including `pc2-archivist.md`;
 failure or interruption SHALL restore the exact prior prompt set.
@@ -101,18 +102,15 @@ the fragment SHALL match `MAXIMS.md` byte-for-byte at install time.
 - WHEN fragments are generated
 - THEN each maxim prefix SHALL match those bytes
 
-### Requirement: Hand-off reminder
+### Requirement: Role-specific hand-off reminders
 
-Every role fragment SHALL include the reminder:
-
-> Persist your output through the control plane yourself. Return only a
-> one-line completion status to Daimon, the sole coordinator and user contact.
+Specialist fragments SHALL return one-line revision-bearing status or permitted opaque paths only to Aion. Aion SHALL return factual revision-bearing status or clarification requests to Daimon. Daimon SHALL forward accepted intent to Aion and communicate only Aion-acknowledged facts or questions to the user.
 
 #### Scenario: Reminder is present
 
 - GIVEN any generated role fragment
 - WHEN its content is read
-- THEN it SHALL contain the required reminder
+- THEN it SHALL contain the reminder for its exact channel in `user ↔ Daimon ↔ Aion ↔ specialists`
 
 ### Requirement: Supported runtimes
 

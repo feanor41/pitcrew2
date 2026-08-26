@@ -222,7 +222,7 @@ func TestWorkflowRequestCapabilityAppendsInspectableRequestsWithoutLifecycle(t *
 	for i, body := range []string{`{"capability":"  browser tool  ","reason":"  verify UI  ","blocked_action":"  inspect page  "}`, `{"capability":"review transition","reason":"independent review","blocked_action":"handoff"}`} {
 		input := writeInput(t, root, "capability-"+itoa(int64(i))+".json", body)
 		result := mustOK(t, runAt(t, root, "workflow", "request-capability", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon", "--input-file", input))
-		if !strings.Contains(string(result), `"capability_request":`) || !strings.Contains(string(result), `"next_action":"daimon coordinate requested capability"`) {
+		if !strings.Contains(string(result), `"capability_request":`) || !strings.Contains(string(result), `"next_action":"aion coordinate requested capability"`) {
 			t.Fatalf("request=%s", result)
 		}
 	}
@@ -482,7 +482,7 @@ func TestAggregateReviewCorrectionsCASActorAndTerminalIntegrity(t *testing.T) {
 	revision := workflowRevision(t, completed)
 	corrections := writeInput(t, root, "aggregate-corrections.json", `{"verdict":"corrections","summary":"not aligned","findings":"fix requirement"}`)
 	corrected := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "aggregate-reviewer", "--input-file", corrections))
-	if workflowState(t, corrected) != "ready_to_complete" || workflowRevision(t, corrected) != revision+1 || !strings.Contains(string(corrected), `"next_action":"daimon coordinate aggregate corrections"`) {
+	if workflowState(t, corrected) != "ready_to_complete" || workflowRevision(t, corrected) != revision+1 || !strings.Contains(string(corrected), `"next_action":"aion coordinate aggregate corrections"`) {
 		t.Fatalf("corrections=%s", corrected)
 	}
 	assertRejectedAggregate := func(name, actor string, attemptedRevision int64, wantCode int) {
@@ -838,7 +838,7 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 	}
 }
 
-func TestOutsidePlanCorrectionNamesDaimonAsNextCoordinator(t *testing.T) {
+func TestOutsidePlanCorrectionNamesAionAsNextCoordinator(t *testing.T) {
 	root := t.TempDir()
 	wfID, unitID, _ := setupReviewingUnit(t, root, "implementer")
 	handlePath := handoffReview(t, root, wfID, unitID, "reviewer")
@@ -850,7 +850,7 @@ func TestOutsidePlanCorrectionNamesDaimonAsNextCoordinator(t *testing.T) {
 	if err := json.Unmarshal(correction, &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.NextAction != "daimon revise plan" {
+	if response.NextAction != "aion revise plan" {
 		t.Fatalf("next_action=%q", response.NextAction)
 	}
 }

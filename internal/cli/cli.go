@@ -245,7 +245,7 @@ func runRequestCapability(args []string, deps Dependencies) int {
 		if err != nil {
 			return err
 		}
-		return writeSuccess(deps, map[string]any{"capability_request": input}, "daimon coordinate requested capability")
+		return writeSuccess(deps, map[string]any{"capability_request": input}, "aion coordinate requested capability")
 	})
 }
 
@@ -479,7 +479,7 @@ func runComplete(args []string, deps Dependencies) int {
 		}
 		next := nextAction(current.State)
 		if review.Verdict == evidence.Corrections {
-			next = "daimon coordinate aggregate corrections"
+			next = "aion coordinate aggregate corrections"
 		}
 		return writeSuccess(deps, map[string]any{"workflow": current, "aggregate_review": outcome}, next)
 	})
@@ -625,7 +625,7 @@ func runUnitReview(args []string, deps Dependencies) int {
 			next = "workflow recover-unit-claim"
 		}
 		if outcome.PlanRevisionRequired {
-			next = "daimon revise plan"
+			next = "aion revise plan"
 		}
 		return writeSuccess(deps, map[string]any{"unit_id": review.UnitID, "unit_revision": outcome.NextRevision, "plan_revision_required": outcome.PlanRevisionRequired}, next)
 	})
