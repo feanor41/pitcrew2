@@ -57,7 +57,7 @@ Each successful workflow command SHALL emit one JSON document:
 {"ok":true,"data":{},"warnings":[],"next_action":"..."}
 ```
 
-Failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.5.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
+Failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.6.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
 
 (Previously: Version output was plain text without a canonical baseline, SemVer policy, or shared CLI/TUI source.)
 
@@ -86,10 +86,20 @@ Failures SHALL write one single-line error envelope to stderr, nothing to stdout
 
 ### Requirement: Role and hand-off contract
 
-The advisory role map SHALL be: Daimon (all commands when coordination requires them); Explorer (`explore`); Specifier (`spec`); Designer (`design`); TaskPlanner (`plan`); Implementer (`list-ready-units`, `claim-unit`, `unit-tdd`, `unit-complete`); Reviewer (`unit-review`, `complete`). Implementers SHALL NOT review and SHALL hand off only the handle path for workflow units. There SHALL be no Archivist role. The CLI SHALL NOT enforce this map.
+The advisory role map SHALL be: Daimon (user interviews, intent, continuity, and factual communication; no workflow commands); Aion (all commands when coordination requires them); Explorer (`explore`); Specifier (`spec`); Designer (`design`); TaskPlanner (`plan`); Implementer (`list-ready-units`, `claim-unit`, `unit-tdd`, `unit-complete`); Reviewer (`unit-review`, `complete`). Implementers SHALL NOT review and SHALL hand off only the handle path for workflow units. There SHALL be no Archivist role. The CLI SHALL NOT enforce this map.
 
 #### Scenario: Role map is advisory
 
 - GIVEN a local caller outside the documented role map
 - WHEN it invokes a valid command
 - THEN domain rules SHALL apply without role authorization
+
+### Requirement: User intent and runtime boundary
+
+Daimon SHALL interview, clarify, preserve continuity, forward accepted requests, and communicate only Aion-acknowledged facts or clarification requests. Mid-flight input SHALL remain requested, not applied, until Aion admits it against current workflow and repository state. Aion SHALL be the sole orchestration authority and own workflow context, mutations, specialist dispatch, approvals, recovery, continuation, capability coordination, and completion. PitCrew SHALL NOT add a daemon, service, IPC, polling, network API, durable inbox, database state, or lifecycle; concurrent Daimon availability depends on host support for addressable agents.
+
+#### Scenario: Replacement Aion recovers from durable state
+
+- GIVEN orchestration restarts
+- WHEN replacement Aion reads `workflow show`
+- THEN it SHALL reconstruct current context without hidden process state

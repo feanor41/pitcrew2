@@ -86,10 +86,7 @@ justified explicitly in its own OpenSpec proposal.
   process, never initializes state, and never invokes `pitcrew` as a subprocess.
 - **No `internal/installer` package.** The runtime installer is an external
   POSIX shell script (`scripts/install-templates.sh`).
-- **No `internal/daimon` package.** Daimon is an external LLM agent role, not a Unix daemon or control-plane
-  component. Agents (LLM subagents of the host runtime) perform that role. They call `pitcrew` as a subprocess and decide
-  the workflow choreography. The control plane does not orchestrate; the
-  agents do.
+- **No `internal/aion` or `internal/daimon` package.** Aion and Daimon are external LLM agent roles, not daemons or control-plane components. They call `pitcrew` as a subprocess; Aion decides workflow choreography while the control plane only enforces domain rules.
 - **No v1 data migration.** v1 (`agent-controller` in `$PATH`) stays usable
   for those who need it. v2 is a clean start.
 
@@ -97,85 +94,27 @@ justified explicitly in its own OpenSpec proposal.
 
 ## Orchestration model
 
-The control plane is a **shared memory**, not a Daimon proxy. Every role
-(Daimon, Explorer, Specifier, Designer, TaskPlanner, Implementer, Reviewer)
-invokes the `pitcrew` CLI directly. Daimon orchestrates by
-sending short messages; it does not relay content.
+The control plane is shared memory, not an agent proxy. The host channel carries `user ↔ Daimon ↔ Aion ↔ specialists`; every specialist and Aion invoke `pitcrew` directly. Daimon interviews the user, clarifies intent and constraints, preserves conversational continuity, forwards accepted requests, and communicates only Aion-acknowledged facts or clarification requests. A mid-flight request is requested, not applied, until Aion admits it against current workflow and repository state.
 
-Two channels:
+Aion is the sole external orchestration authority. It owns the workflow id, revision, goal, short status, route selection, mutation sequencing, specialist dispatch, approvals, handles, corrections, recovery, abandonment, continuation, capability requests, and aggregate completion. The role map remains a prompt contract: `--actor` is declarative collision metadata, not CLI authorization.
 
-- **Daimon ↔ role channel.** Workflow id, current revision, one-line
-  instruction (Daimon → role), one-line status (role → Daimon). No content.
-- **Role ↔ control plane channel.** Full content. Role reads prior context
-  via `workflow show`, writes artefact via its subcommand.
-
-Consequences:
-
-- The CLI does NOT distinguish callers by identity. Every subcommand is
-  available to every caller. Role-based authorization is enforced by prompt
-  fragments, not by the CLI.
-- Daimon is the only role that talks to the user. The Daimon is NOT
-  the only role that talks to the control plane.
-- The Implementer returns the handle **path** (not the handle contents) to
-  Daimon. Daimon passes the handle path to the Reviewer. The handle
-  contents never leave the Implementer or Reviewer.
-
----
+Concurrent Daimon availability depends on host support for addressable agents. PitCrew adds no daemon, service, IPC, polling, durable inbox, database state, or lifecycle to guarantee it. A replacement Aion reconstructs context with `workflow show`.
 
 ## Roles and their CLI surface
 
-Seven roles use an advisory subcommand surface. A full-workflow sequence is:
+| Role | Subcommands |
+|---|---|
+| Daimon | none; communicates with the user and Aion |
+| Aion | all workflow commands as advisory coordination surfaces |
+| Explorer | `explore` |
+| Specifier | `spec` |
+| Designer | `design` |
+| TaskPlanner | `plan` |
+| Implementer | `list-ready-units`, `claim-unit`, `unit-tdd`, `unit-complete` |
+| Reviewer | `unit-review`, `complete` |
 
-```
-user → Daimon → Explorer → Specifier → Designer → TaskPlanner
-      → Daimon approves
-      → Implementer (claim + unit-tdd)
-      → optional Reviewer (unit-review)
-      → Implementer (unit-complete)
-      → repeat per unit
-      → Reviewer (aggregate review + complete)
-```
+Specialists persist full content through the control plane and return only a one-line revision-bearing status or permitted opaque handle path to Aion. The Implementer returns only the implementation handle path. When unit review is selected, Aion creates independent authority with `handoff-review` and passes only the review handle path to the Reviewer; `recover-review` preserves the original reviewer identity. Handle contents never cross role boundaries.
 
-| Role         | Subcommands                          |
-|--------------|---------------------------------------|
-| Daimon       | all workflow commands when coordination requires them |
-| Explorer     | `explore`                             |
-| Specifier    | `spec`                                |
-| Designer     | `design`                              |
-| TaskPlanner  | `plan`                                |
-| Implementer  | `list-ready-units`, `claim-unit`, `unit-tdd`, `unit-complete` |
-| Reviewer     | `unit-review`, `complete`             |
+Routing is proportional. Aion directly implements and verifies well-understood low-risk work affecting at most three files without claiming independent approval. Simple work affecting four or more files uses pc2-implementer followed by one independent complete-change review. Complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty require the full workflow regardless of file count.
 
-Hand-off contract:
-
-- Every role returns when it has called its assigned subcommand and received
-  success.
-- Every role returns only a one-line completion status containing the new
-  revision and `next_action`; artifact content and complete CLI payloads stay
-  in the control plane.
-- Daimon is the only role that holds the long-lived workflow context.
-- The Implementer returns the handle path (not the handle contents) to the
-  Daimon.
-
-Failure handling:
-
-- Exit code `3` or `4` → Daimon runs `workflow show` once. If the attempted
-  work is legitimate but the harness blocks it, Daimon surfaces the obstruction
-  and SHALL NOT issue an identical retry.
-- Exit code `5` (handle error) → Daimon waits 5 minutes for expiry, then
-  re-claims.
-
-Routing is proportional. Daimon directly implements and verifies well-understood,
-low-risk work affecting at most three files without calling it independent
-approval. Simple work affecting four or more files uses pc2-implementer and one
-independent complete-change review. Complexity, high impact, changed requirements
-or architecture, security, migrations, persistence, irreversibility, or
-uncertainty require the full workflow regardless of file count.
-
-Unit review is selective. Every full workflow requires a final independent
-aggregate review against requirements, specifications, design, tasks,
-implementation evidence, and tests. Daimon may call any advisory command and,
-after one inspection, abandon an obstructive non-terminal workflow with a recorded
-reason. It may not forge review, bypass aggregate review, disclose handle contents
-or secrets, discard evidence, or mutate terminal workflows. When unit review is
-selected, Daimon passes only the opaque handle path to pc2-reviewer.
+Unit review is selective. Every full workflow ends with an independent aggregate review against requirements, specifications, design, tasks, implementation evidence, and tests. On exit 3 or 4, Aion runs `workflow show` once and never repeats an identical command against unchanged state. It may abandon an obstructive non-terminal workflow with a recorded reason, but may not forge review, bypass aggregate review, disclose handle contents or secrets, discard evidence, or mutate terminal workflows. Terminal work continues only through `workflow continue --from`.

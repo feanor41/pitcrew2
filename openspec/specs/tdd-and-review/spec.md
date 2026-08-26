@@ -39,7 +39,7 @@ The accepted TDD actor and review `--actor` SHALL be non-empty declarative label
 
 ### Requirement: Correction outcomes
 
-An `inside` correction SHALL record the verdict/findings, return the unit to `pending`, and increment its revision for re-claim and new evidence. An `outside` correction SHALL do the same and set a response signal requiring Daimon plan revision and a new OpenSpec change before execution resumes.
+An `inside` correction SHALL record the verdict/findings, return the unit to `pending`, and increment its revision for re-claim and new evidence. An `outside` correction SHALL do the same and set a response signal requiring Aion plan revision and a new OpenSpec change before execution resumes.
 
 #### Scenario: Inside correction increments revision
 
@@ -59,7 +59,7 @@ An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL requi
 
 ### Requirement: Independent aggregate review
 
-`workflow complete --input-file` SHALL accept an existing review verdict shape with `approved|corrections`, summary, and findings. It SHALL reject an actor matching implementation evidence for any current unit revision. The reviewer SHALL validate the repository result and tests against requirements, all specification/design amendments, plan/tasks, current evidence, and unit reviews. Approval SHALL append an `aggregate_review` artifact and atomically complete the workflow. Corrections SHALL append the artifact, advance workflow CAS in `ready_to_complete`, and require a fresh aggregate review after Daimon coordinates fixes.
+`workflow complete --input-file` SHALL accept an existing review verdict shape with `approved|corrections`, summary, and findings. It SHALL reject an actor matching implementation evidence for any current unit revision. The reviewer SHALL validate the repository result and tests against requirements, all specification/design amendments, plan/tasks, current evidence, and unit reviews. Approval SHALL append an `aggregate_review` artifact and atomically complete the workflow. Corrections SHALL append the artifact, advance workflow CAS in `ready_to_complete`, and require a fresh aggregate review after Aion coordinates fixes.
 
 #### Scenario: Aggregate corrections preserve flow
 
@@ -69,10 +69,10 @@ An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL requi
 
 ### Requirement: Proportional external routing
 
-Daimon SHALL directly implement and verify well-understood low-risk work affecting at most three files without claiming independent approval. Simple work affecting four or more files SHALL use direct delegation to pc2-implementer followed by one independent complete-change review. Complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty SHALL require the full workflow regardless of size. The CLI SHALL NOT classify routes.
+Aion SHALL directly implement and verify well-understood low-risk work affecting at most three files without claiming independent approval. Simple work affecting four or more files SHALL use direct delegation to pc2-implementer followed by one independent complete-change review. Complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty SHALL require the full workflow regardless of size. The CLI SHALL NOT classify routes. Aion SHALL coordinate corrections and fresh aggregate review without blindly retrying unchanged state or CAS failures.
 
 #### Scenario: Trivial bypass is external
 
-- GIVEN Daimon selects a valid route outside a full workflow
+- GIVEN Aion selects a valid route outside a full workflow
 - WHEN no workflow command runs
 - THEN the CLI SHALL impose no triviality check

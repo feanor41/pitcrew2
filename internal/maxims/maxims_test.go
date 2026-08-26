@@ -41,13 +41,15 @@ func TestStructuredReturnsTheFourCanonicalMaxims(t *testing.T) {
 	}
 }
 
-func TestCanonicalMaximsNameDaimonWithoutRewritingThePrinciples(t *testing.T) {
+func TestCanonicalMaximsAssignTrivialBypassToAion(t *testing.T) {
 	text := strings.Join(strings.Fields(Text()), " ")
-	if !strings.Contains(text, "the Daimon agent is invited to skip the harness") {
-		t.Fatal("canonical maxims do not assign the trivial-work decision to Daimon")
+	if !strings.Contains(text, "the Aion agent is invited to skip the harness") {
+		t.Fatal("canonical maxims do not assign the trivial-work decision to Aion")
 	}
-	if strings.Contains(text, "the Master agent is invited to skip the harness") {
-		t.Fatal("canonical maxims retain the obsolete coordinator name")
+	for _, obsolete := range []string{"the Daimon agent is invited to skip the harness", "the Master agent is invited to skip the harness"} {
+		if strings.Contains(text, obsolete) {
+			t.Fatalf("canonical maxims retain obsolete coordinator wording %q", obsolete)
+		}
 	}
 }
 

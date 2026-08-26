@@ -24,6 +24,10 @@ EOF
     while IFS= read -r path; do
       printf '%s\n' "${path#"$repo_root/"}"
     done
+  find "$repo_root/openspec/specs" -type f -print | LC_ALL=C sort |
+    while IFS= read -r path; do
+      printf '%s\n' "${path#"$repo_root/"}"
+    done
 }
 
 allowed_legacy_line() {
@@ -52,6 +56,17 @@ done
 if test -s "$findings"; then
   cat "$findings" >&2
   echo "active contracts retain legacy Master vocabulary" >&2
+  exit 1
+fi
+
+active_contract_files | while IFS= read -r relative; do
+  grep -niE 'Daimon (may |MAY |uses |creates |passes |chooses |selects |orchestrates |coordinates |approves |holds |invokes )|Daimon.{0,80}(all workflow commands|proportional routing|sole coordinator)' \
+    "$repo_root/$relative" >>"$findings" || :
+done
+
+if test -s "$findings"; then
+  cat "$findings" >&2
+  echo "active contracts grant orchestration authority to Daimon" >&2
   exit 1
 fi
 
