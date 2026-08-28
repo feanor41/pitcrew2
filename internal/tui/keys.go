@@ -15,32 +15,14 @@ const (
 	actionBack
 	actionSelect
 	actionSearch
-	actionSubmit
-	actionCancel
-	actionDelete
 	actionQuit
 	actionRefresh
-	actionText
 )
 
-func actionFor(key tea.KeyPressMsg, searchFocused bool) action {
+func actionFor(key tea.KeyPressMsg) action {
 	stroke := key.Keystroke()
 	if stroke == "ctrl+c" {
 		return actionQuit
-	}
-	if searchFocused {
-		switch stroke {
-		case "enter":
-			return actionSubmit
-		case "esc":
-			return actionCancel
-		case "backspace":
-			return actionDelete
-		}
-		if key.Text != "" {
-			return actionText
-		}
-		return actionNone
 	}
 	switch stroke {
 	case "up", "k":

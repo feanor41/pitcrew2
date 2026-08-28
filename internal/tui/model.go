@@ -3,7 +3,10 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/fmazzalomo/pitcrew/internal/history"
 	"github.com/fmazzalomo/pitcrew/internal/version"
@@ -24,36 +27,72 @@ type occurrenceResolver interface {
 type Screen uint8
 
 const (
-	WorkflowsScreen Screen = iota
+	HomeScreen Screen = iota
+	WorkflowsScreen
 	ResultsScreen
 	DetailScreen
 )
 
+type homeAction uint8
+
+const (
+	homeInstall homeAction = iota
+	homeConfigureModels
+	homeWorkflows
+	homeExit
+)
+
+var homeActions = [...]string{
+	"Install in Runtime",
+	"Configure Runtime Models",
+	"Workflows",
+	"Exit",
+}
+
 type Model struct {
-	loader        Loader
-	screen        Screen
-	workflows     []history.Workflow
-	results       []history.SearchResult
-	opened        history.Resolution
-	selected      int
-	query         string
-	searchFocused bool
-	loading       bool
-	err           error
-	width         int
-	height        int
-	detail        detailCursor
-	generation    uint64
-	activeLoad    loadKind
-	loadPreserves bool
+	loader          Loader
+	screen          Screen
+	homeSelected    int
+	homeNotice      string
+	workflows       []history.Workflow
+	workflowTop     int
+	results         []history.SearchResult
+	opened          history.Resolution
+	selected        int
+	query           string
+	searchFocused   bool
+	searchOriginal  string
+	search          textinput.Model
+	viewport        viewport.Model
+	evidence        evidenceCache
+	componentsReady bool
+	loading         bool
+	err             error
+	width           int
+	height          int
+	detail          detailCursor
+	detailParent    Screen
+	generation      uint64
+	activeLoad      loadKind
+	loadPreserves   bool
+}
+
+type evidenceCache struct {
+	recordID string
+	source   string
+	width    int
+	body     string
+	mode     evidenceRenderMode
 }
 
 type detailCursor struct {
-	occurrenceID  string
-	occurrenceTop int
-	recordID      string
-	line          int
-	top           int
+	occurrenceID    string
+	occurrenceTop   int
+	related         bool
+	relatedRecordID string
+	recordID        string
+	line            int
+	top             int
 }
 
 type loadKind uint8
@@ -88,7 +127,9 @@ type loadFailedMsg struct {
 }
 
 func New(loader Loader) Model {
-	return Model{loader: loader, loading: true, generation: 1, activeLoad: loadWorkflows}
+	m := Model{loader: loader, loading: true, generation: 1, activeLoad: loadWorkflows}
+	m.ensureComponents()
+	return m
 }
 
 func (Model) Version() string { return version.Current }
@@ -104,6 +145,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
+	m.ensureComponents()
 	switch msg := message.(type) {
 	case workflowsLoadedMsg:
 		if !m.acceptLoad(msg.loadMeta) {
@@ -115,6 +157,7 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 		}
 		m.workflows, m.loading, m.err = msg.workflows, false, nil
 		m.selected = reconcileIndex(len(m.workflows), m.selected, func(i int) bool { return m.workflows[i].ID == selectedID })
+		m.reconcileWorkflowWindow()
 		m.commitLoad(msg.generation)
 	case resultsLoadedMsg:
 		if !m.acceptLoad(msg.loadMeta) {
@@ -145,93 +188,181 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 			msg.resolution.Record = refreshedRecord(msg.resolution.Detail, previousRecord)
 		}
 		m.opened, m.loading, m.err = msg.resolution, false, nil
+		if !msg.preserve {
+			m.detailParent = WorkflowsScreen
+			if m.screen == ResultsScreen {
+				m.detailParent = ResultsScreen
+			}
+		}
 		m.screen = DetailScreen
 		if msg.preserve {
 			m.detail = cursor
+		} else if cursor.occurrenceID != "" {
+			m.detail = cursor
+			m.detail.recordID = msg.resolution.Record.ID
 		} else {
 			m.detail = detailCursor{occurrenceID: cursor.occurrenceID, recordID: msg.resolution.Record.ID}
 		}
 		m.reconcileDetail()
+		m.prepareEvidence()
 		m.commitLoad(msg.generation)
 	case loadFailedMsg:
 		if !m.acceptLoad(msg.loadMeta) {
 			return m, nil
 		}
 		m.loading, m.err = false, msg.err
+		if msg.kind == loadWorkflows {
+			m.reconcileWorkflowWindow()
+		}
 		m.commitLoad(msg.generation)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.search.SetWidth(max(1, msg.Width-10))
+		m.reconcileWorkflowWindow()
 		m.reconcileDetail()
+		m.prepareEvidence()
 	case tea.KeyPressMsg:
 		return m.updateKey(msg)
+	}
+	if m.search.Focused() {
+		var command tea.Cmd
+		m.search, command = m.search.Update(message)
+		m.searchFocused = m.search.Focused()
+		return m, command
 	}
 	return m, nil
 }
 
 func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
-	switch actionFor(key, m.searchFocused) {
+	if key.Keystroke() == "ctrl+c" {
+		return m, tea.Quit
+	}
+	if m.search.Focused() {
+		switch key.Keystroke() {
+		case "enter":
+			m.query = m.search.Value()
+			m.search.Blur()
+			m.searchFocused = false
+			query := m.query
+			meta := m.startLoad(loadResults, false)
+			return m, func() tea.Msg {
+				results, err := m.loader.Search(context.Background(), query)
+				if err != nil {
+					return loadFailedMsg{loadMeta: meta, err: err}
+				}
+				return resultsLoadedMsg{loadMeta: meta, results: results}
+			}
+		case "esc":
+			m.search.Blur()
+			m.searchFocused = false
+			m.query = m.searchOriginal
+			return m, nil
+		default:
+			var command tea.Cmd
+			m.search, command = m.search.Update(key)
+			m.searchFocused = m.search.Focused()
+			m.query = m.search.Value()
+			return m, command
+		}
+	}
+	if m.opened.Record.ID != "" {
+		switch key.Keystroke() {
+		case "left", "h", "esc":
+			m.closeEvidence()
+			return m, nil
+		case "q":
+			return m, tea.Quit
+		case "r":
+			return m.refreshActive()
+		default:
+			var command tea.Cmd
+			m.viewport, command = m.viewport.Update(key)
+			m.detail.recordID = m.opened.Record.ID
+			m.detail.line, m.detail.top = m.viewport.YOffset(), m.viewport.YOffset()
+			return m, command
+		}
+	}
+	if m.screen == HomeScreen {
+		return m.updateHomeKey(key)
+	}
+	switch actionFor(key) {
 	case actionUp:
-		if m.screen == DetailScreen {
+		if m.relatedRecordMode() {
+			m.moveRelatedRecord(-1)
+		} else if m.screen == DetailScreen {
 			m.moveFocused(-1)
 		} else if m.selected > 0 {
 			m.selected--
+			if m.screen == WorkflowsScreen {
+				m.reconcileWorkflowWindow()
+			}
 		}
 	case actionDown:
-		if m.screen == DetailScreen {
+		if m.relatedRecordMode() {
+			m.moveRelatedRecord(1)
+		} else if m.screen == DetailScreen {
 			m.moveFocused(1)
 		} else if m.selected+1 < m.itemCount() {
 			m.selected++
+			if m.screen == WorkflowsScreen {
+				m.reconcileWorkflowWindow()
+			}
 		}
 	case actionBack:
-		if m.screen == DetailScreen && m.opened.Record.ID != "" && m.detail.occurrenceID != "" {
+		switch m.screen {
+		case DetailScreen:
+			if m.relatedRecordMode() {
+				m.detail.related = false
+				return m, nil
+			}
 			m.cancelLoad()
-			m.opened.Record = history.Record{}
-			m.detail.recordID, m.detail.line, m.detail.top = "", 0, 0
-			m.reconcileDetail()
-		} else if m.screen != WorkflowsScreen {
+			m.screen = m.detailParent
+			if m.screen != ResultsScreen {
+				m.screen = WorkflowsScreen
+			}
+		case ResultsScreen:
 			m.cancelLoad()
 			m.screen = WorkflowsScreen
+			m.reconcileWorkflowWindow()
+		case WorkflowsScreen:
+			if m.loading && m.activeLoad != loadWorkflows {
+				m.cancelLoad()
+			}
+			m.screen = HomeScreen
 		}
 	case actionPageUp:
-		if m.occurrenceMode() {
-			m.moveOccurrence(-m.occurrencePageSize())
+		if m.relatedRecordMode() {
+			m.moveRelatedRecord(-m.relatedRecordPageSize())
+		} else if m.occurrenceMode() {
+			m.moveOccurrence(-m.measuredOccurrencePage(-1))
 		}
 	case actionPageDown:
-		if m.occurrenceMode() {
-			m.moveOccurrence(m.occurrencePageSize())
+		if m.relatedRecordMode() {
+			m.moveRelatedRecord(m.relatedRecordPageSize())
+		} else if m.occurrenceMode() {
+			m.moveOccurrence(m.measuredOccurrencePage(1))
 		}
 	case actionHome:
-		if m.occurrenceMode() {
+		if m.relatedRecordMode() {
+			m.setRelatedRecordIndex(0)
+		} else if m.occurrenceMode() {
 			m.setOccurrenceIndex(0)
 		}
 	case actionEnd:
-		if m.occurrenceMode() {
-			m.setOccurrenceIndex(m.operationalOccurrenceIndex())
+		if m.relatedRecordMode() {
+			if occurrence, ok := m.focusedOccurrence(); ok {
+				m.setRelatedRecordIndex(len(m.supportingRecordIDs(occurrence)) - 1)
+			}
+		} else if m.occurrenceMode() {
+			m.setOccurrenceIndex(len(m.opened.Detail.Occurrences) - 1)
 		}
 	case actionSelect:
 		return m.openSelected()
 	case actionSearch:
-		m.searchFocused, m.query = true, ""
-	case actionSubmit:
-		m.searchFocused = false
-		query := m.query
-		meta := m.startLoad(loadResults, false)
-		return m, func() tea.Msg {
-			results, err := m.loader.Search(context.Background(), query)
-			if err != nil {
-				return loadFailedMsg{loadMeta: meta, err: err}
-			}
-			return resultsLoadedMsg{loadMeta: meta, results: results}
-		}
-	case actionCancel:
-		m.searchFocused = false
-	case actionDelete:
-		runes := []rune(m.query)
-		if len(runes) > 0 {
-			m.query = string(runes[:len(runes)-1])
-		}
-	case actionText:
-		m.query += key.Text
+		m.searchOriginal = m.query
+		m.search.Reset()
+		m.searchFocused = true
+		return m, m.search.Focus()
 	case actionQuit:
 		return m, tea.Quit
 	case actionRefresh:
@@ -240,17 +371,144 @@ func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateHomeKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch actionFor(key) {
+	case actionUp:
+		m.homeSelected = max(0, m.homeSelected-1)
+	case actionDown:
+		m.homeSelected = min(len(homeActions)-1, m.homeSelected+1)
+	case actionSelect:
+		switch homeAction(m.homeSelected) {
+		case homeInstall:
+			m.homeNotice = "Installation is unavailable in the read-only TUI. Run pitcrew install <codex|opencode|claude|pi> in your shell."
+		case homeConfigureModels:
+			m.homeNotice = "Runtime model configuration is unavailable in the read-only TUI."
+		case homeWorkflows:
+			m.homeNotice = ""
+			m.screen = WorkflowsScreen
+			m.reconcileWorkflowWindow()
+		case homeExit:
+			return m, tea.Quit
+		}
+	case actionQuit:
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m *Model) reconcileWorkflowWindow() {
+	if len(m.workflows) == 0 {
+		m.selected, m.workflowTop = 0, 0
+		return
+	}
+	m.selected = max(0, min(m.selected, len(m.workflows)-1))
+	visible := m.workflowVisibleRows()
+	if m.selected < m.workflowTop {
+		m.workflowTop = m.selected
+	} else if m.selected >= m.workflowTop+visible {
+		m.workflowTop = m.selected - visible + 1
+	}
+	m.workflowTop = max(0, min(m.workflowTop, max(0, len(m.workflows)-visible)))
+}
+
+func (m Model) workflowVisibleRows() int {
+	noticeRows := 0
+	if m.loadPreserves && (m.loading || m.err != nil) && len(m.workflows) > 0 {
+		noticeRows = 1
+	}
+	gridHeight := m.height - 6 - 1 - noticeRows
+	return max(1, gridHeight-4)
+}
+
+func (m *Model) ensureComponents() {
+	if m.componentsReady {
+		return
+	}
+	m.search = textinput.New()
+	m.search.Prompt = ""
+	m.search.SetWidth(max(1, m.width-10))
+	m.viewport = viewport.New(viewport.WithWidth(max(1, m.width-2)), viewport.WithHeight(max(1, m.evidenceHeight())))
+	m.viewport.SoftWrap = false
+	m.componentsReady = true
+	if m.searchFocused {
+		m.search.SetValue(m.query)
+		m.searchOriginal = m.query
+		_ = m.search.Focus()
+	}
+}
+
+func (m *Model) prepareEvidence() {
+	m.ensureComponents()
+	width := max(1, m.evidenceWidth()-2)
+	height := max(1, m.evidenceHeight())
+	m.viewport.SetWidth(width)
+	m.viewport.SetHeight(height)
+	if m.opened.Record.ID == "" {
+		m.clearEvidence()
+		return
+	}
+
+	record := m.opened.Record
+	source := evidenceSource(record)
+	identityChanged := m.evidence.recordID != record.ID
+	needsRender := identityChanged || m.evidence.source != source || m.evidence.width != width
+	offset := m.viewport.YOffset()
+	if needsRender {
+		body, mode := renderEvidence(record.Content, width)
+		m.evidence = evidenceCache{recordID: record.ID, source: source, width: width, body: body, mode: mode}
+		m.viewport.SetContent(body)
+	}
+	if identityChanged {
+		m.viewport.GotoTop()
+	} else {
+		m.viewport.SetYOffset(offset)
+	}
+	m.detail.recordID = record.ID
+	m.detail.line, m.detail.top = m.viewport.YOffset(), m.viewport.YOffset()
+}
+
+func evidenceSource(record history.Record) string {
+	return fmt.Sprintf("%s\x00%s\x00%d\x00%s", record.ID, record.Title, record.Revision, record.Content)
+}
+
+func (m *Model) closeEvidence() {
+	m.cancelLoad()
+	m.opened.Record = history.Record{}
+	m.detail.recordID, m.detail.line, m.detail.top = "", 0, 0
+	m.clearEvidence()
+	m.reconcileDetail()
+}
+
+func (m *Model) clearEvidence() {
+	m.evidence = evidenceCache{}
+	m.viewport.SetContent("")
+	m.viewport.GotoTop()
+}
+
 func (m Model) openSelected() (Model, tea.Cmd) {
 	if m.occurrenceMode() {
 		if occurrence, ok := m.focusedOccurrence(); ok {
+			recordIDs := m.supportingRecordIDs(occurrence)
+			if len(recordIDs) == 0 {
+				return m, nil
+			}
+			if len(recordIDs) > 1 && !m.relatedRecordMode() {
+				m.detail.related = true
+				m.reconcileRelatedRecord(occurrence)
+				return m, nil
+			}
 			resolver, ok := m.loader.(occurrenceResolver)
 			if !ok {
 				m.err = errors.New("history loader cannot resolve occurrences")
 				return m, nil
 			}
+			recordID := recordIDs[0]
+			if m.relatedRecordMode() {
+				recordID = m.detail.relatedRecordID
+			}
 			meta := m.startLoad(loadDetail, false)
 			return m, func() tea.Msg {
-				resolution, err := resolver.ResolveOccurrence(context.Background(), m.opened.Detail.Workflow.ID, occurrence.ID, occurrence.RecordID)
+				resolution, err := resolver.ResolveOccurrence(context.Background(), m.opened.Detail.Workflow.ID, occurrence.ID, recordID)
 				if err != nil {
 					return loadFailedMsg{loadMeta: meta, err: err}
 				}
@@ -315,6 +573,7 @@ func (m Model) refreshActive() (Model, tea.Cmd) {
 		}
 	default:
 		meta := m.startLoad(loadWorkflows, true)
+		m.reconcileWorkflowWindow()
 		return m, func() tea.Msg {
 			workflows, err := m.loader.List(context.Background())
 			if err != nil {
@@ -382,6 +641,9 @@ func refreshedRecord(detail history.Detail, previous history.Record) history.Rec
 }
 
 func (m Model) itemCount() int {
+	if m.screen == HomeScreen {
+		return len(homeActions)
+	}
 	if m.screen == ResultsScreen {
 		return len(m.results)
 	}
@@ -441,6 +703,19 @@ func (m *Model) setEvidenceIndex(lines []evidenceLine, index int) {
 }
 
 func (m Model) detailPosition() (int, int) {
+	if m.relatedRecordMode() {
+		occurrence, ok := m.focusedOccurrence()
+		if !ok {
+			return 0, 0
+		}
+		ids := m.supportingRecordIDs(occurrence)
+		for i, id := range ids {
+			if id == m.detail.relatedRecordID {
+				return i + 1, len(ids)
+			}
+		}
+		return 0, len(ids)
+	}
 	if m.occurrenceMode() {
 		for i, occurrence := range m.opened.Detail.Occurrences {
 			if occurrence.ID == m.detail.occurrenceID {
@@ -462,15 +737,21 @@ func (m Model) occurrenceMode() bool {
 	return m.screen == DetailScreen && m.opened.Record.ID == "" && len(m.opened.Detail.Occurrences) > 0
 }
 
+func (m Model) relatedRecordMode() bool {
+	return m.occurrenceMode() && m.detail.related
+}
+
 func (m *Model) reconcileOccurrences() {
 	occurrences := m.opened.Detail.Occurrences
 	if len(occurrences) == 0 {
 		m.detail.occurrenceID, m.detail.recordID, m.detail.occurrenceTop = "", "", 0
+		m.detail.related, m.detail.relatedRecordID = false, ""
 		return
 	}
 	for i, occurrence := range occurrences {
 		if occurrence.ID == m.detail.occurrenceID {
 			m.setOccurrenceIndex(i)
+			m.reconcileRelatedRecord(occurrence)
 			return
 		}
 	}
@@ -489,15 +770,76 @@ func (m *Model) setOccurrenceIndex(index int) {
 		return
 	}
 	index = max(0, min(len(occurrences)-1, index))
+	previousID := m.detail.occurrenceID
 	m.detail.occurrenceID = occurrences[index].ID
+	if previousID != "" && previousID != m.detail.occurrenceID {
+		m.detail.related = false
+		m.detail.relatedRecordID = ""
+	}
 	m.detail.recordID, m.detail.line = occurrences[index].ID, 0
-	visible := m.occurrencePageSize()
 	if index < m.detail.occurrenceTop {
 		m.detail.occurrenceTop = index
-	} else if index >= m.detail.occurrenceTop+visible {
-		m.detail.occurrenceTop = index - visible + 1
 	}
-	m.detail.occurrenceTop = max(0, min(m.detail.occurrenceTop, max(0, len(occurrences)-visible)))
+	m.detail.occurrenceTop = max(0, min(m.detail.occurrenceTop, index))
+	for m.detail.occurrenceTop < index && !m.occurrenceFits(m.detail.occurrenceTop, index) {
+		m.detail.occurrenceTop++
+	}
+}
+
+func (m Model) supportingRecordIDs(occurrence history.Occurrence) []string {
+	seen := make(map[string]struct{}, 1+len(occurrence.RelatedRecordIDs))
+	ids := make([]string, 0, 1+len(occurrence.RelatedRecordIDs))
+	for _, id := range append([]string{occurrence.RecordID}, occurrence.RelatedRecordIDs...) {
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (m *Model) reconcileRelatedRecord(occurrence history.Occurrence) {
+	ids := m.supportingRecordIDs(occurrence)
+	if len(ids) == 0 {
+		m.detail.related = false
+		m.detail.relatedRecordID = ""
+		return
+	}
+	for _, id := range ids {
+		if id == m.detail.relatedRecordID {
+			return
+		}
+	}
+	m.detail.relatedRecordID = ids[0]
+}
+
+func (m *Model) moveRelatedRecord(delta int) {
+	current, total := m.detailPosition()
+	if total == 0 {
+		return
+	}
+	m.setRelatedRecordIndex(max(0, min(total-1, current-1+delta)))
+}
+
+func (m Model) relatedRecordPageSize() int {
+	return max(1, m.occurrenceAvailableLines()-4)
+}
+
+func (m *Model) setRelatedRecordIndex(index int) {
+	occurrence, ok := m.focusedOccurrence()
+	if !ok {
+		return
+	}
+	ids := m.supportingRecordIDs(occurrence)
+	if len(ids) == 0 {
+		return
+	}
+	index = max(0, min(len(ids)-1, index))
+	m.detail.relatedRecordID = ids[index]
 }
 
 func (m Model) focusedOccurrence() (history.Occurrence, bool) {
@@ -509,12 +851,55 @@ func (m Model) focusedOccurrence() (history.Occurrence, bool) {
 	return history.Occurrence{}, false
 }
 
-func (m Model) occurrencePageSize() int {
-	rows := max(1, m.height-12)
-	if m.width > 0 && m.width < 80 {
-		rows /= 2
+func (m Model) measuredOccurrencePage(direction int) int {
+	index, _ := m.detailPosition()
+	index--
+	if index < 0 {
+		return 1
 	}
-	return max(1, rows)
+	available := m.occurrenceAvailableLines()
+	used, count := 0, 0
+	for i := index; i >= 0 && i < len(m.opened.Detail.Occurrences); i += direction {
+		height := len(m.semanticOccurrenceLines(m.opened.Detail.Occurrences[i], i == index))
+		if count > 0 && used+height > available {
+			break
+		}
+		used += height
+		count++
+		if used >= available {
+			break
+		}
+	}
+	return max(1, count)
+}
+
+func (m Model) occurrenceFits(start, selected int) bool {
+	used := 0
+	for i := start; i <= selected; i++ {
+		height := len(m.semanticOccurrenceLines(m.opened.Detail.Occurrences[i], i == selected))
+		if i == start && height > m.occurrenceAvailableLines() {
+			return true
+		}
+		used += height
+		if used > m.occurrenceAvailableLines() {
+			return false
+		}
+	}
+	return true
+}
+
+func (m Model) occurrenceAvailableLines() int {
+	lines := m.synopsisLines()
+	if m.width >= 80 {
+		lines = append(lines, "")
+	}
+	pending := m.pendingWorkLines()
+	if m.height <= minHeight && len(pending) > 2 {
+		pending = pending[:2]
+	}
+	lines = append(lines, pending...)
+	lines = append(lines, "history")
+	return max(1, m.height-6-len(lines))
 }
 
 func (m Model) operationalOccurrenceIndex() int {
@@ -567,8 +952,14 @@ func (m Model) Hints() string {
 	if m.searchFocused {
 		return "enter search • esc cancel • ctrl+c quit"
 	}
+	if m.screen == HomeScreen {
+		if m.width > 0 && m.width < 80 {
+			return "j/k move • enter select • q quit"
+		}
+		return "↑/k up • ↓/j down • enter select • q quit"
+	}
 	if m.width > 0 && m.width < 80 {
-		return "j/k move • enter • / search • r refresh • q quit"
+		return "j/k • h back • enter • / search • r refresh • q quit"
 	}
 	return "↑/k up • ↓/j down • ←/h back • →/l/enter select • / search • r refresh • q quit"
 }

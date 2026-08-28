@@ -2,146 +2,192 @@
 
 ## Purpose
 
-Define the contract for `scripts/install-templates.sh`, the
-POSIX installer that wires `pitcrew` into supported LLM
-runtimes (Codex, OpenCode, Claude Code, Pi). The installer is the
-seam between the binary and the agents that consume it.
+Define the contract for `pitcrew install codex|opencode|claude|pi` and its canonical
+POSIX installer. It configures one supported runtime, not the PitCrew binary.
 
 ## Requirements
 
+### Requirement: POSIX and standalone execution
 
-### Requirement: POSIX shell
+The installer SHALL remain POSIX `/bin/sh`. The binary SHALL embed the canonical
+script and maxims, extract both privately, preserve cwd and streams, invoke
+`/bin/sh`, and always clean up. It SHALL work outside the checkout without
+assumptions and SHALL NOT open `.pitcrew/state.db`. Setup or cleanup failures
+SHALL exit 1 with an actionable `pitcrew install:` diagnostic; child exit status
+SHALL otherwise be preserved.
 
-The installer SHALL be written in POSIX shell (`/bin/sh`). It SHALL
-NOT use bashisms. It SHALL be idempotent: running it twice SHALL be
-equivalent to running it once.
+#### Scenario: Standalone binary installs from embedded assets
 
-#### Scenario: Repeated installation is idempotent
+- GIVEN only a compiled PitCrew binary and an isolated runtime home
+- WHEN an exact public install command runs outside the checkout
+- THEN installation SHALL use canonical embedded bytes
+- AND no extracted asset SHALL remain
 
-- GIVEN a completed installation
-- WHEN the POSIX installer runs again
-- THEN it SHALL exit 0 without changing installed bytes
+### Requirement: Roll back partial writes and remain idempotent
 
-### Requirement: Roll back partial writes
-
-The installer SHALL roll back partial writes on failure. If a write
-fails mid-way, the installer SHALL restore the previous state of any
-file it modified and SHALL exit non-zero.
+Rendering, prerequisite checks, native-schema validation, and graph validation
+SHALL precede mutation. Failure or handled interruption SHALL restore every
+replaced or removed file byte-for-byte and remove installer-created files and
+directories in reverse order. Repeating a successful installation with identical
+assets SHALL not rewrite installed bytes.
 
 #### Scenario: Partial failure rolls back
 
 - GIVEN a simulated failure after one write
 - WHEN installation aborts
-- THEN every touched file SHALL be restored
+- THEN the exact prior target tree SHALL be restored
 
-### Requirement: One prompt fragment per role
+### Requirement: One native definition per role
 
-The installer SHALL write one prompt fragment per role:
+The selected runtime SHALL receive native definitions for:
 
-- `daimon.md`
-- `aion.md`
-- `pc2-explorer.md`
-- `pc2-specifier.md`
-- `pc2-designer.md`
-- `pc2-task-planner.md`
-- `pc2-implementer.md`
-- `pc2-reviewer.md`
+- `daimon`
+- `aion`
+- `pc2-explorer`
+- `pc2-specifier`
+- `pc2-designer`
+- `pc2-task-planner`
+- `pc2-implementer`
+- `pc2-reviewer`
 
-Each fragment SHALL begin with the verbatim text of `MAXIMS.md`,
-prefixed with:
+Codex SHALL use `agents/*.toml` with underscore native identities. OpenCode,
+Claude Code, and Pi SHALL use `agents/*.md` with hyphenated identities. Each
+definition SHALL contain canonical `MAXIMS.md` bytes, native schema, tools,
+permissions, role responsibility, and its exact hand-off reminder. Obsolete
+unprefixed roles and `pc2-archivist` SHALL be absent.
 
-> Internalize the four maxims below. They are your operating system.
-> Every decision you make is subordinate to them.
+#### Scenario: Every native role is installed
 
-#### Scenario: Every role fragment is written
-
-- GIVEN a supported runtime
+- GIVEN a selected runtime whose prerequisites pass
 - WHEN installation succeeds
-- THEN all eight named role fragments SHALL exist
-- AND obsolete unprefixed role fragments and `pc2-archivist.md` SHALL be absent
+- THEN exactly all eight native definitions SHALL exist and validate
+- AND obsolete PitCrew definitions SHALL be absent
 
-### Requirement: Agent-contract fragment
+### Requirement: Separated agent contract and bounded graph
 
-The installer SHALL write one agent-contract fragment that records
-the prohibitions common to every role. The prohibitions SHALL include:
+The installer SHALL write `<runtime-root>/pitcrew/agent-contract.md` outside
+agent discovery. It SHALL record opaque-handle boundaries, distinct
+Implementer/Reviewer actors, CAS inspection, and the prohibitions on
+`--claim-token`, `--emit-plain-token`, and
+`--print-claim-handle-secret-once`. Daimon SHALL target only Aion, Aion SHALL
+target exactly the six specialists, and specialists SHALL NOT delegate.
 
-- no `--claim-token` flag,
-- no `--emit-plain-token` flag,
-- no `--print-claim-handle-secret-once` flag,
-- no same-identity collisions between Implementer and Reviewer,
-- no blind retries on CAS error.
+#### Scenario: Contract and graph validate before mutation
 
-#### Scenario: Prohibitions are installed
+- GIVEN staged runtime definitions
+- WHEN the installer validates their declared targets
+- THEN every bounded edge and common prohibition SHALL match the role contract
 
-- GIVEN a successful installation
-- WHEN the contract fragment is read
-- THEN it SHALL contain every listed prohibition
+### Requirement: Explicit selection and current registry paths
 
-### Requirement: Prompt overwrite protection
+The public command SHALL select exactly one lowercase, alias-free runtime and
+ignore homes and overrides for every other runtime. A missing selected root MAY
+be created transactionally. Direct script invocation without a selector SHALL
+retain backward-compatible autodetection.
 
-The installer SHALL refuse to overwrite any differing current or obsolete prompt, including customized `daimon.md` and pre-existing `aion.md`,
-without an explicit `--overwrite` flag. Overwrite installation SHALL transactionally
-refresh current prompts and remove obsolete prompts, including `pc2-archivist.md`;
-failure or interruption SHALL restore the exact prior prompt set.
+| Token | Override / default root | Native registry | Legacy registry |
+|---|---|---|---|
+| `codex` | `CODEX_HOME` / `~/.codex` | `agents/*.toml` | `prompts/*.md` |
+| `opencode` | `OPENCODE_CONFIG_DIR` / `~/.config/opencode` | `agents/*.md` | prior PitCrew entries in `agents/` |
+| `claude` | `CLAUDE_CONFIG_DIR` / `~/.claude` | `agents/*.md` | `prompts/*.md` |
+| `pi` | `PI_AGENT_HOME` / `~/.pi/agent` | `agents/*.md` | prior PitCrew entries in `agents/` |
 
-#### Scenario: Prompt overwrite is refused
+#### Scenario: Explicit selection cannot drift
 
-- GIVEN any managed prompt already differs
-- WHEN installation lacks --overwrite
-- THEN it SHALL fail without changing installed bytes
+- GIVEN all four runtime homes and overrides exist
+- WHEN `pitcrew install pi` runs
+- THEN only the selected Pi paths MAY be inspected or mutated
 
-### Requirement: Reading MAXIMS.md
+### Requirement: Managed update boundary
 
-The installer SHALL read `MAXIMS.md` from the filesystem (not from
-the embedded binary) when building prompt fragments. The maxims in
-the fragment SHALL match `MAXIMS.md` byte-for-byte at install time.
+The public command SHALL authorize refresh only of current and legacy
+PitCrew-managed filenames. Before replacing differing bytes, stderr SHALL emit
+exactly `pitcrew installer: WARNING: PitCrew-managed definitions are being refreshed; custom content must live outside managed role files.`
+Unrelated files and application configuration SHALL remain byte-identical.
+Direct script invocation SHALL continue to refuse differing managed files unless
+`--overwrite` is explicit. Direct `--overwrite` SHALL retain its distinct legacy
+warning: `pitcrew installer: WARNING: replacing prompts or legacy names; preserve desired custom text before continuing.`
+Unsafe, non-regular, symlink, or unwritable targets SHALL fail before commit.
 
-#### Scenario: Installed maxims are exact
+#### Scenario: Public managed refresh is bounded
 
-- GIVEN filesystem MAXIMS.md bytes
-- WHEN fragments are generated
-- THEN each maxim prefix SHALL match those bytes
+- GIVEN old managed definitions, legacy names, and an unrelated custom file
+- WHEN the public command succeeds
+- THEN managed bytes SHALL refresh and legacy names SHALL be removed
+- AND the warning SHALL precede mutation while the unrelated file remains exact
 
-### Requirement: Role-specific hand-off reminders
+### Requirement: OpenCode nested orchestration prerequisite
 
-Specialist fragments SHALL return one-line revision-bearing status or permitted opaque paths only to Aion. Aion SHALL return factual revision-bearing status or clarification requests to Daimon. Daimon SHALL forward accepted intent to Aion and communicate only Aion-acknowledged facts or questions to the user.
+Before writing any target file for OpenCode, the installer SHALL require
+OpenCode 1.18.23 or newer, `jq`, `timeout`, and an unambiguous effective
+top-level integer `subagent_depth` of at least 2 from
+`opencode --pure debug config` in the caller working directory.
 
-#### Scenario: Reminder is present
+Failure SHALL report the directory, exact verification command, configuration
+precedence, remediation (`"subagent_depth": 2`), and the durable rerun command
+`pitcrew install opencode`. PitCrew SHALL NOT create, parse, or rewrite user
+OpenCode JSON or JSONC. A greater global depth SHALL NOT broaden the installed
+`Daimon -> Aion -> specialist` permission edges.
 
-- GIVEN any generated role fragment
-- WHEN its content is read
-- THEN it SHALL contain the reminder for its exact channel in `user ↔ Daimon ↔ Aion ↔ specialists`
+#### Scenario: Insufficient effective depth fails without writes
 
-### Requirement: Supported runtimes
+- GIVEN unsupported tooling or missing, malformed, ambiguous, or insufficient
+  effective depth
+- WHEN `pitcrew install opencode` runs
+- THEN it SHALL fail before target mutation with actionable public guidance
 
-The installer SHALL detect the host runtime by environment variables
-and well-known config paths:
+### Requirement: Pi extension prerequisite
 
-- Codex: `~/.codex/prompts/`
-- OpenCode: `~/.config/opencode/agents/`
-- Claude Code: `~/.claude/prompts/`
-- Pi: `~/.pi/agent/agents/`
+Before target writes, Pi SHALL require Node.js, an installed and active
+`pi-subagents` version 0.25.0 or newer, and a valid object at
+`<pi-agent-home>/extensions/subagent/config.json` whose integer
+`maxSubagentDepth` is at least 3. Exact `npm:pi-subagents` identity MAY include
+a non-empty version/range suffix; near-name packages SHALL fail. Installed
+Daimon and Aion definitions SHALL declare depth 3 so the bounded
+`Daimon -> Aion -> specialist` chain is executable while specialists remain
+unable to delegate. PitCrew SHALL NOT install packages, access the network, or
+modify Pi configuration.
 
-Unsupported runtimes SHALL cause a clear error and a non-zero exit.
+#### Scenario: Invalid Pi extension fails without writes
 
-#### Scenario: Unsupported runtime fails
+- GIVEN a missing, inactive, too-old, malformed, or near-name extension, or
+  missing, malformed, or insufficient nested-depth configuration
+- WHEN `pitcrew install pi` runs
+- THEN it SHALL fail before mutation with the durable public rerun command
 
-- GIVEN no supported runtime is detected
-- WHEN installation starts
-- THEN it SHALL fail while listing supported runtimes
+### Requirement: Runtime output
 
-### Requirement: Smoke tests
+Success SHALL exit 0 and write exactly `Installed PitCrew agents for <Runtime>
+in <registry>` followed by a newline, using `Codex`, `OpenCode`, `Claude Code`,
+or `Pi`. Prerequisite, validation, write, rollback, or wrapper failure SHALL
+preserve actionable plain stderr and non-zero status without success stdout or
+a temporary extraction path.
 
-The installer SHALL be exercised by POSIX shell smoke tests under
-`scripts/tests/`. The smoke tests SHALL cover:
+### Requirement: Opt-in OpenCode runtime depth probe
 
-- idempotency (running twice),
-- partial-write rollback (simulated mid-write failure),
-- differing prompt refusal without `--overwrite`,
-- unsupported runtime detection.
+The repository SHALL provide an isolated, opt-in real OpenCode probe. It MAY
+copy credentials only into its temporary data home and SHALL NOT read or mutate
+real effective configuration. Without explicit enablement, compatible CLI, and
+credentials it SHALL report `SKIP`, never `PASS`. When enabled it SHALL prove
+default depth-one rejection and global depth-two specialist success.
 
-#### Scenario: Installer contracts are exercised
+#### Scenario: Unavailable real-runtime prerequisites skip
 
-- GIVEN the shell smoke-test suite
+- GIVEN the probe is not enabled or lacks the CLI or credentials
 - WHEN it runs
-- THEN it SHALL cover all four listed behaviors
+- THEN it SHALL exit successfully with `SKIP` and SHALL NOT claim `PASS`
+
+### Requirement: Four-runtime public verification
+
+POSIX shell tests SHALL exercise all four public selectors, missing roots,
+selection isolation, native schemas, identity sets, maxims, bounded dispatch,
+managed refresh, unrelated preservation, byte-idempotency, legacy cleanup,
+prerequisite failures, rollback, signals, and cleanup. Focused and full Go tests
+SHALL prove CLI dispatch, wrapper behavior, and standalone embedded execution.
+
+#### Scenario: Complete public contract is exercised
+
+- GIVEN the repository verification suite
+- WHEN shell syntax/suite, focused/full Go tests, build, vet, formatting, diff,
+  and standalone probes run
+- THEN all four public installation contracts SHALL remain proven

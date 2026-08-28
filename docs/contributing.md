@@ -52,18 +52,56 @@ Applying an already-decided approach creates no new gate, justification, or arti
 
 ## Installer changes
 
-When changing `scripts/install-templates.sh`, prove all of these:
+When changing the public runtime installer or `scripts/install-templates.sh`, prove all of these:
 
-- every supported runtime installs eight role fragments (`daimon.md`, `aion.md`, and six specialists) plus `agent-contract.md`;
-- every role contains the exact filesystem `MAXIMS.md` bytes and hand-off reminder;
+- each exact `pitcrew install codex|opencode|claude|pi` selector installs only its selected runtime, even when all other homes and override variables exist;
+- every supported runtime installs exactly eight native agents plus `pitcrew/agent-contract.md` outside agent discovery: Codex: `agents/*.toml` with underscore native identities; OpenCode: `agents/*.md`; Claude Code: `agents/*.md`; Pi: `agents/*.md`;
+- every Aion definition resolves exactly the six native specialist identities, while Daimon can hand off only to Aion and specialists cannot delegate;
+- every role contains the exact canonical `MAXIMS.md` bytes and hand-off reminder;
 - a byte-identical reinstall is a no-op;
-- an existing `master.md`, customized `daimon.md`, or differing `aion.md` is protected unless `--overwrite` is explicit;
-- a partial failure restores every touched file;
-- unsupported runtime detection names Codex, OpenCode, Claude Code, and Pi.
+- the public command warns before transactionally refreshing only differing current and legacy PitCrew-managed filenames, and preserves unrelated files and application configuration;
+- direct script invocation protects differing managed files unless `--overwrite` is explicit;
+- a partial failure restores every touched file and removes installer-created directories and temporary files;
+- a built binary installs from embedded assets outside the checkout and leaves no extraction residue;
+- unsupported direct-script runtime detection names Codex, OpenCode, Claude Code, and Pi.
 
-Run `sh scripts/tests/run.sh` with `/bin/sh`, not Bash. If `shellcheck` is available, run it with shell dialect `sh` and resolve applicable findings.
+Pi installation additionally requires Node.js, an installed and active `pi-subagents` version 0.25.0 or newer, and an integer `maxSubagentDepth` of at least 3 in `<pi-agent-home>/extensions/subagent/config.json`. Depth three permits exactly the host-to-Daimon, Daimon-to-Aion, and Aion-to-specialist launches while specialist definitions omit `subagent`. Exact `npm:pi-subagents` identity may include a non-empty version/range suffix; near-name packages and missing, malformed, or insufficient depth configuration must fail before mutation. The installer never installs the extension, accesses the network, or modifies Pi configuration. The shell suite exercises all four public commands with isolated native schemas, identity sets, dispatch graphs, managed refresh, unrelated-file preservation, legacy migration, rollback, cleanup, and byte-stable reinstalls. When the OpenCode CLI is available it also compares `opencode --pure agent list` with the expected registry. Codex, Claude Code, and Pi have no stable offline invocation command, so offline schema and dispatch-graph validation proves discovery eligibility, not model execution.
 
-Before an overwrite migration, preserve any custom instructions needed from legacy `master.md`, customized `daimon.md`, or a pre-existing `aion.md`. Any differing managed prompt is refused without `--overwrite`; explicit overwrite uses the same transactional rollback and arbitrary customization is not translated automatically.
+OpenCode installation additionally requires OpenCode 1.18.23 or newer and an
+effective top-level integer `subagent_depth` of at least 2 in the target
+project. Verify the resolved value from that project with:
+
+```sh
+opencode --pure debug config
+```
+
+Upgrade older OpenCode installations to at least 1.18.23. Set
+`"subagent_depth": 2` in global configuration unless higher-precedence project
+configuration overrides it, then rerun `pitcrew install opencode` as printed by
+the failure. Malformed or incompatible resolved output must be fixed in the
+configuration reported by the verification command. The installer validates
+this prerequisite before any target write and never rewrites user JSON or
+JSONC. Depth two preserves the existing bounded topology: Daimon can call only
+Aion, Aion can call only the six specialists, and specialists cannot delegate.
+
+The real nested-runtime probe is isolated, opt-in, and may consume provider
+tokens. It reports `SKIP`, never `PASS`, when it is not enabled or lacks the CLI
+or credentials:
+
+```sh
+PITCREW_OPENCODE_DEPTH_PROBE=1 sh scripts/tests/opencode-depth-runtime.sh
+```
+
+The probe copies `~/.local/share/opencode/auth.json` into a temporary data home.
+Set `PITCREW_OPENCODE_AUTH_FILE` for a different credential file,
+`PITCREW_OPENCODE_DEPTH_ENV_CREDENTIALS=1` when the selected provider uses
+environment credentials, and `PITCREW_OPENCODE_DEPTH_MODEL` to override the
+default `openai/gpt-5.6-sol` model. It proves both the default depth-one failure
+and global depth-two success without reading or changing real OpenCode config.
+
+Run `sh scripts/tests/run.sh` with `/bin/sh`, not Bash. The suite builds a standalone binary and exercises the four public selectors, prerequisite failures, managed updates, idempotency, rollback, signals, and cleanup. If `shellcheck` is available, run it with shell dialect `sh` and resolve applicable findings.
+
+Before a managed refresh or direct overwrite migration, preserve any custom instructions needed from legacy `master.md`, customized `daimon.md`, or a pre-existing `aion.md` outside managed role filenames. Public installation authorizes bounded refresh and emits a warning; direct invocation refuses differing managed definitions without `--overwrite`. Both use the same transactional rollback, and arbitrary customization is not translated automatically.
 
 ## Scope changes
 

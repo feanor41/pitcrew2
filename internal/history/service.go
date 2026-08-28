@@ -416,19 +416,53 @@ func matchContext(text, query string) (string, bool) {
 const detailQuery = `SELECT record_id, kind, unit_id, revision, title, content, actor, at FROM (
 SELECT 'event:' || revision_after record_id, 'event' kind, '' unit_id, revision_after revision, from_state || ' -> ' || to_state title,
  reason content, actor, at FROM events WHERE workflow_id=?
-UNION ALL SELECT 'artifact:' || id, kind, '', accepted_revision, kind, content, actor, recorded_at
+UNION ALL SELECT 'artifact:' || id, kind, '', accepted_revision, kind,
+ CASE
+  WHEN kind='progress' AND json_valid(content) THEN
+   '# Progress report' || char(10) || char(10) ||
+   '**Status:** ' || COALESCE(json_extract(content, '$.status'), 'unavailable') || char(10) || char(10) ||
+   '**Summary:** ' || COALESCE(json_extract(content, '$.summary'), 'unavailable') || char(10) || char(10) ||
+   '**Next action:** ' || COALESCE(json_extract(content, '$.next_action'), 'unavailable')
+  WHEN kind='aggregate_review' AND json_valid(content) THEN
+   '# Aggregate review' || char(10) || char(10) ||
+   '**Verdict:** ' || COALESCE(json_extract(content, '$.verdict'), 'unavailable') || char(10) || char(10) ||
+   '**Summary:** ' || COALESCE(json_extract(content, '$.summary'), 'unavailable') || char(10) || char(10) ||
+   '**Findings:** ' || COALESCE(json_extract(content, '$.findings'), 'unavailable')
+  ELSE content
+ END, actor, recorded_at
  FROM artifacts WHERE workflow_id=?
-UNION ALL SELECT 'plan', 'plan', '', 0, summary, scope || ' ' || max_parallel_units || ' ' || body, '',
+UNION ALL SELECT 'plan', 'plan', '', 0, summary,
+ '# Accepted plan' || char(10) || char(10) ||
+ '**Summary:** ' || summary || char(10) || char(10) ||
+ '**Scope:** ' || scope || char(10) || char(10) ||
+ '**Max parallel units:** ' || max_parallel_units || char(10) || char(10) ||
+ '## Definition' || char(10) || char(10) || char(96) || char(96) || char(96) || 'json' || char(10) || body || char(10) || char(96) || char(96) || char(96), '',
  (SELECT updated_at FROM workflows WHERE id=plans.workflow_id) FROM plans WHERE workflow_id=?
 UNION ALL SELECT 'work_unit:' || id, 'work_unit', id, revision, description,
- scope || ' ' || areas || ' ' || depends_on || ' ' || state || ' ' ||
- COALESCE(admission_exception,'') || ' approved=' || admission_exception_approved, '',
+ '# Work unit' || char(10) || char(10) ||
+ '**Description:** ' || description || char(10) || char(10) ||
+ '**Scope:** ' || scope || char(10) || char(10) ||
+ '**Areas:** ' || areas || char(10) || char(10) ||
+ '**Dependencies:** ' || depends_on || char(10) || char(10) ||
+ '**Estimated changed lines:** ' || estimated_changed_lines || char(10) || char(10) ||
+ '**Estimated review minutes:** ' || estimated_review_minutes || char(10) || char(10) ||
+ '**State:** ' || state || char(10) || char(10) ||
+ '**Admission exception:** ' || COALESCE(admission_exception, 'none') || char(10) || char(10) ||
+ '**Exception approved:** ' || CASE admission_exception_approved WHEN 1 THEN 'yes' ELSE 'no' END, '',
  (SELECT updated_at FROM workflows WHERE id=work_units.workflow_id) FROM work_units WHERE workflow_id=?
-UNION ALL SELECT 'evidence:' || unit_id || ':' || revision, 'evidence', unit_id, revision, red_command,
- red_outcome || ' ' || green_command || ' ' || green_outcome || ' ' ||
- refactor_summary || ' ' || validation_command || ' ' || validation_outcome || ' ' || changed_paths, actor, recorded_at
+UNION ALL SELECT 'evidence:' || unit_id || ':' || revision, 'evidence', unit_id, revision, 'TDD evidence',
+ '# TDD evidence' || char(10) || char(10) ||
+ '## Red' || char(10) || char(10) || '**Command:** ' || red_command || char(10) || char(10) || '**Outcome:** ' || red_outcome || char(10) || char(10) ||
+ '## Green' || char(10) || char(10) || '**Command:** ' || green_command || char(10) || char(10) || '**Outcome:** ' || green_outcome || char(10) || char(10) ||
+ '## Refactor' || char(10) || char(10) || refactor_summary || char(10) || char(10) ||
+ '## Validation' || char(10) || char(10) || '**Command:** ' || validation_command || char(10) || char(10) || '**Outcome:** ' || validation_outcome || char(10) || char(10) ||
+ '**Changed paths:** ' || changed_paths, actor, recorded_at
  FROM evidence WHERE workflow_id=?
 UNION ALL SELECT 'review:' || unit_id || ':' || revision, 'review', unit_id, revision, verdict,
- summary || ' ' || findings || ' ' || plan_impact, actor, recorded_at
+ '# Unit review' || char(10) || char(10) ||
+ '**Verdict:** ' || verdict || char(10) || char(10) ||
+ '**Summary:** ' || summary || char(10) || char(10) ||
+ '**Findings:** ' || findings || char(10) || char(10) ||
+ '**Plan impact:** ' || plan_impact, actor, recorded_at
  FROM reviews WHERE workflow_id=?
 ) ORDER BY at ASC, kind ASC, unit_id ASC, revision ASC, record_id ASC`

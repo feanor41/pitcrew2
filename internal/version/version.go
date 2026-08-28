@@ -1,4 +1,4 @@
 package version
 
 // Current is the single release identity used by every PitCrew surface.
-const Current = "0.6.0"
+const Current = "0.12.0"

@@ -19,6 +19,7 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/history"
 	"github.com/fmazzalomo/pitcrew/internal/maxims"
 	"github.com/fmazzalomo/pitcrew/internal/plan"
+	"github.com/fmazzalomo/pitcrew/internal/runtimeinstall"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 	"github.com/fmazzalomo/pitcrew/internal/tui"
 	"github.com/fmazzalomo/pitcrew/internal/version"
@@ -33,13 +34,14 @@ var (
 )
 
 type Dependencies struct {
-	Stdin       io.Reader
-	Stdout      io.Writer
-	Stderr      io.Writer
-	ProjectRoot string
-	Now         func() time.Time
-	Entropy     io.Reader
-	TUIRunner   func(string, io.Reader, io.Writer) error
+	Stdin         io.Reader
+	Stdout        io.Writer
+	Stderr        io.Writer
+	ProjectRoot   string
+	Now           func() time.Time
+	Entropy       io.Reader
+	TUIRunner     func(string, io.Reader, io.Writer) error
+	InstallRunner func(string, runtimeinstall.Dependencies) int
 }
 
 type stageArtifactInput struct {
@@ -83,6 +85,8 @@ func Run(args []string, deps Dependencies) int {
 		return int(envelope.OK)
 	}
 	switch args[0] {
+	case "install":
+		return runInstall(args[1:], deps)
 	case "tui":
 		if len(args) != 1 {
 			return fail(deps, ErrUsage, "usage: pitcrew tui")
@@ -94,6 +98,32 @@ func Run(args []string, deps Dependencies) int {
 		return runWorkflow(args[1:], deps)
 	default:
 		return fail(deps, ErrUsage, fmt.Sprintf("unknown command %q", args[0]))
+	}
+}
+
+func runInstall(args []string, deps Dependencies) int {
+	if equalArgs(args, "--help") {
+		writeHelp(deps.Stdout, installHelp)
+		return int(envelope.OK)
+	}
+	if len(args) != 1 || !isInstallTarget(args[0]) {
+		return fail(deps, ErrUsage, "usage: pitcrew install <codex|opencode|claude|pi>")
+	}
+	runner := deps.InstallRunner
+	if runner == nil {
+		runner = runtimeinstall.Run
+	}
+	return runner(args[0], runtimeinstall.Dependencies{
+		Stdin: deps.Stdin, Stdout: deps.Stdout, Stderr: deps.Stderr, Cwd: deps.ProjectRoot,
+	})
+}
+
+func isInstallTarget(target string) bool {
+	switch target {
+	case "codex", "opencode", "claude", "pi":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -714,6 +744,7 @@ func writeHelp(w io.Writer, body string) {
 const rootHelp = `Usage: pitcrew <command> [options]
 
 Commands:
+  install codex|opencode|claude|pi
   tui
   principles
   workflow new|continue|show|progress|request-capability|explore|spec|design|plan|approve-plan
@@ -731,4 +762,10 @@ Commands: new, continue, show, progress, request-capability, explore, spec, desi
   unit-tdd, unit-review, unit-complete
 `
 const principlesHelp = `Usage: pitcrew principles [--json]
+`
+const installHelp = `Usage: pitcrew install <codex|opencode|claude|pi>
+
+Installs or updates PitCrew agents for one runtime.
+
+Runtimes: codex, opencode, claude, pi
 `

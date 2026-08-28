@@ -14,6 +14,7 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/envelope"
 	"github.com/fmazzalomo/pitcrew/internal/handles"
 	"github.com/fmazzalomo/pitcrew/internal/maxims"
+	"github.com/fmazzalomo/pitcrew/internal/runtimeinstall"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 	"github.com/fmazzalomo/pitcrew/internal/workflow"
 )
@@ -63,6 +64,64 @@ func TestUsageFailuresAreStderrOnlySingleLineAndLongFlagsOnly(t *testing.T) {
 	}
 }
 
+func TestInstallDispatchesOnlyExactSupportedTargetWithoutOpeningProjectStore(t *testing.T) {
+	for _, target := range []string{"codex", "opencode", "claude", "pi"} {
+		t.Run(target, func(t *testing.T) {
+			root := t.TempDir()
+			var called string
+			var got runtimeinstall.Dependencies
+			var stdout, stderr bytes.Buffer
+			deps := Dependencies{
+				Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &stderr, ProjectRoot: root,
+				InstallRunner: func(target string, deps runtimeinstall.Dependencies) int {
+					called, got = target, deps
+					return 23
+				},
+			}
+
+			if code := Run([]string{"install", target}, deps); code != 23 {
+				t.Fatalf("exit = %d, want 23", code)
+			}
+			if called != target || got.Stdin != deps.Stdin || got.Stdout != deps.Stdout || got.Stderr != deps.Stderr || got.Cwd != root {
+				t.Fatalf("dispatch = %q, %#v", called, got)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".pitcrew")); !os.IsNotExist(err) {
+				t.Fatalf("install opened project store: %v", err)
+			}
+		})
+	}
+}
+
+func TestInstallHelpAndUsageAreClosed(t *testing.T) {
+	help := runCLI(t, "install", "--help")
+	wantHelp := "Usage: pitcrew install <codex|opencode|claude|pi>\n\n" +
+		"Installs or updates PitCrew agents for one runtime.\n\n" +
+		"Runtimes: codex, opencode, claude, pi\n" + helpEpilogue + "\n"
+	if help.code != 0 || help.stderr != "" || help.stdout != wantHelp {
+		t.Fatalf("install help = %#v", help)
+	}
+	root := runCLI(t, "--help")
+	if !strings.Contains(root.stdout, "  install codex|opencode|claude|pi\n") {
+		t.Fatalf("root help omits install targets: %q", root.stdout)
+	}
+
+	for _, args := range [][]string{{"install"}, {"install", "CODEX"}, {"install", "unknown"}, {"install", "codex", "extra"}, {"install", "--overwrite"}} {
+		called := false
+		var stdout, stderr bytes.Buffer
+		code := Run(args, Dependencies{Stdout: &stdout, Stderr: &stderr, ProjectRoot: t.TempDir(), InstallRunner: func(string, runtimeinstall.Dependencies) int {
+			called = true
+			return 0
+		}})
+		if code != int(envelope.Usage) || stdout.Len() != 0 || called {
+			t.Fatalf("args=%v code=%d stdout=%q stderr=%q called=%v", args, code, stdout.String(), stderr.String(), called)
+		}
+		var failure envelope.Failure
+		if err := json.Unmarshal(stderr.Bytes(), &failure); err != nil || failure.Error.Message != "usage: pitcrew install <codex|opencode|claude|pi>" {
+			t.Fatalf("args=%v usage=%q parse=%v", args, stderr.String(), err)
+		}
+	}
+}
+
 func TestWorkflowNewAndShowUseEnvelopeAndProjectLocalStore(t *testing.T) {
 	root := t.TempDir()
 	created := runAt(t, root, "workflow", "new", "--name", "Release 0.2", "--goal", "ship safely", "--actor", "daimon")
@@ -97,7 +156,7 @@ func TestWorkflowNewAndShowUseEnvelopeAndProjectLocalStore(t *testing.T) {
 
 func TestVersionIsAGlobalFlag(t *testing.T) {
 	result := runCLI(t, "--version")
-	if result.code != 0 || result.stdout != "pitcrew 0.6.0\n" || result.stderr != "" {
+	if result.code != 0 || result.stdout != "pitcrew 0.12.0\n" || result.stderr != "" {
 		t.Fatalf("version=%#v", result)
 	}
 }
