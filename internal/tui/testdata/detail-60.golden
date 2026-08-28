@@ -10,7 +10,15 @@
 [1;38;2;226;232;240mPENDING WORK[m  1
 [REVIEWING] Render diseño operativo · try 1
 [1;38;2;226;232;240mHISTORY[m  4 occurrences
+  03:17 · Explore · Created workflow
+  Redesign TUI history
+  03:18 · Specify · Recorded specification
+  Diseño operativo
+  03:19 · Implement · Recorded TDD
+  Render diseño operativo · try 1 · Validation recorded
 [1;38;2;103;232;249m▶ [m03:20 · Review · Recorded review
   Render diseño operativo · try 1 · Approved
      Unit review
-[38;2;203;213;225mj/k • enter • r refresh • q quit • row 4/4  ·  60x16        [m
+      Verdict: approved
+      Store access preserves logical state.
+[38;2;203;213;225mj/k • enter • r refresh • q quit • row 4/4  ·  60x24        [m

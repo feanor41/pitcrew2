@@ -23,11 +23,17 @@ type Progress struct {
 	Summary    string `json:"summary"`
 	NextAction string `json:"next_action"`
 }
+type PlannedWork struct {
+	Total, Done, Percent int
+	Pending              []UnitStatus
+}
 type Synopsis struct {
 	Total, Done, Ready, Claimed, Reviewing, DependencyWaiting, Correction, Recovery int
 	Current, Blocker                                                                *UnitStatus
 	NextAction                                                                      string
 	Progress                                                                        *Progress
+	Planned                                                                         *PlannedWork
+	PlanNotice                                                                      string
 }
 type Occurrence struct {
 	ID, RecordID, At, Phase, Work, Activity, Actor, Outcome, Reason string
@@ -72,9 +78,10 @@ func (s *Service) project(ctx context.Context, detail *Detail) error {
 	if err != nil {
 		return err
 	}
-	for _, unit := range units {
+	for id, unit := range units {
 		status := &unit.status
 		status.Status, status.Reason = classify(unit, states, ready[status.ID], s.now())
+		units[id] = unit
 		switch status.Status {
 		case "Done":
 			detail.Synopsis.Done++
@@ -96,6 +103,10 @@ func (s *Service) project(ctx context.Context, detail *Detail) error {
 		}
 		detail.Synopsis.Total++
 	}
+	detail.Synopsis.Planned, detail.Synopsis.PlanNotice, err = s.plannedWork(ctx, detail.Workflow.ID, units)
+	if err != nil {
+		return err
+	}
 	if detail.Workflow.State == string(workflow.ReadyToComplete) {
 		var latest recordFact
 		for _, fact := range facts {
@@ -112,6 +123,34 @@ func (s *Service) project(ctx context.Context, detail *Detail) error {
 	}
 	detail.Occurrences = coalesce(detail, units, facts)
 	return nil
+}
+
+func (s *Service) plannedWork(ctx context.Context, workflowID string, units map[string]unitFact) (*PlannedWork, string, error) {
+	var body string
+	if err := s.db.QueryRowContext(ctx, `SELECT body FROM plans WHERE workflow_id=?`, workflowID).Scan(&body); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, "No planned work yet", nil
+		}
+		return nil, "", err
+	}
+	var accepted plan.Plan
+	if json.Unmarshal([]byte(body), &accepted) != nil || plan.Validate(accepted) != nil {
+		return nil, "Planned progress unavailable: incomplete plan data", nil
+	}
+	planned := &PlannedWork{Total: len(accepted.Units)}
+	for _, acceptedUnit := range accepted.Units {
+		unit, ok := units[acceptedUnit.ID]
+		if !ok || unit.state != "pending" && unit.state != "reviewing" && unit.state != "done" {
+			return nil, "Planned progress unavailable: incomplete plan data", nil
+		}
+		if unit.state == "done" {
+			planned.Done++
+			continue
+		}
+		planned.Pending = append(planned.Pending, unit.status)
+	}
+	planned.Percent = planned.Done * 100 / planned.Total
+	return planned, "", nil
 }
 
 func (s *Service) latestProgress(ctx context.Context, workflowID string) (*Progress, error) {
@@ -151,7 +190,7 @@ func classify(unit unitFact, states map[string]string, ready bool, now time.Time
 	case unit.claim.State != "" && unit.claim.State != "revoked":
 		return "Recovery", "Latest claim expired"
 	case blockedBy(unit.deps, states):
-		return "Dependency waiting", "Waiting for dependencies"
+		return "Dependency waiting", "Waiting for " + strings.Join(unresolvedDependencies(unit.deps, states), ", ")
 	case ready:
 		return "Ready", ""
 	default:
@@ -200,12 +239,16 @@ func preferred(a, b UnitStatus) bool {
 	return ar < br || ar == br && a.ID < b.ID
 }
 func blockedBy(deps []string, states map[string]string) bool {
+	return len(unresolvedDependencies(deps, states)) != 0
+}
+func unresolvedDependencies(deps []string, states map[string]string) []string {
+	var unresolved []string
 	for _, id := range deps {
 		if states[id] != "done" {
-			return true
+			unresolved = append(unresolved, id)
 		}
 	}
-	return false
+	return unresolved
 }
 
 func (s *Service) unitFacts(ctx context.Context, workflowID string) (map[string]unitFact, error) {

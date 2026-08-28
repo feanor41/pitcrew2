@@ -147,6 +147,132 @@ func TestServiceProjectsLatestValidProgressByInsertionOrder(t *testing.T) {
 	}
 }
 
+func TestServicePlannedWorkUsesAcceptedOrderAndStableProgress(t *testing.T) {
+	ctx, root := context.Background(), t.TempDir()
+	s, err := store.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	planBody := `{"summary":"three ordered units","scope":"internal/history","work_units":[{"id":"wu-000000000000000000000001","description":"finished projection","scope":"internal/history/one.go","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"wu-000000000000000000000002","description":"active projection","scope":"internal/history/two.go","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"wu-000000000000000000000003","description":"correct projection","scope":"internal/history/three.go","areas":[],"depends_on":["wu-000000000000000000000002"],"estimated_changed_lines":1,"estimated_review_minutes":1}],"max_parallel_units":1}`
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-planned',7,'implementing','Planned','goal','created','updated')`,
+		`INSERT INTO plans VALUES('wf-planned','three ordered units','internal/history',1,'` + planBody + `')`,
+		`INSERT INTO work_units VALUES('wu-000000000000000000000001','wf-planned','finished projection','internal/history/one.go','[]','[]',1,1,'done',NULL,0,1)`,
+		`INSERT INTO work_units VALUES('wu-000000000000000000000002','wf-planned','active projection','internal/history/two.go','[]','[]',1,1,'pending',NULL,0,1)`,
+		`INSERT INTO work_units VALUES('wu-000000000000000000000003','wf-planned','correct projection','internal/history/three.go','[]','["wu-000000000000000000000002"]',1,1,'pending',NULL,0,2)`,
+		`INSERT INTO work_units VALUES('wu-unplanned','wf-planned','legacy extra','legacy','[]','[]',1,1,'done',NULL,0,1)`,
+		`INSERT INTO reviews VALUES('wf-planned','wu-000000000000000000000003',1,'reviewer','corrections','summary','fix percentage rounding','','reviewed')`,
+		`INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation) VALUES('claim-planned','wf-planned','wu-000000000000000000000002','active','secret-hash','implementer','2026-08-28T12:00:00Z','2030-01-01T00:00:00Z',1)`,
+	} {
+		if _, err = s.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	detail, err := New(s, func() time.Time { return time.Date(2026, 8, 28, 13, 0, 0, 0, time.UTC) }).Detail(ctx, "wf-planned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned := detail.Synopsis.Planned
+	if planned == nil || planned.Done != 1 || planned.Total != 3 || planned.Percent != 33 || detail.Synopsis.PlanNotice != "" {
+		t.Fatalf("planned progress = %#v notice=%q", planned, detail.Synopsis.PlanNotice)
+	}
+	if len(planned.Pending) != 2 || planned.Pending[0].ID != "wu-000000000000000000000002" || planned.Pending[0].Status != "Claimed" || planned.Pending[1].ID != "wu-000000000000000000000003" || planned.Pending[1].Status != "Correction" || planned.Pending[1].Reason != "fix percentage rounding" {
+		t.Fatalf("ordered pending work = %#v", planned.Pending)
+	}
+	if _, err = s.DB().ExecContext(ctx, `UPDATE work_units SET state='done' WHERE workflow_id='wf-planned' AND id!='wu-unplanned'`); err != nil {
+		t.Fatal(err)
+	}
+	detail, err = New(s).Detail(ctx, "wf-planned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned = detail.Synopsis.Planned
+	if planned == nil || planned.Done != 3 || planned.Total != 3 || planned.Percent != 100 || len(planned.Pending) != 0 {
+		t.Fatalf("complete planned progress = %#v", planned)
+	}
+}
+
+func TestServicePlannedWorkOmitsUnavailablePrecision(t *testing.T) {
+	validBody := `{"summary":"one unit","scope":"internal/history","work_units":[{"id":"wu-000000000000000000000001","description":"missing unit","scope":"internal/history/missing.go","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}],"max_parallel_units":1}`
+	for _, tc := range []struct {
+		name, planBody, notice string
+	}{
+		{name: "absent", notice: "No planned work yet"},
+		{name: "malformed", planBody: "not-json", notice: "Planned progress unavailable: incomplete plan data"},
+		{name: "unreconciled", planBody: validBody, notice: "Planned progress unavailable: incomplete plan data"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, root := context.Background(), t.TempDir()
+			s, err := store.Open(ctx, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			if _, err = s.DB().ExecContext(ctx, `INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-notice',3,'designing','Notice','goal','created','updated')`); err != nil {
+				t.Fatal(err)
+			}
+			if tc.planBody != "" {
+				if _, err = s.DB().ExecContext(ctx, `INSERT INTO plans VALUES('wf-notice','summary','internal/history',1,?)`, tc.planBody); err != nil {
+					t.Fatal(err)
+				}
+			}
+			detail, err := New(s).Detail(ctx, "wf-notice")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if detail.Synopsis.Planned != nil || detail.Synopsis.PlanNotice != tc.notice {
+				t.Fatalf("planned=%#v notice=%q", detail.Synopsis.Planned, detail.Synopsis.PlanNotice)
+			}
+		})
+	}
+}
+
+func TestServiceRecordsUseLabeledMarkdownWithoutDroppingFields(t *testing.T) {
+	ctx, root := context.Background(), t.TempDir()
+	s, err := store.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	planBody := `{"summary":"record plan","scope":"internal/history","work_units":[{"id":"wu-000000000000000000000001","description":"record unit","scope":"internal/history/projection.go","areas":[],"depends_on":[],"estimated_changed_lines":12,"estimated_review_minutes":8}],"max_parallel_units":1}`
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-records',7,'implementing','Records','goal','created','updated')`,
+		`INSERT INTO plans VALUES('wf-records','record plan','internal/history',1,'` + planBody + `')`,
+		`INSERT INTO work_units VALUES('wu-000000000000000000000001','wf-records','record unit','internal/history/projection.go','["internal/history/service.go"]','["wu-dependency"]',12,8,'reviewing','{"justification":"bounded exception"}',1,3)`,
+		`INSERT INTO evidence VALUES('wf-records','wu-000000000000000000000001',3,'implementer','go test red','exit 1: expected failure','go test green','exit 0','kept helpers small','go test ./internal/history','exit 0','internal/history','evidence-time')`,
+		`INSERT INTO reviews VALUES('wf-records','wu-000000000000000000000001',3,'reviewer','corrections','review summary','repair labels','no plan change','review-time')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-records','progress','{"status":"blocked","summary":"waiting for review","next_action":"workflow unit-review"}','daimon',7,'progress-time')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-records','aggregate_review','{"verdict":"corrections","summary":"aggregate review summary","findings":"repair aggregate labels"}','aggregate-reviewer',7,'aggregate-time')`,
+	} {
+		if _, err = s.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	detail, err := New(s).Detail(ctx, "wf-records")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := map[string]string{}
+	for _, record := range detail.Records {
+		contents[record.Kind] = record.Content
+	}
+	for kind, fragments := range map[string][]string{
+		"plan":             {"# Accepted plan", "**Summary:** record plan", "**Scope:** internal/history", "**Max parallel units:** 1", "```json", `"work_units"`},
+		"work_unit":        {"# Work unit", "**Description:** record unit", "**Areas:**", "internal/history/service.go", "**Dependencies:**", "wu-dependency", "**Estimated changed lines:** 12", "**Estimated review minutes:** 8", "**State:** reviewing", "bounded exception", "**Exception approved:** yes"},
+		"evidence":         {"# TDD evidence", "## Red", "go test red", "expected failure", "## Green", "go test green", "## Refactor", "kept helpers small", "## Validation", "go test ./internal/history", "**Changed paths:** internal/history"},
+		"review":           {"# Unit review", "**Verdict:** corrections", "**Summary:** review summary", "**Findings:** repair labels", "**Plan impact:** no plan change"},
+		"progress":         {"# Progress report", "**Status:** blocked", "**Summary:** waiting for review", "**Next action:** workflow unit-review"},
+		"aggregate_review": {"# Aggregate review", "**Verdict:** corrections", "**Summary:** aggregate review summary", "**Findings:** repair aggregate labels"},
+	} {
+		for _, fragment := range fragments {
+			if !strings.Contains(contents[kind], fragment) {
+				t.Errorf("%s record omitted %q:\n%s", kind, fragment, contents[kind])
+			}
+		}
+	}
+}
+
 func operationalSnapshot(t *testing.T, db *sql.DB, workflowID string) string {
 	t.Helper()
 	var snapshot string
@@ -256,7 +382,7 @@ func TestServiceProjectsDeterministicProjectHistory(t *testing.T) {
 		}
 	}
 	joined := recordText(detail.Records)
-	for _, want := range []string{"wu-dependency", "approved=1", "red-text", "review-text"} {
+	for _, want := range []string{"wu-dependency", "**Exception approved:** yes", "red-text", "review-text"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("detail missing %q", want)
 		}

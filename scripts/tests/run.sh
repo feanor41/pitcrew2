@@ -14,20 +14,117 @@ snapshot() { find "$1" -type f -exec cksum {} \; | sort > "$2"; }
 assert_no_temps() { find "$1" -name '.pitcrew-install.*' -o -name '.*.md.new.*' | grep . >/dev/null && fail "installer temporary remains in $1" || :; }
 roles='daimon aion pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer'
 legacy_roles='explorer specifier designer task-planner implementer reviewer archivist pc2-archivist'
+role_path() {
+  directory=$1 role=$2
+  native=$(printf '%s' "$role" | tr '-' '_')
+  if [ -f "$directory/$native.toml" ]; then printf '%s' "$directory/$native.toml"; else printf '%s' "$directory/$role.md"; fi
+}
+contract_path() {
+  directory=$1
+  if [ -f "$directory/../pitcrew/agent-contract.md" ]; then printf '%s' "$directory/../pitcrew/agent-contract.md"; else printf '%s' "$directory/agent-contract.md"; fi
+}
 assert_role_set() {
+  if find "$1" -maxdepth 1 -type f -name '*.toml' | grep . >/dev/null; then
+    assert_codex_registry "${1%/agents}"
+    return
+  fi
   for role in $roles; do assert_file "$1/$role.md"; done
-  assert_file "$1/agent-contract.md"
-  [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 9 ] || fail "unexpected prompt set in $1"
+  if [ -f "$1/../pitcrew/agent-contract.md" ]; then
+    assert_absent "$1/agent-contract.md"
+    [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 8 ] || fail "unexpected agent set in $1"
+  else
+    assert_file "$1/agent-contract.md"
+    [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 9 ] || fail "unexpected prompt set in $1"
+  fi
   assert_absent "$1/master.md"
   for role in $legacy_roles; do assert_absent "$1/$role.md"; done
+}
+
+assert_codex_registry() {
+  registry=$1/agents
+  expected='aion daimon pc2_designer pc2_explorer pc2_implementer pc2_reviewer pc2_specifier pc2_task_planner'
+  actual=$(find "$registry" -maxdepth 1 -type f -name '*.toml' -exec basename {} .toml \; | sort | tr '\n' ' ' | sed 's/ $//')
+  [ "$actual" = "$expected" ] || fail "unexpected Codex registry: $actual"
+  assert_file "$1/pitcrew/agent-contract.md"
+  assert_absent "$registry/agent-contract.toml"
+  for role in $expected; do
+    file=$registry/$role.toml
+    grep -F 'name = "' "$file" >/dev/null || fail "$role missing Codex name"
+    grep -F 'description = "' "$file" >/dev/null || fail "$role missing Codex description"
+    grep -F "developer_instructions = '''" "$file" >/dev/null || fail "$role missing Codex instructions"
+  done
+  for graph_target in pc2_explorer pc2_specifier pc2_designer pc2_task_planner pc2_implementer pc2_reviewer; do
+    grep -F "$graph_target" "$registry/aion.toml" >/dev/null || fail "Codex Aion cannot resolve $graph_target"
+  done
+}
+
+assert_opencode_registry() {
+  registry=$1/agents
+  expected='aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-specifier pc2-task-planner'
+  actual=$(find "$registry" -maxdepth 1 -type f -name '*.md' -exec basename {} .md \; | sort | tr '\n' ' ' | sed 's/ $//')
+  [ "$actual" = "$expected" ] || fail "unexpected OpenCode registry: $actual"
+  assert_file "$1/pitcrew/agent-contract.md"
+  assert_absent "$registry/agent-contract.md"
+  grep -F 'mode: primary' "$registry/daimon.md" >/dev/null || fail 'OpenCode Daimon is not primary'
+  grep -F '    aion: allow' "$registry/daimon.md" >/dev/null || fail 'OpenCode Daimon cannot hand off to Aion'
+  grep -F 'mode: all' "$registry/aion.md" >/dev/null || fail 'OpenCode Aion is not dispatch-capable'
+  for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+    grep -F "    $graph_target: allow" "$registry/aion.md" >/dev/null || fail "OpenCode Aion cannot resolve $graph_target"
+    grep -F 'mode: subagent' "$registry/$graph_target.md" >/dev/null || fail "$graph_target is not an OpenCode subagent"
+  done
+}
+assert_claude_registry() {
+  registry=$1/agents
+  expected='aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-specifier pc2-task-planner'
+  actual=$(find "$registry" -maxdepth 1 -type f -name '*.md' -exec basename {} .md \; | sort | tr '\n' ' ' | sed 's/ $//')
+  [ "$actual" = "$expected" ] || fail "unexpected Claude registry: $actual"
+  assert_file "$1/pitcrew/agent-contract.md"
+  assert_absent "$registry/agent-contract.md"
+  grep -F 'name: daimon' "$registry/daimon.md" >/dev/null || fail 'Claude Daimon metadata is invalid'
+  grep -F 'tools: Agent' "$registry/daimon.md" >/dev/null || fail 'Claude Daimon cannot hand off to Aion'
+  grep -F 'name: aion' "$registry/aion.md" >/dev/null || fail 'Claude Aion metadata is invalid'
+  grep -F 'Claude delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer.' "$registry/aion.md" >/dev/null || fail 'Claude Aion cannot resolve specialist targets'
+  for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+    grep -F "name: $graph_target" "$registry/$graph_target.md" >/dev/null || fail "$graph_target missing Claude metadata"
+    grep -F 'disallowedTools: Agent' "$registry/$graph_target.md" >/dev/null || fail "$graph_target can unexpectedly delegate in Claude"
+  done
+}
+seed_pi_subagents() {
+  home=$1 version=$2 active=$3 package_source=${4:-npm:pi-subagents}
+  mkdir -p "$home/npm/node_modules/pi-subagents" "$home/extensions/subagent"
+  printf '{"name":"pi-subagents","version":"%s"}\n' "$version" > "$home/npm/node_modules/pi-subagents/package.json"
+  printf '%s\n' '{"maxSubagentDepth":3}' > "$home/extensions/subagent/config.json"
+  if [ "$active" = yes ]; then
+    printf '{"packages":["%s"]}\n' "$package_source" > "$home/settings.json"
+  else
+    printf '%s\n' '{"packages":[]}' > "$home/settings.json"
+  fi
+}
+assert_pi_registry() {
+  registry=$1/agents
+  expected='aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-specifier pc2-task-planner'
+  actual=$(find "$registry" -maxdepth 1 -type f -name '*.md' -exec basename {} .md \; | sort | tr '\n' ' ' | sed 's/ $//')
+  [ "$actual" = "$expected" ] || fail "unexpected Pi registry: $actual"
+  assert_file "$1/pitcrew/agent-contract.md"
+  assert_absent "$registry/agent-contract.md"
+  grep -F 'tools: read, grep, find, ls, bash, edit, write, subagent' "$registry/aion.md" >/dev/null || fail 'Pi Aion lacks nested delegation eligibility'
+  grep -F 'maxSubagentDepth: 3' "$registry/daimon.md" >/dev/null || fail 'Pi Daimon cannot reach Aion and a specialist'
+  grep -F 'maxSubagentDepth: 3' "$registry/aion.md" >/dev/null || fail 'Pi Aion cannot reach a specialist through Daimon'
+  for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+    grep -F "name: $graph_target" "$registry/$graph_target.md" >/dev/null || fail "$graph_target missing Pi metadata"
+    grep '^tools: .*subagent' "$registry/$graph_target.md" >/dev/null && fail "$graph_target can unexpectedly delegate in Pi" || :
+  done
 }
 assert_proportional_contract() {
   destination=$1
   for role in $roles; do
+    file=$(role_path "$destination" "$role")
     maxim_lines=$(wc -l < "$ROOT/MAXIMS.md" | tr -d ' ')
-    sed -n "3,$((maxim_lines + 2))p" "$destination/$role.md" > "$TMP_ROOT/$role.proportional.maxims"
+    start=$(grep -nF 'Internalize the four maxims below. They are your operating system.' "$file" | head -1 | cut -d: -f1)
+    sed -n "$((start + 2)),$((start + maxim_lines + 1))p" "$file" > "$TMP_ROOT/$role.proportional.maxims"
     cmp "$ROOT/MAXIMS.md" "$TMP_ROOT/$role.proportional.maxims" || fail "$role proportional maxims drift in $destination"
   done
+  contract_file=$(contract_path "$destination")
   for contract in \
     'exists only to help the user achieve the stated goal' \
     'Is this solution overkill for the context?' \
@@ -36,9 +133,37 @@ assert_proportional_contract() {
     'name the protected constraint and explain why the simpler option is insufficient' \
     'claim secrecy' 'opaque-handle boundaries' 'reviewer independence' 'truthful evidence and progress' \
     'CAS inspection requirements' 'workflow integrity' 'terminal immutability' 'safety boundaries'; do
-    grep -F "$contract" "$destination/agent-contract.md" >/dev/null || fail "agent contract proportional-design rule omitted $contract in $destination"
+    grep -F "$contract" "$contract_file" >/dev/null || fail "agent contract proportional-design rule omitted $contract in $destination"
   done
-  grep -F 'Applying an already-decided approach creates no new gate, justification, or artifact.' "$destination/agent-contract.md" >/dev/null || fail "agent contract omitted mechanical-execution exemption in $destination"
+  grep -F 'Applying an already-decided approach creates no new gate, justification, or artifact.' "$contract_file" >/dev/null || fail "agent contract omitted mechanical-execution exemption in $destination"
+}
+
+assert_authority_contract() {
+  destination=$1
+  daimon=$(role_path "$destination" daimon)
+  aion=$(role_path "$destination" aion)
+  contract=$(contract_path "$destination")
+  grep -F 'reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker' "$daimon" >/dev/null || fail "Daimon continuity drift in $destination"
+  grep -F 'sole external orchestration authority' "$aion" >/dev/null || fail "Aion authority drift in $destination"
+  grep -F 'Retain workflow context and orchestration authority across all phases of an accepted delivery until terminal completion or a genuine blocker.' "$aion" >/dev/null || fail "Aion continuity drift in $destination"
+  grep -F 'Return only factual revision-bearing status or clarification requests to Daimon.' "$aion" >/dev/null || fail "Aion hand-off drift in $destination"
+  grep -F 'reuse one addressable Aion instance across all phases until terminal completion or a genuine blocker' "$contract" >/dev/null || fail "shared continuity drift in $destination"
+  for specialist in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+    file=$(role_path "$destination" "$specialist")
+    grep -F 'Return only a one-line revision-bearing completion status to Aion.' "$file" >/dev/null || fail "$specialist hand-off drift in $destination"
+  done
+}
+
+assert_exact_maxims() {
+  destination=$1
+  maxim_lines=$(wc -l < "$ROOT/MAXIMS.md" | tr -d ' ')
+  for role in $roles; do
+    file=$(role_path "$destination" "$role")
+    start=$(grep -nF 'Internalize the four maxims below. They are your operating system.' "$file" | head -1 | cut -d: -f1)
+    [ -n "$start" ] || fail "$role omitted embedded maxims in $destination"
+    sed -n "$((start + 2)),$((start + maxim_lines + 1))p" "$file" > "$TMP_ROOT/public-$role.maxims"
+    cmp "$ROOT/MAXIMS.md" "$TMP_ROOT/public-$role.maxims" || fail "$role maxims drift in $destination"
+  done
 }
 
 sh -n "$INSTALLER" || fail "installer is not POSIX-shell parseable"
@@ -51,69 +176,415 @@ fi
 for runtime in Codex OpenCode 'Claude Code' Pi; do
   grep "$runtime" "$TMP_ROOT/unsupported.err" >/dev/null || fail "unsupported error omitted $runtime"
 done
+
+fake_bin=$TMP_ROOT/fake-bin
+mkdir -p "$fake_bin"
+cat > "$fake_bin/opencode" <<'FAKE_OPENCODE'
+#!/bin/sh
+set -eu
+case "$*" in
+  '--version')
+    case ${PITCREW_TEST_OPENCODE_VERSION:-1.18.23} in
+      timeout) sleep 6; printf '%s\n' 1.18.23 ;;
+      oversized) awk 'BEGIN { for (i=0; i<1100000; i++) printf "1"; print "" }' ;;
+      control) printf '1.18.23\001\n' ;;
+      command-failure) printf '%s\n' 'version failed' >&2; exit 1 ;;
+      *) printf '%s\n' "${PITCREW_TEST_OPENCODE_VERSION:-1.18.23}" ;;
+    esac
+    ;;
+  '--pure debug config')
+    [ -z "${PITCREW_TEST_OPENCODE_CWD_FILE:-}" ] || pwd -P > "$PITCREW_TEST_OPENCODE_CWD_FILE"
+    case ${PITCREW_TEST_OPENCODE_CONFIG:-depth2} in
+      depth2) printf '%s\n' '{"subagent_depth":2}' ;;
+      depth3) printf '%s\n' '{"subagent_depth":3}' ;;
+      missing) printf '%s\n' '{}' ;;
+      depth1) printf '%s\n' '{"subagent_depth":1}' ;;
+      negative) printf '%s\n' '{"subagent_depth":-1}' ;;
+      fractional) printf '%s\n' '{"subagent_depth":2.5}' ;;
+      duplicate) printf '%s\n' '{"subagent_depth":2,"subagent_depth":3}' ;;
+      malformed) printf '%s\n' 'not-json' ;;
+      incompatible) printf '%s\n' '{"subagent_depth":"2"}' ;;
+      control) printf '{"subagent_depth":2,"bad":"\001"}\n' ;;
+      oversized) awk 'BEGIN { printf "{\"subagent_depth\":2,\"padding\":\""; for (i=0; i<1100000; i++) printf "x"; print "\"}" }' ;;
+      timeout) sleep 6; printf '%s\n' '{"subagent_depth":2}' ;;
+      command-failure) printf '%s\n' 'unsupported debug command' >&2; exit 1 ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  '--pure agent list')
+    for file in "${OPENCODE_CONFIG_DIR:?}"/agents/*.md; do
+      name=${file##*/}
+      printf '%s (subagent)\n' "${name%.md}"
+    done
+    ;;
+  *) exit 2 ;;
+esac
+FAKE_OPENCODE
+chmod +x "$fake_bin/opencode"
+PATH=$fake_bin:$PATH
+export PATH
+PITCREW_OPENCODE_BIN=$fake_bin/opencode
+export PITCREW_OPENCODE_BIN
+
+public_binary=$TMP_ROOT/pitcrew
+(cd "$ROOT" && GOCACHE=${GOCACHE:-$TMP_ROOT/go-cache} go build -o "$public_binary" ./cmd/pitcrew)
+
+public_default_home=$TMP_ROOT/public-default-home
+mkdir -p "$public_default_home"
+env -i HOME="$public_default_home" PATH="$PATH" TMPDIR="$TMP_ROOT" "$public_binary" install codex > "$TMP_ROOT/public-default.out"
+assert_codex_registry "$public_default_home/.codex"
+grep -Fx "Installed PitCrew agents for Codex in $public_default_home/.codex/agents" "$TMP_ROOT/public-default.out" >/dev/null || fail 'public Codex default success output drifted'
+
+public_codex=$TMP_ROOT/public-codex
+public_opencode=$TMP_ROOT/public-opencode
+public_claude=$TMP_ROOT/public-claude
+public_pi=$TMP_ROOT/public-pi
+seed_pi_subagents "$public_pi" 0.25.0 yes
+cp "$public_pi/settings.json" "$TMP_ROOT/public-pi.settings.before"
+cp "$public_pi/npm/node_modules/pi-subagents/package.json" "$TMP_ROOT/public-pi.package.before"
+mkdir -p "$public_codex" "$public_opencode" "$public_claude"
+snapshot "$public_opencode" "$TMP_ROOT/public-opencode.initial"
+snapshot "$public_claude" "$TMP_ROOT/public-claude.initial"
+snapshot "$public_pi" "$TMP_ROOT/public-pi.initial"
+
+CODEX_HOME=$public_codex OPENCODE_CONFIG_DIR=$public_opencode CLAUDE_CONFIG_DIR=$public_claude PI_AGENT_HOME=$public_pi \
+  "$public_binary" install codex > "$TMP_ROOT/public-codex.out"
+assert_codex_registry "$public_codex"
+assert_exact_maxims "$public_codex/agents"
+snapshot "$public_opencode" "$TMP_ROOT/public-opencode.after-codex"
+snapshot "$public_claude" "$TMP_ROOT/public-claude.after-codex"
+snapshot "$public_pi" "$TMP_ROOT/public-pi.after-codex"
+cmp "$TMP_ROOT/public-opencode.initial" "$TMP_ROOT/public-opencode.after-codex" || fail 'public Codex selection inspected or changed OpenCode'
+cmp "$TMP_ROOT/public-claude.initial" "$TMP_ROOT/public-claude.after-codex" || fail 'public Codex selection inspected or changed Claude'
+cmp "$TMP_ROOT/public-pi.initial" "$TMP_ROOT/public-pi.after-codex" || fail 'public Codex selection inspected or changed Pi'
+
+caller_cwd_public=$TMP_ROOT/public-opencode-cwd
+mkdir -p "$caller_cwd_public"
+(cd "$caller_cwd_public" && CODEX_HOME=$public_codex OPENCODE_CONFIG_DIR=$public_opencode CLAUDE_CONFIG_DIR=$public_claude PI_AGENT_HOME=$public_pi \
+  PITCREW_TEST_OPENCODE_CWD_FILE=$TMP_ROOT/public-opencode.cwd "$public_binary" install opencode > "$TMP_ROOT/public-opencode.out")
+assert_opencode_registry "$public_opencode"
+assert_exact_maxims "$public_opencode/agents"
+[ "$(cat "$TMP_ROOT/public-opencode.cwd")" = "$caller_cwd_public" ] || fail 'public OpenCode validation did not retain caller cwd'
+
+CODEX_HOME=$public_codex OPENCODE_CONFIG_DIR=$public_opencode CLAUDE_CONFIG_DIR=$public_claude PI_AGENT_HOME=$public_pi \
+  "$public_binary" install claude > "$TMP_ROOT/public-claude.out"
+assert_claude_registry "$public_claude"
+assert_exact_maxims "$public_claude/agents"
+CODEX_HOME=$public_codex OPENCODE_CONFIG_DIR=$public_opencode CLAUDE_CONFIG_DIR=$public_claude PI_AGENT_HOME=$public_pi \
+"$public_binary" install pi > "$TMP_ROOT/public-pi.out"
+assert_pi_registry "$public_pi"
+assert_exact_maxims "$public_pi/agents"
+cmp "$TMP_ROOT/public-pi.settings.before" "$public_pi/settings.json" || fail 'public Pi install changed settings.json'
+cmp "$TMP_ROOT/public-pi.package.before" "$public_pi/npm/node_modules/pi-subagents/package.json" || fail 'public Pi install changed package metadata'
+
+public_pi_versioned=$TMP_ROOT/public-pi-versioned
+seed_pi_subagents "$public_pi_versioned" 0.50.0 yes 'npm:pi-subagents@^0.50.0'
+PI_AGENT_HOME=$public_pi_versioned "$public_binary" install pi >/dev/null
+assert_pi_registry "$public_pi_versioned"
+public_pi_near_name=$TMP_ROOT/public-pi-near-name
+seed_pi_subagents "$public_pi_near_name" 0.50.0 yes 'npm:pi-subagents-extra@0.50.0'
+if PI_AGENT_HOME=$public_pi_near_name "$public_binary" install pi > "$TMP_ROOT/public-pi-near-name.out" 2> "$TMP_ROOT/public-pi-near-name.err"; then
+  fail 'public Pi near-name prerequisite succeeded'
+fi
+grep -F 'Rerun: pitcrew install pi' "$TMP_ROOT/public-pi-near-name.err" >/dev/null || fail 'public Pi prerequisite omitted durable rerun guidance'
+assert_absent "$public_pi_near_name/agents"
+assert_absent "$public_pi_near_name/pitcrew"
+
+snapshot "$public_codex" "$TMP_ROOT/public-codex.idempotent-before"
+CODEX_HOME=$public_codex "$public_binary" install codex > "$TMP_ROOT/public-codex.idempotent-out" 2> "$TMP_ROOT/public-codex.idempotent-err"
+snapshot "$public_codex" "$TMP_ROOT/public-codex.idempotent-after"
+cmp "$TMP_ROOT/public-codex.idempotent-before" "$TMP_ROOT/public-codex.idempotent-after" || fail 'public byte-identical reinstall changed Codex files'
+[ ! -s "$TMP_ROOT/public-codex.idempotent-err" ] || fail 'public byte-identical reinstall warned'
+
+printf '%s\n' 'old managed bytes' > "$public_codex/agents/aion.toml"
+printf '%s\n' 'unrelated custom bytes' > "$public_codex/agents/my-agent.toml"
+mkdir -p "$public_codex/prompts"
+printf '%s\n' 'obsolete PitCrew master' > "$public_codex/prompts/master.md"
+CODEX_HOME=$public_codex "$public_binary" install codex > "$TMP_ROOT/public-update.out" 2> "$TMP_ROOT/public-update.err"
+grep -F 'PitCrew-managed definitions are being refreshed' "$TMP_ROOT/public-update.err" >/dev/null || fail 'public managed refresh omitted warning'
+grep -F 'custom content must live outside managed role files' "$TMP_ROOT/public-update.err" >/dev/null || fail 'public managed refresh warning omitted customization boundary'
+grep -F 'old managed bytes' "$public_codex/agents/aion.toml" >/dev/null && fail 'public update retained old managed bytes'
+grep -Fx 'unrelated custom bytes' "$public_codex/agents/my-agent.toml" >/dev/null || fail 'public update changed unrelated file'
+assert_absent "$public_codex/prompts/master.md"
+
+public_failure=$TMP_ROOT/public-failure
+mkdir -p "$public_failure"
+printf '%s\n' preserved > "$public_failure/unrelated"
+snapshot "$public_failure" "$TMP_ROOT/public-failure.before"
+if OPENCODE_CONFIG_DIR=$public_failure PITCREW_TEST_OPENCODE_CONFIG=depth1 "$public_binary" install opencode > "$TMP_ROOT/public-failure.out" 2> "$TMP_ROOT/public-failure.err"; then
+  fail 'public OpenCode prerequisite failure succeeded'
+fi
+grep -F 'Rerun: pitcrew install opencode' "$TMP_ROOT/public-failure.err" >/dev/null || fail 'public prerequisite omitted durable rerun guidance'
+grep -F '"subagent_depth": 2' "$TMP_ROOT/public-failure.err" >/dev/null || fail 'public OpenCode prerequisite omitted remediation'
+grep -F "$caller_cwd_public" "$TMP_ROOT/public-failure.err" >/dev/null && fail 'public prerequisite leaked unrelated path'
+snapshot "$public_failure" "$TMP_ROOT/public-failure.after"
+cmp "$TMP_ROOT/public-failure.before" "$TMP_ROOT/public-failure.after" || fail 'public prerequisite failure mutated target'
+
+public_missing_cli=$TMP_ROOT/public-missing-cli
+mkdir -p "$public_missing_cli"
+if OPENCODE_CONFIG_DIR=$public_missing_cli PITCREW_OPENCODE_BIN=$TMP_ROOT/missing-opencode "$public_binary" install opencode > "$TMP_ROOT/public-missing-cli.out" 2> "$TMP_ROOT/public-missing-cli.err"; then
+  fail 'public OpenCode missing CLI prerequisite succeeded'
+fi
+grep -F 'requires the opencode CLI' "$TMP_ROOT/public-missing-cli.err" >/dev/null || fail 'public OpenCode missing CLI error drifted'
+grep -F 'Rerun: pitcrew install opencode' "$TMP_ROOT/public-missing-cli.err" >/dev/null || fail 'public OpenCode missing CLI omitted rerun guidance'
+assert_absent "$public_missing_cli/agents"
+assert_absent "$public_missing_cli/pitcrew"
+
+public_rollback=$TMP_ROOT/public-rollback
+CODEX_HOME=$public_rollback "$public_binary" install codex >/dev/null
+printf '%s\n' 'previous aion' > "$public_rollback/agents/aion.toml"
+mkdir -p "$public_rollback/prompts"
+printf '%s\n' 'previous master' > "$public_rollback/prompts/master.md"
+snapshot "$public_rollback" "$TMP_ROOT/public-rollback.before"
+if CODEX_HOME=$public_rollback PITCREW_TEST_FAIL_AFTER_WRITES=1 "$public_binary" install codex >/dev/null 2>&1; then fail 'public rollback injection succeeded'; fi
+snapshot "$public_rollback" "$TMP_ROOT/public-rollback.after"
+cmp "$TMP_ROOT/public-rollback.before" "$TMP_ROOT/public-rollback.after" || fail 'public failure did not roll back exact target tree'
+assert_no_temps "$public_rollback"
+
+public_signal=$TMP_ROOT/public-signal
+CODEX_HOME=$public_signal "$public_binary" install codex >/dev/null
+printf '%s\n' 'previous reviewer' > "$public_signal/agents/pc2_reviewer.toml"
+snapshot "$public_signal" "$TMP_ROOT/public-signal.before"
+if CODEX_HOME=$public_signal PITCREW_TEST_SIGNAL_AFTER_WRITES=1 "$public_binary" install codex >/dev/null 2>&1; then fail 'public signal injection succeeded'; fi
+snapshot "$public_signal" "$TMP_ROOT/public-signal.after"
+cmp "$TMP_ROOT/public-signal.before" "$TMP_ROOT/public-signal.after" || fail 'public signal did not roll back exact target tree'
+assert_no_temps "$public_signal"
+
+for depth_case in missing depth1 negative fractional duplicate malformed incompatible control oversized timeout command-failure; do
+  depth_home=$TMP_ROOT/opencode-depth-$depth_case
+  mkdir -p "$depth_home"
+  printf '%s\n' preserved > "$depth_home/existing"
+  snapshot "$depth_home" "$TMP_ROOT/depth-$depth_case.before"
+  if OPENCODE_CONFIG_DIR=$depth_home PITCREW_TEST_OPENCODE_CONFIG=$depth_case sh "$INSTALLER" >"$TMP_ROOT/depth-$depth_case.out" 2>"$TMP_ROOT/depth-$depth_case.err"; then
+    fail "OpenCode $depth_case effective depth accepted"
+  fi
+  case $depth_case in
+    missing) expected_fragment='effective subagent_depth is missing' ;;
+    depth1|negative) expected_fragment='effective subagent_depth must be at least 2' ;;
+    fractional|incompatible) expected_fragment='incompatible subagent_depth value' ;;
+    duplicate) expected_fragment='ambiguous duplicate subagent_depth values' ;;
+    malformed|control) expected_fragment='malformed configuration JSON' ;;
+    oversized) expected_fragment='configuration output exceeded 1048576 bytes' ;;
+    timeout) expected_fragment='configuration query timed out after 5 seconds' ;;
+    command-failure) expected_fragment='cannot resolve OpenCode effective configuration' ;;
+  esac
+  grep -F "$expected_fragment" "$TMP_ROOT/depth-$depth_case.err" >/dev/null || fail "OpenCode $depth_case error is not exact and actionable"
+  grep -F "target project $ROOT" "$TMP_ROOT/depth-$depth_case.err" >/dev/null || fail "OpenCode $depth_case error omitted target cwd"
+  grep -F "Verify: $fake_bin/opencode --pure debug config" "$TMP_ROOT/depth-$depth_case.err" >/dev/null || fail "OpenCode $depth_case error omitted verification command"
+  grep -F 'Higher-precedence project configuration may override global settings.' "$TMP_ROOT/depth-$depth_case.err" >/dev/null || fail "OpenCode $depth_case error omitted precedence warning"
+  grep -F "Rerun: $INSTALLER" "$TMP_ROOT/depth-$depth_case.err" >/dev/null || fail "OpenCode $depth_case error omitted exact rerun"
+  snapshot "$depth_home" "$TMP_ROOT/depth-$depth_case.after"
+  cmp "$TMP_ROOT/depth-$depth_case.before" "$TMP_ROOT/depth-$depth_case.after" || fail "OpenCode $depth_case prerequisite changed target files"
+  assert_absent "$depth_home/agents"
+  assert_absent "$depth_home/pitcrew"
+done
+
+for version_case in timeout oversized control command-failure; do
+  version_home=$TMP_ROOT/opencode-version-$version_case
+  mkdir -p "$version_home"
+  printf '%s\n' preserved > "$version_home/existing"
+  snapshot "$version_home" "$TMP_ROOT/version-$version_case.before"
+  if OPENCODE_CONFIG_DIR=$version_home PITCREW_TEST_OPENCODE_VERSION=$version_case sh "$INSTALLER" >"$TMP_ROOT/version-$version_case.out" 2>"$TMP_ROOT/version-$version_case.err"; then
+    fail "OpenCode $version_case version output accepted"
+  fi
+  case $version_case in
+    timeout) expected_fragment='OpenCode version query timed out after 5 seconds' ;;
+    oversized) expected_fragment='OpenCode version output exceeded 1048576 bytes' ;;
+    control) expected_fragment='OpenCode returned incompatible version output' ;;
+    command-failure) expected_fragment='cannot query OpenCode version' ;;
+  esac
+  grep -F "$expected_fragment" "$TMP_ROOT/version-$version_case.err" >/dev/null || fail "OpenCode $version_case version error is not actionable"
+  grep -F "target project $ROOT" "$TMP_ROOT/version-$version_case.err" >/dev/null || fail "OpenCode $version_case version error omitted target cwd"
+  grep -F "Verify: $fake_bin/opencode --pure debug config" "$TMP_ROOT/version-$version_case.err" >/dev/null || fail "OpenCode $version_case version error omitted verification command"
+  grep -F "Rerun: $INSTALLER" "$TMP_ROOT/version-$version_case.err" >/dev/null || fail "OpenCode $version_case version error omitted exact rerun"
+  snapshot "$version_home" "$TMP_ROOT/version-$version_case.after"
+  cmp "$TMP_ROOT/version-$version_case.before" "$TMP_ROOT/version-$version_case.after" || fail "OpenCode $version_case version check changed target files"
+  assert_absent "$version_home/agents"
+  assert_absent "$version_home/pitcrew"
+done
+
+old_opencode=$TMP_ROOT/opencode-old
+mkdir -p "$old_opencode"
+if OPENCODE_CONFIG_DIR=$old_opencode PITCREW_TEST_OPENCODE_VERSION=1.18.22 sh "$INSTALLER" >"$TMP_ROOT/opencode-old.out" 2>"$TMP_ROOT/opencode-old.err"; then
+  fail 'OpenCode 1.18.22 accepted'
+fi
+grep -F 'OpenCode >= 1.18.23 is required; found 1.18.22.' "$TMP_ROOT/opencode-old.err" >/dev/null || fail 'OpenCode version boundary error is not actionable'
+assert_absent "$old_opencode/agents"
+
+opencode_newer=$TMP_ROOT/opencode-newer
+OPENCODE_CONFIG_DIR=$opencode_newer PITCREW_TEST_OPENCODE_VERSION=2.0.0 PITCREW_TEST_OPENCODE_CONFIG=depth3 sh "$INSTALLER" >/dev/null
+assert_opencode_registry "$opencode_newer"
+
+poison_bin=$TMP_ROOT/poison-bin
+mkdir -p "$poison_bin"
+cat > "$poison_bin/opencode" <<'POISON_OPENCODE'
+#!/bin/sh
+exit 99
+POISON_OPENCODE
+chmod +x "$poison_bin/opencode"
+explicit_bin_home=$TMP_ROOT/opencode-explicit-bin
+PATH=$poison_bin:$PATH OPENCODE_CONFIG_DIR=$explicit_bin_home PITCREW_OPENCODE_BIN=$fake_bin/opencode sh "$INSTALLER" >/dev/null
+assert_opencode_registry "$explicit_bin_home"
+
+caller_cwd=$TMP_ROOT/opencode-caller-cwd
+caller_home=$TMP_ROOT/opencode-caller-home
+mkdir -p "$caller_cwd"
+(cd "$caller_cwd" && OPENCODE_CONFIG_DIR=$caller_home PITCREW_TEST_OPENCODE_CWD_FILE=$TMP_ROOT/opencode.cwd sh "$INSTALLER" >/dev/null)
+[ "$(cat "$TMP_ROOT/opencode.cwd")" = "$caller_cwd" ] || fail 'OpenCode effective configuration was not resolved from caller cwd'
+
 codex=$TMP_ROOT/codex
 CODEX_HOME=$codex sh "$INSTALLER"
-target=$codex/prompts
+assert_codex_registry "$codex"
+target=$codex/agents
 assert_role_set "$target"
 assert_proportional_contract "$target"
+assert_authority_contract "$target"
 for role in $roles; do
-  file=$target/$role.md
+  file=$(role_path "$target" "$role")
   assert_file "$file"
-  first=$(sed -n '1p' "$file")
-  second=$(sed -n '2p' "$file")
+  start=$(grep -nF 'Internalize the four maxims below. They are your operating system.' "$file" | head -1 | cut -d: -f1)
+  first=$(sed -n "${start}p" "$file")
+  second=$(sed -n "$((start + 1))p" "$file")
   [ "$first" = 'Internalize the four maxims below. They are your operating system.' ] || fail "$role prefix line 1"
   [ "$second" = 'Every decision you make is subordinate to them.' ] || fail "$role prefix line 2"
   maxim_lines=$(wc -l < "$ROOT/MAXIMS.md" | tr -d ' ')
-  sed -n "3,$((maxim_lines + 2))p" "$file" > "$TMP_ROOT/$role.maxims"
+  sed -n "$((start + 2)),$((start + maxim_lines + 1))p" "$file" > "$TMP_ROOT/$role.maxims"
   cmp "$ROOT/MAXIMS.md" "$TMP_ROOT/$role.maxims" || fail "$role maxims drift"
 done
+daimon_file=$(role_path "$target" daimon)
+aion_file=$(role_path "$target" aion)
+contract_file=$(contract_path "$target")
 for contract in 'interview the user' 'clarify intent' 'conversational continuity' 'Aion-acknowledged facts' 'requested, not applied'; do
-  grep -F "$contract" "$target/daimon.md" >/dev/null || fail "Daimon contract omitted $contract"
+  grep -F "$contract" "$daimon_file" >/dev/null || fail "Daimon contract omitted $contract"
 done
+grep -F 'reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker' "$daimon_file" >/dev/null || fail 'Daimon omitted Aion delivery continuity'
 for forbidden in 'may invoke any workflow command' 'Choose the least costly valid route' 'handoff-review' 'abandon --reason' 'aggregate review'; do
-  grep -F "$forbidden" "$target/daimon.md" >/dev/null && fail "Daimon retained orchestration authority: $forbidden" || :
+  grep -F "$forbidden" "$daimon_file" >/dev/null && fail "Daimon retained orchestration authority: $forbidden" || :
 done
 for authority in 'sole external orchestration authority' 'owns the workflow ID, current revision, goal, and status' 'may invoke any workflow command' 'abandon --reason' 'handoff-review' 'recover-review' 'workflow continue --from' 'workflow request-capability'; do
-  grep -F "$authority" "$target/aion.md" >/dev/null || fail "Aion authority omitted $authority"
+  grep -F "$authority" "$aion_file" >/dev/null || fail "Aion authority omitted $authority"
 done
-grep -F 'Concurrent Daimon availability depends on an addressable-agent host runtime.' "$target/aion.md" >/dev/null || fail 'Aion omitted host concurrency boundary'
-grep -F 'Return only factual revision-bearing status or clarification requests to Daimon.' "$target/aion.md" >/dev/null || fail 'Aion hand-off contract omitted'
+grep -F 'Concurrent Daimon availability depends on an addressable-agent host runtime.' "$aion_file" >/dev/null || fail 'Aion omitted host concurrency boundary'
+grep -F 'Retain workflow context and orchestration authority across all phases of an accepted delivery until terminal completion or a genuine blocker.' "$aion_file" >/dev/null || fail 'Aion omitted retained delivery authority'
+grep -F 'Return only factual revision-bearing status or clarification requests to Daimon.' "$aion_file" >/dev/null || fail 'Aion hand-off contract omitted'
 for role in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
-  grep -F 'Return only a one-line revision-bearing completion status to Aion.' "$target/$role.md" >/dev/null || fail "$role does not report only to Aion"
-  grep -F 'completion status to Daimon' "$target/$role.md" >/dev/null && fail "$role still reports to Daimon" || :
+  file=$(role_path "$target" "$role")
+  grep -F 'Return only a one-line revision-bearing completion status to Aion.' "$file" >/dev/null || fail "$role does not report only to Aion"
+  grep -F 'completion status to Daimon' "$file" >/dev/null && fail "$role still reports to Daimon" || :
 done
 for obstruction_rule in 'On exit 3 or 4' 'inspect once' 'harness obstructs legitimate work' 'never issue an identical retry'; do
-  grep -F "$obstruction_rule" "$target/aion.md" >/dev/null || fail "Aion obstruction rule omitted $obstruction_rule"
-  grep -F "$obstruction_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract obstruction rule omitted $obstruction_rule"
+  grep -F "$obstruction_rule" "$aion_file" >/dev/null || fail "Aion obstruction rule omitted $obstruction_rule"
+  grep -F "$obstruction_rule" "$contract_file" >/dev/null || fail "agent contract obstruction rule omitted $obstruction_rule"
 done
 for route in 'at most three files' 'four or more files' 'risk overrides file count' 'delegated direct' 'full workflow' 'exploration: pc2-explorer' 'specification: pc2-specifier' 'design: pc2-designer' 'task planning: pc2-task-planner' 'implementation: pc2-implementer' 'aggregate review: pc2-reviewer' 'Never delegate a workflow role to General or general'; do
-  grep -F "$route" "$target/aion.md" >/dev/null || fail "Aion routing omitted $route"
-  grep -F "$route" "$target/agent-contract.md" >/dev/null || fail "agent contract routing omitted $route"
+  grep -F "$route" "$aion_file" >/dev/null || fail "Aion routing omitted $route"
+  grep -F "$route" "$contract_file" >/dev/null || fail "agent contract routing omitted $route"
 done
 for authority in 'may invoke any workflow command' 'abandon --reason' 'must not claim independent approval' 'must not bypass aggregate review'; do
-  grep -F "$authority" "$target/aion.md" >/dev/null || fail "Aion authority omitted $authority"
+  grep -F "$authority" "$aion_file" >/dev/null || fail "Aion authority omitted $authority"
 done
 for handle_rule in 'must not disclose handle contents or secrets' 'must pass only the opaque handle path to pc2-reviewer'; do
-  grep -F "$handle_rule" "$target/aion.md" >/dev/null || fail "Aion handle contract omitted $handle_rule"
+  grep -F "$handle_rule" "$aion_file" >/dev/null || fail "Aion handle contract omitted $handle_rule"
 done
-grep -F 'recover-review may rotate it only for the same reviewer after expiry' "$target/aion.md" >/dev/null || fail 'Aion review recovery contract omitted actor continuity'
-grep -F 'recover-review` preserves the originally handed-off reviewer identity' "$target/agent-contract.md" >/dev/null || fail 'agent contract omitted review recovery identity'
-grep -F 'workflow continue --from to create a linked draft instead' "$target/aion.md" >/dev/null || fail 'Aion terminal continuation contract omitted'
-grep -F 'Continue terminal work only with `workflow continue --from`' "$target/agent-contract.md" >/dev/null || fail 'agent contract omitted terminal continuation'
+grep -F 'recover-review may rotate it only for the same reviewer after expiry' "$aion_file" >/dev/null || fail 'Aion review recovery contract omitted actor continuity'
+grep -F 'recover-review` preserves the originally handed-off reviewer identity' "$contract_file" >/dev/null || fail 'agent contract omitted review recovery identity'
+grep -F 'workflow continue --from to create a linked draft instead' "$aion_file" >/dev/null || fail 'Aion terminal continuation contract omitted'
+grep -F 'Continue terminal work only with `workflow continue --from`' "$contract_file" >/dev/null || fail 'agent contract omitted terminal continuation'
 for progress_rule in 'short, truthful, non-repetitive user status' 'Silence is required until a meaningful fact changes' 'must not fabricate progress or repeat encouragement'; do
-  grep -F "$progress_rule" "$target/daimon.md" >/dev/null || fail "Daimon progress contract omitted $progress_rule"
-  grep -F "$progress_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract progress contract omitted $progress_rule"
+  grep -F "$progress_rule" "$daimon_file" >/dev/null || fail "Daimon progress contract omitted $progress_rule"
+  grep -F "$progress_rule" "$contract_file" >/dev/null || fail "agent contract progress contract omitted $progress_rule"
 done
 for capability_rule in 'required tool, command, or transition is absent' 'workflow request-capability' 'does not imply fulfillment' 'must not invent or bypass'; do
-  grep -F "$capability_rule" "$target/aion.md" >/dev/null || fail "Aion capability contract omitted $capability_rule"
-  grep -F "$capability_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract capability contract omitted $capability_rule"
+  grep -F "$capability_rule" "$aion_file" >/dev/null || fail "Aion capability contract omitted $capability_rule"
+  grep -F "$capability_rule" "$contract_file" >/dev/null || fail "agent contract capability contract omitted $capability_rule"
 done
 for review_rule in 'Unit review is selective' 'Final aggregate review is mandatory' 'requirements, specifications, design, tasks, implementation evidence, and tests'; do
-  grep -F "$review_rule" "$target/agent-contract.md" >/dev/null || fail "agent contract review rule omitted $review_rule"
+  grep -F "$review_rule" "$contract_file" >/dev/null || fail "agent contract review rule omitted $review_rule"
 done
-assert_file "$target/agent-contract.md"
+grep -F 'reuse one addressable Aion instance across all phases until terminal completion or a genuine blocker' "$contract_file" >/dev/null || fail 'agent contract omitted Aion delivery continuity'
+assert_file "$contract_file"
 for prohibited in '--claim-token' '--emit-plain-token' '--print-claim-handle-secret-once' 'same identity' 'CAS'; do
-  grep -F -- "$prohibited" "$target/agent-contract.md" >/dev/null || fail "contract omitted $prohibited"
+  grep -F -- "$prohibited" "$contract_file" >/dev/null || fail "contract omitted $prohibited"
+done
+
+missing_graph=$TMP_ROOT/missing-opencode-graph
+if OPENCODE_CONFIG_DIR=$missing_graph PITCREW_TEST_DROP_STAGED_ROLE=pc2-reviewer sh "$INSTALLER" >"$TMP_ROOT/missing-graph.out" 2>"$TMP_ROOT/missing-graph.err"; then
+  fail 'OpenCode install accepted a missing declared specialist'
+fi
+assert_absent "$missing_graph/agents"
+assert_absent "$missing_graph/pitcrew"
+
+for runtime in codex claude pi; do
+  missing_graph=$TMP_ROOT/missing-$runtime-graph
+  case $runtime in
+    codex)
+      if CODEX_HOME=$missing_graph PITCREW_TEST_DROP_STAGED_ROLE=pc2-reviewer sh "$INSTALLER" >"$TMP_ROOT/missing-$runtime.out" 2>"$TMP_ROOT/missing-$runtime.err"; then fail 'Codex install accepted a missing declared specialist'; fi
+      ;;
+    claude)
+      if CLAUDE_CONFIG_DIR=$missing_graph PITCREW_TEST_DROP_STAGED_ROLE=pc2-reviewer sh "$INSTALLER" >"$TMP_ROOT/missing-$runtime.out" 2>"$TMP_ROOT/missing-$runtime.err"; then fail 'Claude install accepted a missing declared specialist'; fi
+      ;;
+    pi)
+      seed_pi_subagents "$missing_graph" 0.25.0 yes
+      if PI_AGENT_HOME=$missing_graph PITCREW_TEST_DROP_STAGED_ROLE=pc2-reviewer sh "$INSTALLER" >"$TMP_ROOT/missing-$runtime.out" 2>"$TMP_ROOT/missing-$runtime.err"; then fail 'Pi install accepted a missing declared specialist'; fi
+      ;;
+  esac
+  assert_absent "$missing_graph/agents"
+  assert_absent "$missing_graph/pitcrew"
+done
+
+claude_native=$TMP_ROOT/claude-native
+CLAUDE_CONFIG_DIR=$claude_native sh "$INSTALLER"
+assert_claude_registry "$claude_native"
+
+for pi_case in absent old inactive decoy-settings malformed-package malformed-settings near-name missing-depth insufficient-depth malformed-depth; do
+  pi_home=$TMP_ROOT/pi-$pi_case
+  case $pi_case in
+    absent) mkdir -p "$pi_home" ;;
+    old) seed_pi_subagents "$pi_home" 0.24.9 yes ;;
+    inactive) seed_pi_subagents "$pi_home" 0.25.0 no ;;
+    decoy-settings)
+      seed_pi_subagents "$pi_home" 0.25.0 no
+      printf '%s\n' '{"packages":[],"note":"npm:pi-subagents"}' > "$pi_home/settings.json"
+      ;;
+    malformed-package)
+      seed_pi_subagents "$pi_home" 0.25.0 yes
+      printf '%s\n' 'not-json {"name":"pi-subagents","version":"0.25.0"}' > "$pi_home/npm/node_modules/pi-subagents/package.json"
+      ;;
+    malformed-settings)
+      seed_pi_subagents "$pi_home" 0.25.0 yes
+      printf '%s\n' 'not-json {"packages":["npm:pi-subagents"]}' > "$pi_home/settings.json"
+      ;;
+    near-name) seed_pi_subagents "$pi_home" 0.50.0 yes 'npm:pi-subagents-extra@0.50.0' ;;
+    missing-depth)
+      seed_pi_subagents "$pi_home" 0.25.0 yes
+      rm "$pi_home/extensions/subagent/config.json"
+      ;;
+    insufficient-depth)
+      seed_pi_subagents "$pi_home" 0.25.0 yes
+      printf '%s\n' '{"maxSubagentDepth":2}' > "$pi_home/extensions/subagent/config.json"
+      ;;
+    malformed-depth)
+      seed_pi_subagents "$pi_home" 0.25.0 yes
+      printf '%s\n' '{"maxSubagentDepth":"3"}' > "$pi_home/extensions/subagent/config.json"
+      ;;
+  esac
+  if PI_AGENT_HOME=$pi_home sh "$INSTALLER" >"$TMP_ROOT/pi-$pi_case.out" 2>"$TMP_ROOT/pi-$pi_case.err"; then
+    fail "Pi $pi_case prerequisite accepted"
+  fi
+  assert_absent "$pi_home/agents"
+  assert_absent "$pi_home/pitcrew"
+done
+
+pi_native=$TMP_ROOT/pi-native
+seed_pi_subagents "$pi_native" 0.25.0 yes
+PI_AGENT_HOME=$pi_native sh "$INSTALLER"
+assert_pi_registry "$pi_native"
+
+for pi_source in 'npm:pi-subagents@0.50.0' 'npm:pi-subagents@^0.50.0'; do
+  pi_versioned=$TMP_ROOT/pi-versioned-$(printf '%s' "$pi_source" | tr -c '[:alnum:]' '-')
+  seed_pi_subagents "$pi_versioned" 0.50.0 yes "$pi_source"
+  PI_AGENT_HOME=$pi_versioned sh "$INSTALLER"
+  assert_pi_registry "$pi_versioned"
 done
 
 snapshot "$target" "$TMP_ROOT/before.cksum"
@@ -121,41 +592,42 @@ CODEX_HOME=$codex sh "$INSTALLER"
 snapshot "$target" "$TMP_ROOT/after.cksum"
 cmp "$TMP_ROOT/before.cksum" "$TMP_ROOT/after.cksum" || fail "reinstall changed bytes"
 
-printf 'custom explorer\n' > "$target/pc2-explorer.md"
+printf 'custom explorer\n' > "$target/pc2_explorer.toml"
 snapshot "$target" "$TMP_ROOT/custom-role.before"
 if CODEX_HOME=$codex sh "$INSTALLER" >"$TMP_ROOT/custom-role.out" 2>"$TMP_ROOT/custom-role.err"; then fail 'custom role accepted without overwrite'; fi
 snapshot "$target" "$TMP_ROOT/custom-role.after"
 cmp "$TMP_ROOT/custom-role.before" "$TMP_ROOT/custom-role.after" || fail 'custom role refusal changed files'
-grep -F 'custom explorer' "$target/pc2-explorer.md" >/dev/null || fail 'custom role was overwritten'
+grep -F 'custom explorer' "$target/pc2_explorer.toml" >/dev/null || fail 'custom role was overwritten'
 CODEX_HOME=$codex sh "$INSTALLER" --overwrite >/dev/null
-grep -F 'custom explorer' "$target/pc2-explorer.md" >/dev/null && fail 'overwrite did not refresh custom role'
+grep -F 'custom explorer' "$target/pc2_explorer.toml" >/dev/null && fail 'overwrite did not refresh custom role'
 
-printf 'custom master\n' > "$target/master.md"
-for role in $legacy_roles; do printf 'legacy %s\n' "$role" > "$target/$role.md"; done
-snapshot "$target" "$TMP_ROOT/custom.cksum"
+mkdir -p "$codex/prompts"
+printf 'custom master\n' > "$codex/prompts/master.md"
+for role in $legacy_roles; do printf 'legacy %s\n' "$role" > "$codex/prompts/$role.md"; done
+snapshot "$codex" "$TMP_ROOT/custom.cksum"
 if CODEX_HOME=$codex sh "$INSTALLER" >"$TMP_ROOT/refuse.out" 2>"$TMP_ROOT/refuse.err"; then
   fail "legacy master accepted without --overwrite"
 fi
-grep -F 'custom master' "$target/master.md" >/dev/null || fail "custom master was changed"
-snapshot "$target" "$TMP_ROOT/refused.cksum"
+grep -F 'custom master' "$codex/prompts/master.md" >/dev/null || fail "custom master was changed"
+snapshot "$codex" "$TMP_ROOT/refused.cksum"
 cmp "$TMP_ROOT/custom.cksum" "$TMP_ROOT/refused.cksum" || fail "refused install changed files"
 grep -F -- '--overwrite' "$TMP_ROOT/refuse.err" >/dev/null || fail 'legacy refusal omitted overwrite guidance'
 CODEX_HOME=$codex sh "$INSTALLER" --overwrite >"$TMP_ROOT/migrate.out" 2>"$TMP_ROOT/migrate.err"
 grep -F 'preserve desired custom text' "$TMP_ROOT/migrate.err" >/dev/null || fail 'overwrite warning omitted customization risk'
-assert_absent "$target/master.md"
-for role in $legacy_roles; do assert_absent "$target/$role.md"; done
-assert_file "$target/daimon.md"
+assert_absent "$codex/prompts/master.md"
+for role in $legacy_roles; do assert_absent "$codex/prompts/$role.md"; done
+assert_file "$target/daimon.toml"
 
 for protected in daimon aion; do
   differ=$TMP_ROOT/differing-$protected
   CODEX_HOME=$differ sh "$INSTALLER" >/dev/null
-  printf 'custom %s\n' "$protected" > "$differ/prompts/$protected.md"
-  snapshot "$differ/prompts" "$TMP_ROOT/$protected.before"
+  printf 'custom %s\n' "$protected" > "$differ/agents/$protected.toml"
+  snapshot "$differ" "$TMP_ROOT/$protected.before"
   if CODEX_HOME=$differ sh "$INSTALLER" >"$TMP_ROOT/$protected.out" 2>"$TMP_ROOT/$protected.err"; then fail "custom $protected accepted without overwrite"; fi
-  snapshot "$differ/prompts" "$TMP_ROOT/$protected.after"
+  snapshot "$differ" "$TMP_ROOT/$protected.after"
   cmp "$TMP_ROOT/$protected.before" "$TMP_ROOT/$protected.after" || fail "$protected refusal changed files"
   CODEX_HOME=$differ sh "$INSTALLER" --overwrite >/dev/null
-  grep -F "custom $protected" "$differ/prompts/$protected.md" >/dev/null && fail "$protected overwrite did not restore canonical prompt"
+  grep -F "custom $protected" "$differ/agents/$protected.toml" >/dev/null && fail "$protected overwrite did not restore canonical prompt"
 done
 
 for case_name in fail-remove signal-remove fail-writes signal-writes; do
@@ -188,6 +660,30 @@ snapshot "$legacy_rollback/prompts" "$TMP_ROOT/legacy-removal.after"
 cmp "$TMP_ROOT/legacy-removal.before" "$TMP_ROOT/legacy-removal.after" || fail 'legacy removal fault did not restore all files'
 assert_no_temps "$legacy_rollback"
 
+for runtime in codex opencode claude pi; do
+  rollback=$TMP_ROOT/cross-runtime-rollback-$runtime
+  case $runtime in
+    codex) CODEX_HOME=$rollback sh "$INSTALLER" >/dev/null; legacy=$rollback/prompts ;;
+    opencode) OPENCODE_CONFIG_DIR=$rollback sh "$INSTALLER" >/dev/null; legacy=$rollback/agents ;;
+    claude) CLAUDE_CONFIG_DIR=$rollback sh "$INSTALLER" >/dev/null; legacy=$rollback/prompts ;;
+    pi) seed_pi_subagents "$rollback" 0.25.0 yes; PI_AGENT_HOME=$rollback sh "$INSTALLER" >/dev/null; legacy=$rollback/agents ;;
+  esac
+  mkdir -p "$legacy"
+  printf 'legacy master\n' > "$legacy/master.md"
+  case $runtime in codex) reviewer=$rollback/agents/pc2_reviewer.toml ;; *) reviewer=$rollback/agents/pc2-reviewer.md ;; esac
+  printf 'custom reviewer\n' > "$reviewer"
+  snapshot "$rollback" "$TMP_ROOT/$runtime.cross-runtime.before"
+  case $runtime in
+    codex) if CODEX_HOME=$rollback PITCREW_TEST_FAIL_AFTER_WRITES=1 sh "$INSTALLER" --overwrite >/dev/null 2>&1; then fail "$runtime rollback injection succeeded"; fi ;;
+    opencode) if OPENCODE_CONFIG_DIR=$rollback PITCREW_TEST_FAIL_AFTER_WRITES=1 sh "$INSTALLER" --overwrite >/dev/null 2>&1; then fail "$runtime rollback injection succeeded"; fi ;;
+    claude) if CLAUDE_CONFIG_DIR=$rollback PITCREW_TEST_FAIL_AFTER_WRITES=1 sh "$INSTALLER" --overwrite >/dev/null 2>&1; then fail "$runtime rollback injection succeeded"; fi ;;
+    pi) if PI_AGENT_HOME=$rollback PITCREW_TEST_FAIL_AFTER_WRITES=1 sh "$INSTALLER" --overwrite >/dev/null 2>&1; then fail "$runtime rollback injection succeeded"; fi ;;
+  esac
+  snapshot "$rollback" "$TMP_ROOT/$runtime.cross-runtime.after"
+  cmp "$TMP_ROOT/$runtime.cross-runtime.before" "$TMP_ROOT/$runtime.cross-runtime.after" || fail "$runtime rollback did not restore native and legacy files"
+  assert_no_temps "$rollback"
+done
+
 order_home=$TMP_ROOT/rollback-order
 order_bin=$TMP_ROOT/rollback-order-bin
 mkdir -p "$order_home/prompts" "$order_bin"
@@ -203,7 +699,7 @@ exec /bin/cp "$@"
 EOF
 chmod 700 "$order_bin/cp"
 if PATH="$order_bin:$PATH" ROLLBACK_ORDER_FILE="$TMP_ROOT/rollback.order" CODEX_HOME="$order_home" PITCREW_TEST_FAIL_AFTER_WRITES=2 sh "$INSTALLER" --overwrite >"$TMP_ROOT/order.out" 2>"$TMP_ROOT/order.err"; then fail 'rollback-order injection succeeded'; fi
-printf '%s\n' daimon.md explorer.md master.md > "$TMP_ROOT/rollback.expected"
+printf '%s\n' 3 2 1 > "$TMP_ROOT/rollback.expected"
 cmp "$TMP_ROOT/rollback.expected" "$TMP_ROOT/rollback.order" || fail 'rollback did not compensate in reverse mutation order'
 
 empty=$TMP_ROOT/new-empty-target
@@ -212,6 +708,10 @@ mkdir -p "$stage_tmp"
 if TMPDIR=$stage_tmp CODEX_HOME=$empty PITCREW_TEST_FAIL_AFTER_WRITES=1 sh "$INSTALLER" >"$TMP_ROOT/empty.out" 2>"$TMP_ROOT/empty.err"; then fail 'new-target failure succeeded'; fi
 assert_absent "$empty/prompts"
 [ -z "$(find "$stage_tmp" -mindepth 1 -print)" ] || fail 'private stage was not cleaned'
+
+nested_empty=$TMP_ROOT/new/nested/codex-home
+if CODEX_HOME=$nested_empty PITCREW_TEST_FAIL_AFTER_WRITES=1 sh "$INSTALLER" >"$TMP_ROOT/nested-empty.out" 2>"$TMP_ROOT/nested-empty.err"; then fail 'nested new-target failure succeeded'; fi
+assert_absent "$TMP_ROOT/new"
 
 for kind in symlink directory; do
   unsafe=$TMP_ROOT/unsafe-$kind
@@ -226,16 +726,57 @@ for runtime in opencode claude pi; do
   mkdir -p "$home"
   case $runtime in
     opencode) OPENCODE_CONFIG_DIR=$home sh "$INSTALLER"; installed=$home/agents ;;
-    claude) CLAUDE_CONFIG_DIR=$home sh "$INSTALLER"; installed=$home/prompts ;;
-    pi) PI_AGENT_HOME=$home sh "$INSTALLER"; installed=$home/agents ;;
+    claude) CLAUDE_CONFIG_DIR=$home sh "$INSTALLER"; installed=$home/agents ;;
+    pi) seed_pi_subagents "$home" 0.25.0 yes; PI_AGENT_HOME=$home sh "$INSTALLER"; installed=$home/agents ;;
   esac
   assert_role_set "$installed"
   assert_proportional_contract "$installed"
+  assert_authority_contract "$installed"
+  if [ "$runtime" = opencode ]; then
+    assert_opencode_registry "$home"
+    if command -v opencode >/dev/null 2>&1; then
+      mkdir -p "$home/xdg-data" "$home/xdg-state" "$home/xdg-cache" "$home/runtime-home"
+      HOME="$home/runtime-home" XDG_DATA_HOME="$home/xdg-data" XDG_STATE_HOME="$home/xdg-state" XDG_CACHE_HOME="$home/xdg-cache" OPENCODE_CONFIG_DIR="$home" \
+        opencode --pure agent list > "$home/native-agent-list"
+      grep -E '^(daimon|aion|pc2-(explorer|specifier|designer|task-planner|implementer|reviewer)) \(' "$home/native-agent-list" | sed 's/ (.*$//' | sort > "$home/native-agent-names"
+      printf '%s\n' aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-specifier pc2-task-planner > "$home/expected-agent-names"
+      cmp "$home/expected-agent-names" "$home/native-agent-names" || fail 'OpenCode native discovery omitted or duplicated PitCrew agents'
+    fi
+  elif [ "$runtime" = claude ]; then
+    assert_claude_registry "$home"
+  elif [ "$runtime" = pi ]; then
+    assert_pi_registry "$home"
+  fi
+
+  snapshot "$home" "$TMP_ROOT/$runtime.idempotent.before"
+  case $runtime in
+    opencode) OPENCODE_CONFIG_DIR=$home sh "$INSTALLER" >/dev/null ;;
+    claude) CLAUDE_CONFIG_DIR=$home sh "$INSTALLER" >/dev/null ;;
+    pi) PI_AGENT_HOME=$home sh "$INSTALLER" >/dev/null ;;
+  esac
+  snapshot "$home" "$TMP_ROOT/$runtime.idempotent.after"
+  cmp "$TMP_ROOT/$runtime.idempotent.before" "$TMP_ROOT/$runtime.idempotent.after" || fail "$runtime reinstall changed bytes"
+
+  printf 'custom reviewer\n' > "$installed/pc2-reviewer.md"
+  snapshot "$home" "$TMP_ROOT/$runtime.overwrite.before"
+  case $runtime in
+    opencode) if OPENCODE_CONFIG_DIR=$home sh "$INSTALLER" >"$TMP_ROOT/$runtime.overwrite.out" 2>"$TMP_ROOT/$runtime.overwrite.err"; then fail "$runtime accepted a differing role without overwrite"; fi ;;
+    claude) if CLAUDE_CONFIG_DIR=$home sh "$INSTALLER" >"$TMP_ROOT/$runtime.overwrite.out" 2>"$TMP_ROOT/$runtime.overwrite.err"; then fail "$runtime accepted a differing role without overwrite"; fi ;;
+    pi) if PI_AGENT_HOME=$home sh "$INSTALLER" >"$TMP_ROOT/$runtime.overwrite.out" 2>"$TMP_ROOT/$runtime.overwrite.err"; then fail "$runtime accepted a differing role without overwrite"; fi ;;
+  esac
+  snapshot "$home" "$TMP_ROOT/$runtime.overwrite.after"
+  cmp "$TMP_ROOT/$runtime.overwrite.before" "$TMP_ROOT/$runtime.overwrite.after" || fail "$runtime overwrite refusal changed files"
+  case $runtime in
+    opencode) OPENCODE_CONFIG_DIR=$home sh "$INSTALLER" --overwrite >/dev/null ;;
+    claude) CLAUDE_CONFIG_DIR=$home sh "$INSTALLER" --overwrite >/dev/null ;;
+    pi) PI_AGENT_HOME=$home sh "$INSTALLER" --overwrite >/dev/null ;;
+  esac
+  grep -F 'custom reviewer' "$installed/pc2-reviewer.md" >/dev/null && fail "$runtime overwrite did not restore the native role"
 done
 
 spaced=$TMP_ROOT/'home with spaces'
 CODEX_HOME="$spaced" sh "$INSTALLER" >/dev/null
-assert_role_set "$spaced/prompts"
+assert_role_set "$spaced/agents"
 
 for document in "$ROOT/AGENTS.md" "$ROOT/docs/cli-reference.md" "$ROOT/docs/contributing.md"; do
   assert_file "$document"
@@ -248,6 +789,15 @@ for code in '0 — ok' '1 — internal' '2 — usage' '3 — state' '4 — CAS' 
 done
 grep -F 'go test ./...' "$ROOT/docs/contributing.md" >/dev/null || fail 'contributing guide omitted Go validation'
 grep -F 'sh scripts/tests/run.sh' "$ROOT/docs/contributing.md" >/dev/null || fail 'contributing guide omitted installer validation'
+for native_contract in \
+  'Codex: `agents/*.toml`' \
+  'OpenCode: `agents/*.md`' \
+  'Claude Code: `agents/*.md`' \
+  'Pi: `agents/*.md`' \
+  '`pi-subagents` version 0.25.0 or newer' \
+  'offline schema and dispatch-graph validation proves discovery eligibility, not model execution'; do
+  grep -F "$native_contract" "$ROOT/docs/contributing.md" >/dev/null || fail "contributing guide omitted native validation contract: $native_contract"
+done
 for document in "$ROOT/AGENTS.md" "$ROOT/openspec/AGENTS.md" "$ROOT/docs/contributing.md"; do
   grep -F 'Is this solution overkill for the context?' "$document" >/dev/null || fail "active guidance omitted overkill question in $document"
   grep -F "Would a more relaxed, less demanding solution satisfy the user's expectations equally well?" "$document" >/dev/null || fail "active guidance omitted relaxed-solution question in $document"

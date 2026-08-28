@@ -1,8 +1,8 @@
 # PitCrew CLI reference
 
-PitCrew exposes `tui` and `principles`, two global flags, and exactly 21 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `install`, `tui`, `principles`, two global flags, and exactly 21 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
-The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon interviews, clarifies intent, preserves conversational continuity, and reports only Aion-acknowledged facts or questions. Aion alone owns routing and workflow coordination. Mid-flight input remains requested, not applied, until Aion admits it against current state; concurrent Daimon availability depends on host support for addressable agents, not a PitCrew daemon, service, IPC, polling, or inbox.
+The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon interviews, clarifies intent, preserves conversational continuity, and reports only Aion-acknowledged facts or questions. Aion alone owns routing and workflow coordination. For each accepted delivery, Daimon and the addressable-agent host reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and authority throughout. Mid-flight input remains requested, not applied, until Aion admits it against current state; concurrent Daimon availability depends on host support for addressable agents, not a PitCrew daemon, service, IPC, polling, or inbox.
 
 ## Quick path
 
@@ -15,10 +15,72 @@ pitcrew principles
 
 A full workflow progresses through exploration, specification, design, planning, approval, implementation, and independent aggregate review/completion. Unit review is selective. Use the `next_action` returned by each successful envelope rather than guessing the next transition.
 
+## Runtime installation
+
+Install or update the native PitCrew integration for exactly one agentic app:
+
+```sh
+pitcrew install codex
+pitcrew install opencode
+pitcrew install claude
+pitcrew install pi
+```
+
+Tokens are exact, lowercase, and alias-free. The command installs eight native
+agents plus `pitcrew/agent-contract.md`, but not the binary, another runtime,
+packages, a daemon, or workflow state. Success prints exactly `Installed
+PitCrew agents for <Runtime> in <registry>`.
+
+The selected token overrides cross-runtime detection and uses only its override
+or default root:
+
+| Runtime | Override / default root | Native registry | Legacy registry |
+|---|---|---|---|
+| Codex | `CODEX_HOME` / `~/.codex` | `agents/*.toml` | `prompts/*.md` |
+| OpenCode | `OPENCODE_CONFIG_DIR` / `~/.config/opencode` | `agents/*.md` | prior PitCrew entries in `agents/` |
+| Claude Code | `CLAUDE_CONFIG_DIR` / `~/.claude` | `agents/*.md` | `prompts/*.md` |
+| Pi | `PI_AGENT_HOME` / `~/.pi/agent` | `agents/*.md` | prior PitCrew entries in `agents/` |
+
+The public command transactionally refreshes only PitCrew-managed filenames and
+warns exactly: `pitcrew installer: WARNING: PitCrew-managed definitions are
+being refreshed; custom content must live outside managed role files.` This is
+the public-command warning. The legacy `pitcrew installer: WARNING: replacing
+prompts or legacy names; preserve desired custom text before continuing.` is
+reserved for direct `scripts/install-templates.sh --overwrite` invocation.
+Unrelated files and application configuration are never rewritten; identical
+reruns are write no-ops, and failures roll back.
+
+OpenCode additionally requires OpenCode 1.18.23 or newer, `jq`, `timeout`, and
+effective top-level `"subagent_depth": 2` (or greater) in the caller's target
+project. From that project, inspect the resolved configuration with:
+
+```sh
+opencode --pure debug config
+```
+
+Upgrade older installations to at least 1.18.23. Set the value in global
+configuration or the higher-precedence project configuration that controls the
+resolved result, then use the exact verification and `pitcrew install opencode`
+rerun commands
+printed by a failure. Fix malformed or incompatible resolved output at the
+reported configuration source. PitCrew fails before target writes when the
+prerequisite is absent or invalid; it does not rewrite user JSON or JSONC.
+Depth two enables the existing `Daimon -> Aion -> specialist` call chain
+without broadening permissions: Daimon still targets only Aion, Aion only the
+six specialists, and specialists cannot delegate.
+
+Pi additionally requires Node.js, an installed and active `pi-subagents`
+version 0.25.0 or newer, and `maxSubagentDepth: 3` (or greater) in
+`<pi-agent-home>/extensions/subagent/config.json`. Depth three is required for
+the bounded `Daimon -> Aion -> specialist` chain. PitCrew validates exact
+package identity and accepts a non-empty version/range suffix; it does not
+install the extension, access the network, or modify Pi configuration.
+
 ## Closed command matrix
 
 | Command | Required inputs |
 |---|---|
+| `install` | exactly one of `codex`, `opencode`, `claude`, or `pi` |
 | `tui` | None; extra arguments are rejected. |
 | `workflow new` | `--name <text> --goal <text> --actor <label>` |
 | `workflow continue` | `--from <terminal-wf-id> --actor <label>` |
@@ -44,11 +106,26 @@ A full workflow progresses through exploration, specification, design, planning,
 
 Global `--help` and `--version` are flags, not commands. `principles [--json]` prints the embedded maxims as exact text or a raw structured JSON array.
 
+`pitcrew install --help` exits 0 without installation and prints:
+
+```text
+Usage: pitcrew install <codex|opencode|claude|pi>
+
+Installs or updates PitCrew agents for one runtime.
+
+Runtimes: codex, opencode, claude, pi
+Read the four maxims of the harness: pitcrew principles.
+```
+
+Missing, unknown, mixed-case, or extra install arguments exit 2 before opening
+the project store or invoking the embedded installer. Their usage envelope has
+message `usage: pitcrew install <codex|opencode|claude|pi>`.
+
 `workflow continue` accepts only a completed or abandoned predecessor. It atomically creates a fresh revision-1 draft with the same name and exact goal, plus a child-owned `continuation` artifact that records the predecessor ID, terminal state, and revision. The predecessor receives no row, event, artifact, or activity writes, and one predecessor may have multiple independent successors. Success returns `data.workflow`, `data.predecessor`, and `next_action: "workflow explore"`.
 
 ## Read-only terminal inspection
 
-`pitcrew tui` runs the embedded visual inspector in the current process. Its workflow detail is an operational dashboard: a compact full-width synopsis shows state, revision, goal, unit progress, current work, any unresolved blocker, and the executable next action; one full-width chronological grid then shows semantic occurrences as `When | Phase | Work | Try | Activity | Actor | Outcome / reason`. The grid retains all seven columns at 120 columns and above, moves Actor to progressive detail below 120, compacts at 80, and renders each occurrence on two lines from 60 through 79 columns. Arrow and Vim keys move by occurrence, Page/Home/End navigate the semantic stream, and Enter opens exact durable evidence without exposing claim handles or secrets. Press `r` to refresh the active view without losing semantic focus; focused search keeps `r` as query text, and refresh errors retain the prior data for retry. All views read only `<project>/.pitcrew/state.db`; the TUI does not initialize a repository, run migrations, mutate workflow state, or invoke another executable. An uninitialized project shows `No PitCrew repository is initialized for this project.` and remains unchanged. Use `/` to search and `q` to exit.
+`pitcrew tui` runs the embedded visual inspector in the current process. Its workflow detail is a one-column operational document: a compact full-width synopsis shows state, revision, goal, the executable next action, and an exact planned-work percentage only when a valid accepted plan reconciles with its work units. Otherwise it names why planned progress is unavailable instead of inventing precision. Remaining units follow accepted plan order under `PENDING WORK`, with textual status and reasons that remain meaningful without color. Chronological occurrences render as variable-height semantic blocks rather than table cells; the selected block includes a bounded rendered Markdown preview when durable evidence is linked. The composition remains usable at 80x24, 60x24, and the 60x16 minimum. Arrow and Vim keys move by occurrence, Page/Home/End navigate the semantic stream, and Enter opens exact durable evidence without exposing claim handles or secrets. Press `r` to refresh the active view without losing semantic focus; focused search keeps `r` as query text, and refresh errors retain the prior data for retry. Home and Workflows retain their established compositions. All views read only `<project>/.pitcrew/state.db`; the TUI does not initialize a repository, run migrations, mutate workflow state, or invoke another executable. An uninitialized project shows `No PitCrew repository is initialized for this project.` and remains unchanged. Use `/` to search and `q` to exit.
 
 ## JSON input files
 
@@ -146,7 +223,11 @@ Successful workflow commands write one JSON document to stdout:
 {"ok":true,"data":{},"warnings":[],"next_action":"workflow show"}
 ```
 
-Failures write one single-line JSON error to stderr and nothing to stdout.
+Workflow failures and install argument failures write one single-line JSON
+error to stderr and nothing to stdout. After valid install dispatch, runtime
+prerequisite, validation, write, rollback, and wrapper failures retain their
+actionable plain stderr and non-zero child/wrapper status; they are not wrapped
+as workflow JSON and never emit the success line.
 
 - `0 — ok`
 - `1 — internal`
