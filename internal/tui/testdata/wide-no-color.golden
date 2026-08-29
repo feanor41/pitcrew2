@@ -1,30 +1,30 @@
-╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ PitCrew2                                                                                                                                                   v0.14.0 │
-│ Control Plane                                                                                                                                                      │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-Redesign TUI history  ·  IMPLEMENTING  ·  r7
-PROGRESS  2/3 done · 66%
-NOW  Reviewing · Render diseño operativo
-NEXT  workflow list-ready-units
-STAGES  ○ Explore ─ ✓ Spec ─ ○ Design ─ ○ Plan ─ ● Build ─ ○ Review
-GOAL  Ship read-only terminal inspection
-UNITS  2/3 done                                                   │TIMELINE  4 events
-✓ Map history signals · Done                                      │  2026-08-22 03:17  Explore · Created workflow — Redesign TUI history
-✓ Define responsive hierarchy · Done                              │  2026-08-22 03:18  Specify · Recorded specification — Diseño operativo
-● Render diseño operativo · Reviewing                             │  2026-08-22 03:19  Implement · Recorded TDD — Render diseño operativo · Validation recorded
-                                                                  │▶ 2026-08-22 03:20  Review · Recorded review — Render diseño operativo · Approved
-                                                                  │    actor pc2-reviewer · try 1
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-                                                                  │
-↑/k ↓/j move • pg/home/end • enter evidence • r refresh • row 4/4 • q quit  ·  166x30
+Redesign TUI history  ·  IMPLEMENTING  ·  r7  ·  v0.15.0
+Ship read-only terminal inspection
+╭ ACTIVE TREE ────────────────────────────────────────────────────────────────────╮╭ STATUS ─────────────────────────────────────────────────────────────────────────╮
+│   ● ▾ Redesign TUI history · active                                             ││ ▶ ● State: implementing                                                         │
+│   ✓ ├─ ▸ Spec · done                                                            ││   ○ Plan: 2/3 · 66%                                                             │
+│   ● └─ ▾ Build · active                                                         ││   ● Current: Render diseño operativo                                            │
+│   ○   ├─ approved · recorded                                                    ││   › Executable: workflow list-ready-units                                       │
+│   ✓   ├─ Map history signals · done                                             ││                                                                                 │
+│   ✓   ├─ Define responsive hierarchy · done                                     ││                                                                                 │
+│ ▶ ●   └─ Render diseño operativo · active                                       ││                                                                                 │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────────────────────────╯
+╭ UNITS ──────────────────────────────────────────────────────────────────────────╮╭ ACTIVITY ───────────────────────────────────────────────────────────────────────╮
+│   ✓ Map history signals · Done                                                  ││   ○ 2026-08-22 03:17 · Created workflow · daimon                                │
+│   ✓ Define responsive hierarchy · Done                                          ││   ○ 2026-08-22 03:18 · Recorded specification · pc2-specifier                   │
+│ ▶ ● Render diseño operativo · Reviewing                                         ││   ○ 2026-08-22 03:19 · Recorded TDD · pc2-implementer                           │
+│                                                                                 ││ ▶ ✓ 2026-08-22 03:20 · Recorded review · pc2-reviewer                           │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+│                                                                                 ││                                                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────────────────────────────────────────╯
+tab/shift+tab pane · j/k move · h/l tree · enter open · / search · r refresh · q quit

@@ -1,22 +1,24 @@
-[38;2;71;85;105m╭──────────────────────────────────────────────────────────────────────────────╮[m
-[38;2;71;85;105m│[m [1;38;2;224;242;254mPitCrew2[m                                                             [1;38;2;244;114;182mv0.14.0[m [38;2;71;85;105m│[m
-[38;2;71;85;105m│[m [38;2;148;163;184mControl Plane[m                                                                [38;2;71;85;105m│[m
-[38;2;71;85;105m╰──────────────────────────────────────────────────────────────────────────────╯[m
-
-[1;38;2;226;232;240mRedesign TUI history  ·  IMPLEMENTING  ·  r7[m
-[1mPROGRESS[m  2/3 done · 66%
-[1mNOW[m  Reviewing · Render diseño operativo
-[1mNEXT[m  workflow list-ready-units
-[1mSTAGES[m  ○ Explore ─ ✓ Spec ─ ○ Design ─ ○ Plan ─ ● Build ─ ○ Review
-[1mGOAL[m  Ship read-only terminal inspection
-[1;38;2;226;232;240mUNITS[m  2/3 done
-✓ Map history signals · Done
-✓ Define responsive hierarchy · Done
-● Render diseño operativo · Reviewing
-[1;38;2;226;232;240mTIMELINE[m  4 events
-  2026-08-22 03:17  Explore · Created workflow — Redesign TUI history
-  2026-08-22 03:18  Specify · Recorded specification — Diseño operativo
-  2026-08-22 03:19  Implement · Recorded TDD — Render diseño operativo · Valida…
-[1;38;2;103;232;249m▶ [m2026-08-22 03:20  Review · Recorded review — Render diseño operativo · Approv…
-    actor pc2-reviewer · try 1
-[38;2;203;213;225mj/k • enter • r refresh • q quit • row 4/4  ·  80x24                            [m
+[1;38;2;226;232;240mRedesign TUI history  ·  IMPLEMENTING  ·  r7  ·  v0.15.0[m
+[38;2;148;163;184mShip read-only terminal inspection[m
+[1;38;2;224;242;254mTree[m | Status | Units | Activity
+[1;38;2;103;232;249m╭ TREE ────────────────────────────────────────────────────────────────────────╮[m
+[1;38;2;103;232;249m│[m [38;2;103;232;249m  ● ▾ Redesign TUI history · active[m                                          [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m [38;2;134;239;172m  ✓ ├─ ▸ Spec · done[m                                                         [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m [38;2;103;232;249m  ● └─ ▾ Build · active[m                                                      [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m [38;2;148;163;184m  ○   ├─ approved · recorded[m                                                 [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m [38;2;134;239;172m  ✓   ├─ Map history signals · done[m                                          [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m [38;2;134;239;172m  ✓   ├─ Define responsive hierarchy · done[m                                  [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m [1;38;2;224;242;254m▶ ●   └─ Render diseño operativo · active[m                                    [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m│[m                                                                              [1;38;2;103;232;249m│[m
+[1;38;2;103;232;249m╰──────────────────────────────────────────────────────────────────────────────╯[m
+[38;2;203;213;225mtab/shift+tab pane · j/k move · h/l tree · enter open · / search · r refresh · …[m

@@ -86,6 +86,11 @@ type evidenceCache struct {
 }
 
 type detailCursor struct {
+	pane            detailPane
+	treeID          treeNodeID
+	expanded        map[treeNodeID]bool
+	unitID          string
+	statusID        string
 	occurrenceID    string
 	occurrenceTop   int
 	related         bool
@@ -284,6 +289,11 @@ func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 	if m.screen == HomeScreen {
 		return m.updateHomeKey(key)
+	}
+	if m.screen == DetailScreen {
+		if cockpit, command, handled := m.updateCockpitKey(key); handled {
+			return cockpit, command
+		}
 	}
 	switch actionFor(key) {
 	case actionUp:
@@ -655,7 +665,19 @@ func (m *Model) reconcileDetail() {
 		m.detail = detailCursor{}
 		return
 	}
-	if m.occurrenceMode() {
+	if m.opened.Detail.Workflow.ID == "" {
+		m.reconcileLegacyDetail()
+		return
+	}
+	m.reconcileCockpit()
+	if m.opened.Record.ID != "" {
+		return
+	}
+	m.reconcileOccurrences()
+}
+
+func (m *Model) reconcileLegacyDetail() {
+	if len(m.opened.Detail.Occurrences) > 0 {
 		m.reconcileOccurrences()
 		return
 	}
@@ -673,6 +695,260 @@ func (m *Model) reconcileDetail() {
 		}
 	}
 	m.setEvidenceIndex(lines, index)
+}
+
+func (m Model) updateCockpitKey(key tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+	if m.opened.Record.ID != "" || m.opened.Detail.Workflow.ID == "" {
+		return m, nil, false
+	}
+	switch key.Keystroke() {
+	case "tab":
+		m.detail.pane = (m.detail.pane + 1) % 4
+		return m, nil, true
+	case "shift+tab":
+		m.detail.pane = (m.detail.pane + 3) % 4
+		return m, nil, true
+	case "/", "r", "q", "ctrl+c", "esc":
+		return m, nil, false
+	}
+	switch m.detail.pane {
+	case paneTree:
+		switch key.Keystroke() {
+		case "up", "k":
+			m.moveTree(-1)
+		case "down", "j":
+			m.moveTree(1)
+		case "right", "l":
+			m.enterTree()
+		case "left", "h":
+			m.leaveTree()
+		case "enter":
+			m.activateTree()
+		default:
+			return m, nil, true
+		}
+		return m, nil, true
+	case paneStatus:
+		switch key.Keystroke() {
+		case "up", "k":
+			m.moveStatus(-1)
+		case "down", "j":
+			m.moveStatus(1)
+		case "left", "h":
+			return m, nil, false
+		default:
+			return m, nil, true
+		}
+		return m, nil, true
+	case paneUnits:
+		switch key.Keystroke() {
+		case "up", "k":
+			m.moveUnit(-1)
+		case "down", "j":
+			m.moveUnit(1)
+		case "left", "h":
+			return m, nil, false
+		default:
+			return m, nil, true
+		}
+		return m, nil, true
+	}
+	return m, nil, false
+}
+
+func (m *Model) reconcileCockpit() {
+	projection := projectCockpit(m.opened.Detail)
+	nodes, branches := map[treeNodeID]treeNode{}, map[treeNodeID]bool{}
+	var collect func(treeNode)
+	collect = func(node treeNode) {
+		nodes[node.ID] = node
+		if len(node.Children) > 0 {
+			branches[node.ID] = true
+		}
+		for _, child := range node.Children {
+			collect(child)
+		}
+	}
+	collect(projection.Root)
+	initial := m.detail.expanded == nil
+	expanded := map[treeNodeID]bool{}
+	for id, open := range m.detail.expanded {
+		if branches[id] {
+			expanded[id] = open
+		}
+	}
+	rootID := projection.Root.ID
+	if initial {
+		expanded[rootID] = true
+		m.detail.treeID = rootID
+		active := lifecycleStage(lifecyclePosition(m.opened.Detail.Workflow.State, m.opened.Detail.Occurrences))
+		stageID := treeNodeID{Kind: nodeStage, Stage: active}
+		if _, ok := nodes[stageID]; ok {
+			m.detail.treeID, expanded[stageID] = stageID, true
+		}
+		if current := m.opened.Detail.Synopsis.Current; current != nil {
+			unitID := treeNodeID{Kind: nodeUnit, Stage: stageBuild, UnitID: current.ID}
+			if _, ok := nodes[unitID]; ok {
+				m.detail.treeID, expanded[treeNodeID{Kind: nodeStage, Stage: stageBuild}] = unitID, true
+			}
+		}
+	}
+	m.detail.expanded = expanded
+	if _, ok := nodes[m.detail.treeID]; !ok {
+		m.detail.treeID = cockpitFallback(m.detail.treeID, nodes, rootID)
+	}
+	m.detail.statusID = reconcilePanelID(m.detail.statusID, projection.StatusRows)
+	m.detail.unitID = reconcileUnitID(m.detail.unitID, projection.UnitRows, m.opened.Detail.Synopsis.Current)
+}
+
+func cockpitFallback(id treeNodeID, nodes map[treeNodeID]treeNode, root treeNodeID) treeNodeID {
+	if id.Kind == nodeRecord && id.UnitID != "" {
+		unit := treeNodeID{Kind: nodeUnit, Stage: stageBuild, UnitID: id.UnitID}
+		if _, ok := nodes[unit]; ok {
+			return unit
+		}
+	}
+	if id.Kind == nodeRecord || id.Kind == nodeUnit {
+		stage := treeNodeID{Kind: nodeStage, Stage: id.Stage}
+		if id.Kind == nodeUnit {
+			stage.Stage = stageBuild
+		}
+		if _, ok := nodes[stage]; ok {
+			return stage
+		}
+	}
+	return root
+}
+
+func reconcilePanelID(current string, rows []panelRow) string {
+	for _, row := range rows {
+		if row.ID == current {
+			return current
+		}
+	}
+	if len(rows) > 0 {
+		return rows[0].ID
+	}
+	return ""
+}
+
+func reconcileUnitID(current string, rows []unitRow, active *history.UnitStatus) string {
+	for _, row := range rows {
+		if row.ID == current {
+			return current
+		}
+	}
+	if active != nil {
+		for _, row := range rows {
+			if row.ID == active.ID {
+				return row.ID
+			}
+		}
+	}
+	if len(rows) > 0 {
+		return rows[0].ID
+	}
+	return ""
+}
+
+func (m *Model) moveTree(delta int) {
+	rows := flattenTree(projectCockpit(m.opened.Detail).Root, m.detail.expanded)
+	index := 0
+	for i, row := range rows {
+		if row.Node.ID == m.detail.treeID {
+			index = i
+			break
+		}
+	}
+	if len(rows) > 0 {
+		m.detail.treeID = rows[max(0, min(len(rows)-1, index+delta))].Node.ID
+	}
+}
+
+func (m *Model) enterTree() {
+	node, ok := m.cockpitNode(m.detail.treeID)
+	if !ok || len(node.Children) == 0 {
+		return
+	}
+	if !m.detail.expanded[node.ID] {
+		m.detail.expanded[node.ID] = true
+		return
+	}
+	m.detail.treeID = node.Children[0].ID
+}
+
+func (m *Model) leaveTree() {
+	node, ok := m.cockpitNode(m.detail.treeID)
+	if !ok {
+		return
+	}
+	if len(node.Children) > 0 && m.detail.expanded[node.ID] {
+		m.detail.expanded[node.ID] = false
+		return
+	}
+	if node.ID.Kind != nodeWorkflow {
+		m.detail.treeID = node.Parent
+	}
+}
+
+func (m *Model) activateTree() {
+	node, ok := m.cockpitNode(m.detail.treeID)
+	if !ok {
+		return
+	}
+	if len(node.Children) > 0 {
+		m.detail.expanded[node.ID] = !m.detail.expanded[node.ID]
+		return
+	}
+	if node.RecordID == "" {
+		return
+	}
+	for _, record := range m.opened.Detail.Records {
+		if record.ID == node.RecordID {
+			m.opened.Record = record
+			m.prepareEvidence()
+			return
+		}
+	}
+}
+
+func (m Model) cockpitNode(id treeNodeID) (treeNode, bool) {
+	var found treeNode
+	ok := false
+	var visit func(treeNode)
+	visit = func(node treeNode) {
+		if node.ID == id {
+			found, ok = node, true
+			return
+		}
+		for _, child := range node.Children {
+			if !ok {
+				visit(child)
+			}
+		}
+	}
+	visit(projectCockpit(m.opened.Detail).Root)
+	return found, ok
+}
+
+func (m *Model) moveStatus(delta int) {
+	rows := projectCockpit(m.opened.Detail).StatusRows
+	for i, row := range rows {
+		if row.ID == m.detail.statusID {
+			m.detail.statusID = rows[max(0, min(len(rows)-1, i+delta))].ID
+			return
+		}
+	}
+}
+
+func (m *Model) moveUnit(delta int) {
+	rows := projectCockpit(m.opened.Detail).UnitRows
+	for i, row := range rows {
+		if row.ID == m.detail.unitID {
+			m.detail.unitID = rows[max(0, min(len(rows)-1, i+delta))].ID
+			return
+		}
+	}
 }
 
 func (m *Model) moveFocused(delta int) {

@@ -1,16 +1,16 @@
-╭──────────────────────────────────────────────────────────╮
-│ PitCrew2                                         v0.14.0 │
-│ Control Plane                                            │
+Redesign TUI history  ·  IMPLEMENTING  ·  r7  ·  v0.15.0
+Ship read-only terminal inspection
+[Tree] | Status | Units | Activity
+╭ TREE ────────────────────────────────────────────────────╮
+│   ● ▾ Redesign TUI history · active                      │
+│   ✓ ├─ ▸ Spec · done                                     │
+│   ● └─ ▾ Build · active                                  │
+│   ○   ├─ approved · recorded                             │
+│   ✓   ├─ Map history signals · done                      │
+│   ✓   ├─ Define responsive hierarchy · done              │
+│ ▶ ●   └─ Render diseño operativo · active                │
+│                                                          │
+│                                                          │
+│                                                          │
 ╰──────────────────────────────────────────────────────────╯
-
-Redesign TUI history  ·  IMPLEMENTING  ·  r7
-PROGRESS  2/3 done · 66%
-NOW  Reviewing · Render diseño operativo
-NEXT  workflow list-ready-units
-STAGES  ○ Ex  ✓ Sp  ○ De  ○ Pl  ● Bu  ○ Re
-UNITS  2/3 done
-✓ Map history signals · +2 more
-TIMELINE  4 events
-▶ 03:20  Review · Recorded review — Approved · Render diseñ…
-    actor pc2-reviewer · try 1
-j/k • enter • r refresh • q quit • row 4/4  ·  60x16
+tab/S-tab pane · j/k · enter · h · / · r · q quit

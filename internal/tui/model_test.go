@@ -289,7 +289,7 @@ func TestModelVersionAndOccurrenceDrillDown(t *testing.T) {
 	want := history.Resolution{Detail: history.Detail{Occurrences: []history.Occurrence{occurrence}, Records: []history.Record{record}}, Record: record}
 	model := New(fakeLoader{occurrenceResolution: want})
 	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: want.Detail}})
-	if model.Version() != "0.14.0" {
+	if model.Version() != "0.15.0" {
 		t.Fatalf("Version() = %q", model.Version())
 	}
 	for _, key := range []tea.KeyPressMsg{special(tea.KeyEnter), special(tea.KeyRight), textKey("l")} {
@@ -313,6 +313,7 @@ func TestModelSemanticOccurrenceSurvivesResizeAndBack(t *testing.T) {
 	detail := history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: occurrences}
 	model := New(fakeLoader{occurrenceIDs: &seen, occurrenceResolution: history.Resolution{Detail: detail, Record: history.Record{ID: "artifact:7"}}})
 	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
+	model.detail.pane = paneActivity
 	model, _ = model.Update(textKey("j"))
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
 	if model.detail.occurrenceID != "activity:2" {
@@ -343,6 +344,7 @@ func TestModelOccurrenceNavigationPageHomeEndAndClamps(t *testing.T) {
 	}
 	detail := history.Detail{Synopsis: history.Synopsis{Current: &history.UnitStatus{Description: "unit-9", Status: "Claimed"}}, Occurrences: occurrences}
 	model, _ := (Model{width: 120, height: 20}).Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
+	model.detail.pane = paneActivity
 	if model.detail.occurrenceID != "activity:9" {
 		t.Fatalf("initial focus = %#v", model.detail)
 	}
@@ -397,6 +399,7 @@ func TestModelRelatedRecordDrillDownResolvesPreviewedRecordExactly(t *testing.T)
 	want := history.Resolution{Detail: detail, Record: record}
 	model := New(fakeLoader{occurrenceRecordIDs: &seen, occurrenceResolution: want})
 	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
+	model.detail.pane = paneActivity
 	model, command := model.Update(special(tea.KeyEnter))
 	if command == nil {
 		t.Fatal("related record drill-down command is nil")
@@ -424,6 +427,7 @@ func TestModelRelatedRecordLevelSelectsEveryRecordExactly(t *testing.T) {
 			seen := []string{}
 			model := New(fakeLoader{occurrenceRecordIDs: &seen, occurrenceResolution: history.Resolution{Detail: detail}})
 			model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
+			model.detail.pane = paneActivity
 			model, command := model.Update(special(tea.KeyEnter))
 			if command != nil || !model.relatedRecordMode() || model.detail.relatedRecordID != records[0].ID {
 				t.Fatalf("related level = command:%v cursor:%#v", command != nil, model.detail)
@@ -449,6 +453,7 @@ func TestModelRelatedRecordFocusSurvivesBackResizeAndRefresh(t *testing.T) {
 	detail := history.Detail{Workflow: history.Workflow{ID: "wf"}, Occurrences: []history.Occurrence{occurrence}, Records: records}
 	model := New(fakeLoader{detail: detail, occurrenceResolution: history.Resolution{Detail: detail}})
 	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
+	model.detail.pane = paneActivity
 	model, _ = model.Update(special(tea.KeyEnter))
 	model, _ = model.Update(textKey("j"))
 
@@ -587,6 +592,102 @@ func TestModelDetailEvidenceArrowAndVimParityAndClamps(t *testing.T) {
 	}
 	if current, total := base.detailPosition(); current != total || base.detail.recordID != "two" {
 		t.Fatalf("lower clamp = %d/%d, record=%q", current, total, base.detail.recordID)
+	}
+}
+
+func TestModelCockpitInitializesSemanticTreeAndCyclesPanes(t *testing.T) {
+	detail := cockpitInteractionDetail()
+	model, _ := (Model{}).Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
+	want := treeNodeID{Kind: nodeUnit, Stage: stageBuild, UnitID: "wu-1"}
+	if model.detail.pane != paneTree || model.detail.treeID != want || !model.detail.expanded[treeNodeID{Kind: nodeWorkflow}] || !model.detail.expanded[treeNodeID{Kind: nodeStage, Stage: stageBuild}] {
+		t.Fatalf("initial cockpit cursor = %#v", model.detail)
+	}
+	for _, pane := range []detailPane{paneStatus, paneUnits, paneActivity, paneTree} {
+		model, _ = model.Update(special(tea.KeyTab))
+		if model.detail.pane != pane {
+			t.Fatalf("tab pane = %v, want %v", model.detail.pane, pane)
+		}
+	}
+	model, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	if model.detail.pane != paneActivity {
+		t.Fatalf("shift+tab pane = %v", model.detail.pane)
+	}
+}
+
+func TestModelCockpitTreeNavigationOpensExactEvidenceAndBackRestoresSelection(t *testing.T) {
+	base, _ := (Model{}).Update(detailLoadedMsg{resolution: history.Resolution{Detail: cockpitInteractionDetail()}})
+	for _, key := range []tea.KeyPressMsg{special(tea.KeyRight), textKey("l")} {
+		model, _ := base.Update(key)
+		if !model.detail.expanded[base.detail.treeID] {
+			t.Fatalf("%q did not expand unit: %#v", key.Keystroke(), model.detail)
+		}
+		model, _ = model.Update(key)
+		if model.detail.treeID.RecordID != "artifact:unit" {
+			t.Fatalf("%q did not enter exact leaf: %#v", key.Keystroke(), model.detail)
+		}
+		model, command := model.Update(special(tea.KeyEnter))
+		if command != nil || model.opened.Record.ID != "artifact:unit" {
+			t.Fatalf("leaf open = command:%v record:%q", command != nil, model.opened.Record.ID)
+		}
+		model, _ = model.Update(textKey("h"))
+		if model.opened.Record.ID != "" || model.detail.treeID.RecordID != "artifact:unit" || model.detail.pane != paneTree {
+			t.Fatalf("evidence back lost cockpit selection: %#v", model.detail)
+		}
+	}
+}
+
+func TestModelCockpitReconcilesSemanticSelectionAcrossRefreshAndResize(t *testing.T) {
+	detail := cockpitInteractionDetail()
+	model := Model{loader: fakeLoader{detail: detail}, screen: DetailScreen, opened: history.Resolution{Detail: detail}, generation: 1}
+	model.reconcileDetail()
+	model.detail.expanded[model.detail.treeID] = true
+	model.moveTree(1)
+	if model.detail.treeID.RecordID != "artifact:unit" {
+		t.Fatalf("record selection = %#v", model.detail.treeID)
+	}
+	updated := detail
+	updated.Records = nil
+	model.loader = fakeLoader{detail: updated}
+	model = runRefresh(t, model)
+	if model.detail.treeID.Kind != nodeUnit || model.detail.treeID.UnitID != "wu-1" {
+		t.Fatalf("removed record fallback = %#v", model.detail.treeID)
+	}
+	for _, size := range []tea.WindowSizeMsg{{Width: 60, Height: 16}, {Width: 120, Height: 30}} {
+		model, _ = model.Update(size)
+		if model.detail.treeID.UnitID != "wu-1" || model.detail.pane != paneTree {
+			t.Fatalf("resize %dx%d changed semantic focus: %#v", size.Width, size.Height, model.detail)
+		}
+	}
+}
+
+func TestModelCockpitRoutesRowsInsideFocusedPane(t *testing.T) {
+	model, _ := (Model{}).Update(detailLoadedMsg{resolution: history.Resolution{Detail: cockpitInteractionDetail()}})
+	model, _ = model.Update(special(tea.KeyTab))
+	firstStatus := model.detail.statusID
+	model, _ = model.Update(textKey("j"))
+	if model.detail.statusID == firstStatus || model.detail.treeID.UnitID != "wu-1" {
+		t.Fatalf("status navigation escaped pane: %#v", model.detail)
+	}
+	model, _ = model.Update(special(tea.KeyTab))
+	model, _ = model.Update(textKey("j"))
+	if model.detail.unitID != "wu-2" {
+		t.Fatalf("unit navigation = %#v", model.detail)
+	}
+	model, _ = model.Update(special(tea.KeyTab))
+	before := model.detail.occurrenceID
+	model, _ = model.Update(textKey("k"))
+	if model.detail.occurrenceID == before {
+		t.Fatalf("activity navigation did not retain existing behavior: %#v", model.detail)
+	}
+}
+
+func cockpitInteractionDetail() history.Detail {
+	units := []history.UnitStatus{{ID: "wu-1", Description: "Foundation", Status: "Claimed"}, {ID: "wu-2", Description: "Renderer", Status: "Ready"}}
+	return history.Detail{
+		Workflow:    history.Workflow{ID: "wf", Name: "Cockpit", State: "implementing"},
+		Synopsis:    history.Synopsis{Current: &units[0], NextAction: "workflow unit-tdd", Planned: &history.PlannedWork{Total: 2, Units: units}},
+		Records:     []history.Record{{ID: "artifact:unit", UnitID: "wu-1", Kind: "evidence", Title: "Foundation evidence", Content: "proof"}},
+		Occurrences: []history.Occurrence{{ID: "activity:1", Phase: "build", Activity: "unit_claimed", Work: "Foundation"}, {ID: "activity:2", Phase: "build", Activity: "unit_tdd_recorded", Work: "Foundation"}},
 	}
 }
 
