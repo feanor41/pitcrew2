@@ -45,6 +45,7 @@ Only these transitions SHALL succeed; others SHALL return exit code `3` without 
 | `implementing` | final `unit-complete` | `ready_to_complete` |
 | `ready_to_complete` | approved `complete` | `completed` |
 | `ready_to_complete` | corrections `complete` | `ready_to_complete` |
+| `ready_to_complete` | `authorize-correction` for exhausted blocker | `ready_to_complete` |
 | `ready_to_complete` | `recover-aggregate` after corrections | `implementing` |
 | any non-terminal | `abandon` | `abandoned` |
 
@@ -56,13 +57,15 @@ Only these transitions SHALL succeed; others SHALL return exit code `3` without 
 
 ### Requirement: Aggregate correction recovery
 
-After a corrections aggregate review, `recover-aggregate` SHALL require the exact current aggregate revision and one done unit. It SHALL preserve the corrections artifact and all existing evidence, atomically move the workflow to `implementing`, increment workflow and selected-unit revisions, and issue fresh opaque implementation authority for new evidence. It SHALL reject no-corrections, stale, terminal, non-done, or repeated recovery without losing prior evidence.
+After a corrections aggregate review, the shared read-only correction projection SHALL expose policy awareness, rounds used/allowed, the latest unresolved blocker revision/content, `automatic|authorized|none` authority, and exactly one contextual next action. Initial review, findings, unit count, and failures consume no round; each successful grouped recovery or historical single-unit recovery consumes one. Over-budget history is exhausted. Automatic or exact unconsumed authorized authority returns `workflow recover-aggregate`; exhausted authority returns `user authorization required`; no blocker at `ready_to_complete` returns `workflow complete`; terminal returns `none`.
+
+Policy-aware `recover-aggregate` SHALL require exact aggregate CAS and blocker revision, bounded non-empty causal groups whose unique union contains existing done units, and exactly one non-empty actor assignment per unit. It SHALL append one `aggregate_correction` artifact and one `aggregate_correction_started` activity, reopen all selected units once, revoke superseded handles, and move to `implementing` atomically. Historical plans MAY use the single-unit adapter. An exact unconsumed `correction_authorization` bound to the blocker grants one transaction. No path, hash, or secret SHALL persist in facts or activities.
 
 #### Scenario: Recovery is a new correction cycle
 
 - GIVEN `ready_to_complete` after a corrections aggregate verdict
-- WHEN one eligible unit is recovered
-- THEN only that unit becomes pending at its next revision
+- WHEN eligible grouped units are recovered
+- THEN each selected unit becomes pending at its next revision
 - AND the workflow becomes implementing at its next revision
 - AND the original correction remains inspectable
 

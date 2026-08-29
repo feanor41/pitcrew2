@@ -59,7 +59,9 @@ An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL requi
 
 ### Requirement: Independent aggregate review
 
-`workflow complete --input-file` SHALL accept an existing review verdict shape with `approved|corrections`, summary, and findings. It SHALL reject an actor matching implementation evidence for any current unit revision. The reviewer SHALL validate the repository result and tests against requirements, all specification/design amendments, plan/tasks, current evidence, and unit reviews. Approval SHALL append an `aggregate_review` artifact and atomically complete the workflow. Corrections SHALL append the artifact, advance workflow CAS in `ready_to_complete`, and require a fresh aggregate review after Aion coordinates fixes.
+`workflow complete --input-file` SHALL accept an existing review verdict shape with `approved|corrections`, summary, and findings. It SHALL reject an actor matching implementation evidence for any current unit revision and reject repeated completion while an aggregate blocker is unresolved, without mutation. The reviewer SHALL validate the repository result and tests against requirements, all specification/design amendments, plan/tasks, current evidence, unit reviews, and the declared correction policy. Approval with no blocker SHALL append an `aggregate_review` artifact and atomically complete the workflow. Corrections SHALL append it once, advance CAS in `ready_to_complete`, and return `workflow recover-aggregate` when authority exists or `user authorization required` when exhausted; the verdict itself consumes no round.
+
+`authorize-correction` SHALL accept strict `{aggregate_review_revision,reason,user_direction_confirmed:true}` only for the exact current exhausted blocker. It SHALL append one authorization artifact/activity and a same-state CAS event atomically. Premature, mismatched, repeated-unconsumed, or terminal requests SHALL fail without mutation; the actor and confirmation are audited assertions, not authentication.
 
 #### Scenario: Aggregate corrections preserve flow
 
@@ -69,7 +71,7 @@ An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL requi
 
 ### Requirement: Aggregate recovery starts fresh evidence
 
-`recover-aggregate` after corrections SHALL return fresh opaque implementation authority only for the selected reopened done unit. A subsequent `unit-tdd` SHALL use its incremented unit revision and preserve prior evidence; expired, revoked, one-shot, or mismatched authority SHALL fail with exit `5`. Recovery SHALL not expose a secret or substitute an actor label for authority.
+`recover-aggregate` after corrections SHALL return fresh actor-bound opaque implementation authority for every selected reopened done unit. A subsequent `unit-tdd` SHALL use its incremented unit revision and preserve prior evidence; expired, revoked, one-shot, or mismatched authority SHALL fail with exit `5`. Recovery SHALL not expose a secret or substitute an actor label for authority.
 
 #### Scenario: Recovered unit requires fresh TDD
 

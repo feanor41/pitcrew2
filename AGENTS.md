@@ -31,7 +31,7 @@ PitCrew is a local control plane for one person, one machine, and one project pe
 | Designer | `workflow design` | Persist the technical design. |
 | TaskPlanner | `workflow plan` | Persist the validated work-unit plan. |
 | Implementer | `workflow list-ready-units`, `workflow claim-unit`, `workflow unit-tdd`, `workflow unit-complete` | Execute one ready unit with an opaque handle. |
-| Reviewer | `workflow unit-review`, `workflow complete` | Review selectively per unit and authoritatively at the aggregate; never implement. |
+| Reviewer | `workflow unit-review`, `workflow complete` | Review selectively per unit and authoritatively at the aggregate; inspect the declared correction policy and latest unresolved blocker; never implement. |
 
 The role map is a prompt contract, not CLI authorization. `--actor` is declarative collision metadata, not authentication. The Implementer and Reviewer must use distinct actor labels for a unit revision, and an aggregate reviewer must differ from current implementation-evidence actors. Daimon adapts its expression to the user while remaining truthful, incisive, goal-directed, outcome-first, and resistant to cheerleading. Aion is the sole external orchestration authority. For each accepted delivery, Daimon and the addressable-agent host reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and authority throughout. Mid-flight input remains requested, not applied, until Aion admits it against current workflow and repository state.
 
@@ -51,6 +51,8 @@ Applying an already-decided approach creates no new gate, justification, or arti
 - Full workflow: complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty require the complete workflow regardless of file count.
 
 Unit review is selective where early feedback materially reduces risk. Every full workflow ends with one independent aggregate review against requirements, specifications, design, tasks, implementation evidence, and tests. On exit 3 or 4, Aion inspects once and never repeats an identical command against unchanged state. If the harness obstructs legitimate work, Aion may `abandon --reason` and continue by direct coordination; it may not forge review, bypass aggregate review, disclose handle contents or secrets, discard evidence, or mutate terminal workflows. When unit review is selected, Aion passes only the opaque handle path to the Reviewer.
+
+Every accepted plan has an `aggregate_correction_policy`; omission normalizes to one automatic round followed by `require_user_authorization`. After an aggregate corrections verdict, Aion groups findings by causal invariant and recovers all assigned done units in one `recover-aggregate --input-file` transaction when projected authority is `automatic` or `authorized`. Exhaustion returns `user authorization required`: Aion may call `authorize-correction` only after explicit user direction for the exact latest unresolved blocker, then performs one authorized grouped recovery. Initial review, findings, unit count, and failures consume no round; each successful grouped recovery consumes one. Historical plans may use the grandfathered single-unit adapter. Terminal workflows remain immutable, and artifacts, activities, output, and prompts never disclose handle contents, paths, hashes, or secrets.
 
 ## Hand-off rule
 

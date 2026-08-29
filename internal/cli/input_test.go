@@ -77,10 +77,11 @@ func TestEveryWorkflowCommandRequiresItsExactFlagMatrix(t *testing.T) {
 		"list-ready-units":     {"--workflow-id", "wf-000000000000000000000001"},
 		"begin-implementation": append([]string{}, base...),
 		"complete":             append(append([]string{}, base...), "--input-file", input),
+		"authorize-correction": append(append([]string{}, base...), "--input-file", input),
 		"abandon":              append(append([]string{}, base...), "--reason", "stop"),
 		"claim-unit":           append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
 		"recover-unit-claim":   append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
-		"recover-aggregate":    append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
+		"recover-aggregate":    append(append([]string{}, base...), "--input-file", input, "--handle-dir", filepath.Join(root, "handles")),
 		"handoff-review":       append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
 		"recover-review":       append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
 		"unit-tdd":             append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--claim-handle", filepath.Join(root, "handle.json"), "--input-file", input),
@@ -126,6 +127,7 @@ func TestDTOsRequireEveryDeclaredFieldBeforeStoreOpen(t *testing.T) {
 		{"TDD changed path", "unit-tdd", `{"red_command":"r","red_outcome":"fail","green_command":"g","green_outcome":"pass","refactor_summary":"","validation_command":"v","validation_outcome":"pass","changed_paths":"../secret"}`, identity},
 		{"review summary", "unit-review", `{"verdict":"approved","findings":""}`, identity},
 		{"aggregate review findings", "complete", `{"verdict":"corrections","summary":"changes"}`, []string{"--workflow-id", "wf-000000000000000000000001", "--revision", "1", "--actor", "reviewer"}},
+		{"correction authorization confirmation", "authorize-correction", `{"aggregate_review_revision":1,"reason":"approved"}`, []string{"--workflow-id", "wf-000000000000000000000001", "--revision", "1", "--actor", "aion"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -134,7 +136,11 @@ func TestDTOsRequireEveryDeclaredFieldBeforeStoreOpen(t *testing.T) {
 			args := append([]string{"workflow", tt.command}, tt.args...)
 			args = append(args, "--input-file", path)
 			result := runAt(t, root, args...)
-			if result.code != 3 {
+			wantCode := 3
+			if tt.command == "authorize-correction" {
+				wantCode = 2
+			}
+			if result.code != wantCode {
 				t.Fatalf("result=%#v", result)
 			}
 			if _, err := os.Stat(filepath.Join(root, ".pitcrew")); !os.IsNotExist(err) {

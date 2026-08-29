@@ -9,7 +9,7 @@ Define the opaque-only claim path that keeps bearer secrets out of agent context
 
 ### Requirement: Opaque production path
 
-`claim-unit`, `recover-unit-claim`, `recover-review`, and `recover-aggregate` SHALL require `--workflow-id`, `--unit-id`, `--revision`, `--actor`, and caller-supplied `--handle-dir`. Production orchestration SHALL select the resolved private `<data-home>/pitcrew/projects/<project-id>/handles/` root, with workflow-specific subdirectories as needed. Commands SHALL write a `0600` opaque handle inside a caller-owned `0700` directory. No production command, flag, template, or payload SHALL accept or emit a raw claim token; `--emit-plain-token` and `--claim-token` SHALL NOT exist.
+`claim-unit`, `recover-unit-claim`, and `recover-review` SHALL require `--workflow-id`, `--unit-id`, `--revision`, `--actor`, and caller-supplied `--handle-dir`; `recover-aggregate` uses its grouped/historical matrix below. Production orchestration SHALL select the resolved private `<data-home>/pitcrew/projects/<project-id>/handles/` root, with workflow-specific subdirectories as needed. Commands SHALL write a `0600` opaque handle inside a caller-owned `0700` directory. No production command, flag, template, or payload SHALL accept or emit a raw claim token; `--emit-plain-token` and `--claim-token` SHALL NOT exist.
 
 #### Scenario: Production claim returns only a path
 
@@ -65,7 +65,7 @@ Recovery SHALL issue a fresh secret and increment `claim_generation` only when t
 
 ### Requirement: Aggregate-correction recovery
 
-`recover-aggregate` SHALL require exactly one `--unit-id`, current workflow `--revision`, `--actor`, and `--handle-dir`. It SHALL reopen only that completed unit when the workflow is `ready_to_complete` and its latest aggregate review verdict is `corrections`; it SHALL preserve earlier evidence and review records, advance the workflow to `implementing`, increment the selected unit revision, and issue fresh implementation handle authority. The workflow state, aggregate correction record, exact CAS revision, and selected done-unit state are the authority; `--actor` is declarative handle metadata and SHALL NOT authorize recovery. The command SHALL reject stale CAS, no/non-corrections review, terminal state, non-done target, and duplicate or multiple selection flags without mutation. It SHALL NOT support batch or multiple-unit recovery, and SHALL NOT accept `--print-claim-handle-secret-once`.
+For policy-aware plans, `recover-aggregate` SHALL require `--input-file` with exact blocker revision, bounded causal groups, and one actor assignment per selected done unit; it SHALL reject `--unit-id`. Historical plans MAY accept either the grouped input or exactly one grandfathered `--unit-id`, never both. One successful command stages exclusive `0600` actor-bound handles under a caller-owned non-symlink `0700` directory and commits their rows, unit/workflow changes, artifact, and activity atomically; every ordinary failure removes staged/final files, and an orphan without DB authority is invalid. Output SHALL contain only `handles[{unit_id,unit_revision,actor,handle_path}]`, never secrets.
 
 #### Scenario: Aggregate recovery is exactly one fresh authority
 

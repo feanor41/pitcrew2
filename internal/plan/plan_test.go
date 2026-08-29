@@ -2,6 +2,7 @@ package plan
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,61 @@ func TestPlanJSONUsesTheSubmissionContract(t *testing.T) {
 		if !strings.Contains(text, key) {
 			t.Fatalf("plan JSON %s lacks %s", text, key)
 		}
+	}
+}
+
+func TestAggregateCorrectionPolicyJSONNormalizesAndValidatesCanonicalContract(t *testing.T) {
+	base := `{"summary":"one","scope":"internal","work_units":[{"id":"wu-000000000000000000000001","description":"unit","scope":"internal/plan","areas":["internal/plan"],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}],"max_parallel_units":1`
+	for _, rounds := range []int{0, 1} {
+		var p Plan
+		input := base + fmt.Sprintf(`,"aggregate_correction_policy":{"automatic_rounds":%d,"on_exhaustion":"require_user_authorization"}}`, rounds)
+		if err := json.Unmarshal([]byte(input), &p); err != nil {
+			t.Fatalf("rounds %d: %v", rounds, err)
+		}
+		if err := Validate(p); err != nil {
+			t.Fatalf("rounds %d: %v", rounds, err)
+		}
+		if !p.HasAggregateCorrectionPolicy() || p.AggregateCorrectionPolicy.AutomaticRounds != rounds {
+			t.Fatalf("rounds %d decoded as %#v", rounds, p)
+		}
+	}
+
+	malformed := []string{
+		`,"aggregate_correction_policy":{"automatic_rounds":-1,"on_exhaustion":"require_user_authorization"}}`,
+		`,"aggregate_correction_policy":{"automatic_rounds":2,"on_exhaustion":"require_user_authorization"}}`,
+		`,"aggregate_correction_policy":{"automatic_rounds":1,"on_exhaustion":"retry_forever"}}`,
+		`,"aggregate_correction_policy":{"automatic_rounds":1,"on_exhaustion":"require_user_authorization","extra":true}}`,
+		`,"aggregate_correction_policy":{"automatic_rounds":1}}`,
+		`,"aggregate_correction_policy":null}`,
+	}
+	for _, suffix := range malformed {
+		var p Plan
+		if err := json.Unmarshal([]byte(base+suffix), &p); err == nil {
+			if err = Validate(p); err == nil {
+				t.Fatalf("malformed policy accepted: %s", suffix)
+			}
+		}
+	}
+}
+
+func TestHistoricalPlanDefaultsPolicyWithoutBecomingPolicyAware(t *testing.T) {
+	encoded, err := json.Marshal(validPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var historical Plan
+	if err = json.Unmarshal(encoded, &historical); err != nil {
+		t.Fatal(err)
+	}
+	if historical.HasAggregateCorrectionPolicy() {
+		t.Fatal("historical plan became policy-aware")
+	}
+	if historical.AggregateCorrectionPolicy != DefaultAggregateCorrectionPolicy() {
+		t.Fatalf("historical effective policy = %#v", historical.AggregateCorrectionPolicy)
+	}
+	aware := NormalizeForSubmission(historical)
+	if !aware.HasAggregateCorrectionPolicy() || aware.AggregateCorrectionPolicy != DefaultAggregateCorrectionPolicy() {
+		t.Fatalf("normalized submission = %#v", aware)
 	}
 }
 

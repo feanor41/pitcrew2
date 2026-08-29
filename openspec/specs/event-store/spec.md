@@ -61,6 +61,8 @@ The schema SHALL preserve:
 
 Artifacts, events, activities, evidence, and reviews SHALL be append-only. Aggregate reviews SHALL use artifacts of kind `aggregate_review` rather than a new table or fake unit. Actor values SHALL be declarative collision/audit metadata, not credentials. Activities SHALL contain only navigation-safe identifiers: no claim secret, secret hash, handle contents, or handle path. Plain claim secrets SHALL never be stored.
 
+Bounded correction facts SHALL be append-only artifacts: `aggregate_correction` records the blocker revision, causal groups, unit/actor assignments, derived `automatic|authorized` authority, and optional consumed authorization id; `correction_authorization` records exact blocker revision, reason, and confirmed user direction. Their `aggregate_correction_started` and `correction_authorized` activities SHALL identify only the artifact. Legacy `unit_aggregate_recovered` activities remain projectable without row rewriting.
+
 (Previously: The schema had no workflow name or activity ledger.)
 
 #### Scenario: Artifacts remain durable

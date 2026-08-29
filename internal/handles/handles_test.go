@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -310,6 +311,84 @@ func TestRecoverIncrementsGenerationAndEnforcesEvidenceRules(t *testing.T) {
 	if _, err := m.Recover(context.Background(), wfID, unitID, "implementer", dir); !errors.Is(err, ErrRecoveryForbidden) {
 		t.Fatalf("evidenced recovery error=%v", err)
 	}
+}
+
+func TestRecoverAggregateBatchCreatesOneBoundedTransactionAndRejectsLegacyAdapter(t *testing.T) {
+	m, db, _, wfID, units := aggregateManager(t, 1)
+	dir := filepath.Join(t.TempDir(), "handles")
+	if _, err := m.RecoverAggregateAt(context.Background(), wfID, units[0], 5, "coordinator", dir); !errors.Is(err, ErrRecoveryForbidden) {
+		t.Fatalf("policy-aware legacy recovery error = %v", err)
+	}
+	if _, err := db.DB().Exec(`INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES('superseded',?,?,'active','hash','old','now','later',1,'implementation')`, wfID, units[0]); err != nil {
+		t.Fatal(err)
+	}
+	request := AggregateRecoveryRequest{AggregateReviewRevision: 5, Groups: []CorrectionGroup{{CausalInvariant: "shared safety boundary", Findings: []string{"fix both units"}, UnitIDs: units}}, Assignments: []RecoveryAssignment{{UnitID: units[0], Actor: "implementer-a"}, {UnitID: units[1], Actor: "implementer-b"}}}
+	result, err := m.RecoverAggregateBatchAt(context.Background(), wfID, 5, "coordinator", dir, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Handles) != 2 {
+		t.Fatalf("handles = %#v", result.Handles)
+	}
+	for _, handle := range result.Handles {
+		info, statErr := os.Stat(handle.Path)
+		if statErr != nil || info.Mode().Perm() != 0o600 || handle.Secret != "" || handle.UnitRevision != 2 {
+			t.Fatalf("handle=%#v info=%v error=%v", handle, info, statErr)
+		}
+	}
+	var workflowState string
+	var revision, pending, facts, activities, active, revoked int
+	_ = db.DB().QueryRow(`SELECT state,revision FROM workflows WHERE id=?`, wfID).Scan(&workflowState, &revision)
+	_ = db.DB().QueryRow(`SELECT count(*) FROM work_units WHERE workflow_id=? AND state='pending' AND revision=2`, wfID).Scan(&pending)
+	_ = db.DB().QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=? AND kind='aggregate_correction'`, wfID).Scan(&facts)
+	_ = db.DB().QueryRow(`SELECT count(*) FROM activities WHERE workflow_id=? AND action='aggregate_correction_started'`, wfID).Scan(&activities)
+	_ = db.DB().QueryRow(`SELECT count(*) FROM handles WHERE workflow_id=? AND state='intent'`, wfID).Scan(&active)
+	_ = db.DB().QueryRow(`SELECT count(*) FROM handles WHERE claim_id='superseded' AND state='revoked'`, wfID).Scan(&revoked)
+	if workflowState != "implementing" || revision != 6 || pending != 2 || facts != 1 || activities != 1 || active != 2 || revoked != 1 {
+		t.Fatalf("state=%s revision=%d pending=%d facts=%d activities=%d active=%d revoked=%d", workflowState, revision, pending, facts, activities, active, revoked)
+	}
+	var content string
+	_ = db.DB().QueryRow(`SELECT content FROM artifacts WHERE workflow_id=? AND kind='aggregate_correction'`, wfID).Scan(&content)
+	if !strings.Contains(content, `"authority":"automatic"`) || strings.Contains(content, dir) || strings.Contains(content, "secret_hash") || strings.Contains(content, "claim") {
+		t.Fatalf("unsafe aggregate correction artifact: %s", content)
+	}
+}
+
+func TestRecoverAggregateBatchValidationAndFailureLeaveNoAuthorityOrFiles(t *testing.T) {
+	m, db, _, wfID, units := aggregateManager(t, 1)
+	dir := filepath.Join(t.TempDir(), "handles")
+	duplicate := AggregateRecoveryRequest{AggregateReviewRevision: 5, Groups: []CorrectionGroup{{CausalInvariant: "shared", Findings: []string{"one"}, UnitIDs: []string{units[0], units[0]}}}, Assignments: []RecoveryAssignment{{UnitID: units[0], Actor: "implementer"}}}
+	if _, err := m.RecoverAggregateBatchAt(context.Background(), wfID, 5, "coordinator", dir, duplicate); err == nil {
+		t.Fatal("duplicate unit accepted")
+	}
+	if _, err := db.DB().Exec(`CREATE TRIGGER reject_correction_activity BEFORE INSERT ON activities WHEN NEW.action='aggregate_correction_started' BEGIN SELECT RAISE(ABORT, 'reject activity'); END`); err != nil {
+		t.Fatal(err)
+	}
+	valid := AggregateRecoveryRequest{AggregateReviewRevision: 5, Groups: []CorrectionGroup{{CausalInvariant: "shared", Findings: []string{"one"}, UnitIDs: units}}, Assignments: []RecoveryAssignment{{UnitID: units[0], Actor: "a"}, {UnitID: units[1], Actor: "b"}}}
+	if _, err := m.RecoverAggregateBatchAt(context.Background(), wfID, 5, "coordinator", dir, valid); err == nil {
+		t.Fatal("activity failure accepted")
+	}
+	entries, _ := os.ReadDir(dir)
+	var revision, facts, handles int
+	_ = db.DB().QueryRow(`SELECT revision FROM workflows WHERE id=?`, wfID).Scan(&revision)
+	_ = db.DB().QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=? AND kind='aggregate_correction'`, wfID).Scan(&facts)
+	_ = db.DB().QueryRow(`SELECT count(*) FROM handles WHERE workflow_id=?`, wfID).Scan(&handles)
+	if len(entries) != 0 || revision != 5 || facts != 0 || handles != 0 {
+		t.Fatalf("rollback files=%d revision=%d facts=%d handles=%d", len(entries), revision, facts, handles)
+	}
+}
+
+func aggregateManager(t *testing.T, automaticRounds int) (*Manager, *store.Store, *mutableClock, string, []string) {
+	t.Helper()
+	m, db, clock, wfID, first := testManager(t)
+	units := []string{first, "wu-000000000000000000000002"}
+	_, _ = db.DB().Exec(`UPDATE workflows SET state='ready_to_complete',revision=5 WHERE id=?`, wfID)
+	_, _ = db.DB().Exec(`UPDATE work_units SET state='done' WHERE id=?`, first)
+	_, _ = db.DB().Exec(`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,?,'second','internal/second','[]','[]',1,1,'done',1)`, units[1], wfID)
+	body := fmt.Sprintf(`{"summary":"batch","scope":"internal","work_units":[{"id":"%s","description":"first","scope":"internal/first","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"%s","description":"second","scope":"internal/second","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}],"max_parallel_units":1,"aggregate_correction_policy":{"automatic_rounds":%d,"on_exhaustion":"require_user_authorization"}}`, units[0], units[1], automaticRounds)
+	_, _ = db.DB().Exec(`INSERT INTO plans(workflow_id,summary,scope,max_parallel_units,body) VALUES(?,'batch','internal',1,?)`, wfID, body)
+	_, _ = db.DB().Exec(`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,'aggregate_review','{"verdict":"corrections","findings":"fix"}','reviewer',5,'now')`, wfID)
+	return m, db, clock, wfID, units
 }
 
 func TestDebugIssueReturnsSecretOnceAndRevokesImmediately(t *testing.T) {

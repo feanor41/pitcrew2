@@ -14,8 +14,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fmazzalomo/pitcrew/internal/activity"
+	"github.com/fmazzalomo/pitcrew/internal/correction"
 	"github.com/fmazzalomo/pitcrew/internal/ids"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
@@ -68,6 +70,24 @@ type IssueResult struct {
 	Generation   int
 	UnitRevision int64
 	Secret       string
+}
+
+type CorrectionGroup struct {
+	CausalInvariant string   `json:"causal_invariant"`
+	Findings        []string `json:"findings"`
+	UnitIDs         []string `json:"unit_ids"`
+}
+type RecoveryAssignment struct {
+	UnitID string `json:"unit_id"`
+	Actor  string `json:"actor"`
+}
+type AggregateRecoveryRequest struct {
+	AggregateReviewRevision int64                `json:"aggregate_review_revision"`
+	Groups                  []CorrectionGroup    `json:"groups"`
+	Assignments             []RecoveryAssignment `json:"assignments"`
+}
+type AggregateRecoveryResult struct {
+	Handles []IssueResult `json:"handles"`
 }
 
 type Manager struct {
@@ -135,6 +155,197 @@ func (m *Manager) RecoverAggregateAt(ctx context.Context, workflowID, unitID str
 	return m.issue(ctx, workflowID, unitID, revision, actor, dir, PurposeImplementation, true, false, activity.UnitAggregateRecovered)
 }
 
+// RecoverAggregateBatchAt atomically reopens one bounded causal correction batch.
+func (m *Manager) RecoverAggregateBatchAt(ctx context.Context, workflowID string, workflowRevision int64, coordinator, dir string, request AggregateRecoveryRequest) (AggregateRecoveryResult, error) {
+	units, actors, err := validateAggregateRequest(coordinator, request)
+	if err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	defer tx.Rollback()
+	var state string
+	var current int64
+	if err = tx.QueryRowContext(ctx, `SELECT state,revision FROM workflows WHERE id=?`, workflowID).Scan(&state, &current); err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	if current != workflowRevision {
+		return AggregateRecoveryResult{}, store.ErrCASMismatch
+	}
+	if state != "ready_to_complete" {
+		return AggregateRecoveryResult{}, fmt.Errorf("%w: current state %s; expected ready_to_complete", ErrInvalidState, state)
+	}
+	projection, err := correction.Project(ctx, tx, workflowID, "")
+	if err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	if projection.BlockerRevision != request.AggregateReviewRevision || (projection.Authority != correction.AuthorityAutomatic && projection.Authority != correction.AuthorityAuthorized) {
+		return AggregateRecoveryResult{}, ErrRecoveryForbidden
+	}
+	for _, unitID := range units {
+		var unitState string
+		if err = tx.QueryRowContext(ctx, `SELECT state FROM work_units WHERE workflow_id=? AND id=?`, workflowID, unitID).Scan(&unitState); err != nil {
+			return AggregateRecoveryResult{}, err
+		}
+		if unitState != "done" {
+			return AggregateRecoveryResult{}, fmt.Errorf("%w: unit %s current state %s; expected done", ErrInvalidState, unitID, unitState)
+		}
+	}
+	if err = prepareDirectory(dir); err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	now, at := m.now().UTC(), ids.FormatTime(m.now())
+	authorizationID := int64(0)
+	if projection.Authority == correction.AuthorityAuthorized {
+		authorizationID, err = currentAuthorizationID(ctx, tx, workflowID, projection.BlockerRevision)
+		if err != nil {
+			return AggregateRecoveryResult{}, err
+		}
+	}
+	fact := struct {
+		AggregateReviewRevision int64                `json:"aggregate_review_revision"`
+		Groups                  []CorrectionGroup    `json:"groups"`
+		Assignments             []RecoveryAssignment `json:"assignments"`
+		Authority               correction.Authority `json:"authority"`
+		AuthorizationArtifactID int64                `json:"authorization_artifact_id,omitempty"`
+	}{request.AggregateReviewRevision, request.Groups, request.Assignments, projection.Authority, authorizationID}
+	body, err := json.Marshal(fact)
+	if err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	artifact, err := tx.ExecContext(ctx, `INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,?,?,?,?,?)`, workflowID, "aggregate_correction", string(body), coordinator, workflowRevision+1, at)
+	if err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	artifactID, err := artifact.LastInsertId()
+	if err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	result := AggregateRecoveryResult{Handles: make([]IssueResult, 0, len(units))}
+	var paths []string
+	committed := false
+	defer func() {
+		if !committed {
+			for _, path := range paths {
+				_ = os.Remove(path)
+			}
+		}
+	}()
+	for _, unitID := range units {
+		if _, err = tx.ExecContext(ctx, `UPDATE handles SET state='revoked' WHERE workflow_id=? AND unit_id=? AND purpose='implementation' AND state!='revoked'`, workflowID, unitID); err != nil {
+			return AggregateRecoveryResult{}, err
+		}
+		var unitRevision int64
+		if err = tx.QueryRowContext(ctx, `UPDATE work_units SET state='pending',revision=revision+1 WHERE workflow_id=? AND id=? AND state='done' RETURNING revision`, workflowID, unitID).Scan(&unitRevision); err != nil {
+			return AggregateRecoveryResult{}, err
+		}
+		var generation int
+		if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(claim_generation),0)+1 FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='implementation'`, workflowID, unitID).Scan(&generation); err != nil {
+			return AggregateRecoveryResult{}, err
+		}
+		claimID, randomErr := randomHex(m.entropy, 16)
+		if randomErr != nil {
+			return AggregateRecoveryResult{}, randomErr
+		}
+		secret, randomErr := randomHex(m.entropy, 16)
+		if randomErr != nil {
+			return AggregateRecoveryResult{}, randomErr
+		}
+		digest := sha256.Sum256([]byte(secret))
+		h := Handle{Version: 1, State: Intent, WorkflowID: workflowID, UnitID: unitID, ClaimID: claimID, SecretHash: hex.EncodeToString(digest[:]), IssuedAt: ids.FormatTime(now), ExpiresAt: ids.FormatTime(now.Add(handleLifetime))}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES(?,?,?,?,?,?,?,?,?,'implementation')`, claimID, workflowID, unitID, Intent, h.SecretHash, actors[unitID], h.IssuedAt, h.ExpiresAt, generation); err != nil {
+			return AggregateRecoveryResult{}, err
+		}
+		path := filepath.Join(dir, claimID+".json")
+		if err = writeExclusive(path, h); err != nil {
+			return AggregateRecoveryResult{}, err
+		}
+		paths = append(paths, path)
+		result.Handles = append(result.Handles, IssueResult{Path: path, ClaimID: claimID, Generation: generation, UnitRevision: unitRevision})
+	}
+	workflowUpdate, err := tx.ExecContext(ctx, `UPDATE workflows SET state='implementing',revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state='ready_to_complete'`, at, workflowID, workflowRevision)
+	if err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	if changed, changeErr := workflowUpdate.RowsAffected(); changeErr != nil || changed != 1 {
+		if changeErr != nil {
+			return AggregateRecoveryResult{}, changeErr
+		}
+		return AggregateRecoveryResult{}, store.ErrCASMismatch
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,'ready_to_complete','implementing',?,'aggregate_corrections',?,?)`, workflowID, coordinator, workflowRevision+1, at); err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES(?,NULL,'aggregate_correction_started',?,?,'artifact',?)`, workflowID, coordinator, at, fmt.Sprint(artifactID)); err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return AggregateRecoveryResult{}, err
+	}
+	committed = true
+	return result, nil
+}
+
+func validateAggregateRequest(coordinator string, request AggregateRecoveryRequest) ([]string, map[string]string, error) {
+	if strings.TrimSpace(coordinator) == "" || utf8.RuneCountInString(coordinator) > 128 || request.AggregateReviewRevision < 1 || len(request.Groups) == 0 || len(request.Groups) > 16 {
+		return nil, nil, ErrRecoveryForbidden
+	}
+	seen := map[string]bool{}
+	var units []string
+	for _, group := range request.Groups {
+		if strings.TrimSpace(group.CausalInvariant) == "" || utf8.RuneCountInString(group.CausalInvariant) > 256 || len(group.Findings) == 0 || len(group.Findings) > 32 || len(group.UnitIDs) == 0 {
+			return nil, nil, ErrRecoveryForbidden
+		}
+		for _, finding := range group.Findings {
+			if strings.TrimSpace(finding) == "" || utf8.RuneCountInString(finding) > 1024 {
+				return nil, nil, ErrRecoveryForbidden
+			}
+		}
+		for _, unitID := range group.UnitIDs {
+			if seen[unitID] || strings.TrimSpace(unitID) == "" {
+				return nil, nil, ErrRecoveryForbidden
+			}
+			seen[unitID], units = true, append(units, unitID)
+		}
+	}
+	actors := map[string]string{}
+	for _, assignment := range request.Assignments {
+		if !seen[assignment.UnitID] || actors[assignment.UnitID] != "" || strings.TrimSpace(assignment.Actor) == "" || utf8.RuneCountInString(assignment.Actor) > 128 {
+			return nil, nil, ErrRecoveryForbidden
+		}
+		actors[assignment.UnitID] = assignment.Actor
+	}
+	if len(actors) != len(units) {
+		return nil, nil, ErrRecoveryForbidden
+	}
+	return units, actors, nil
+}
+
+func currentAuthorizationID(ctx context.Context, tx *sql.Tx, workflowID string, blockerRevision int64) (int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id,content FROM artifacts WHERE workflow_id=? AND kind='correction_authorization' AND accepted_revision>? ORDER BY accepted_revision DESC,id DESC`, workflowID, blockerRevision)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var body string
+		var value struct {
+			AggregateReviewRevision int64 `json:"aggregate_review_revision"`
+			UserDirectionConfirmed  bool  `json:"user_direction_confirmed"`
+		}
+		if err = rows.Scan(&id, &body); err != nil {
+			return 0, err
+		}
+		if json.Unmarshal([]byte(body), &value) == nil && value.AggregateReviewRevision == blockerRevision && value.UserDirectionConfirmed {
+			return id, nil
+		}
+	}
+	return 0, ErrRecoveryForbidden
+}
+
 func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expectedRevision int64, actor, dir string, purpose Purpose, recovery, debug bool, action activity.Action) (IssueResult, error) {
 	if strings.TrimSpace(actor) == "" {
 		return IssueResult{}, ErrIdentityCollision
@@ -159,6 +370,13 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 		}
 		if workflowRevision != expectedRevision {
 			return IssueResult{}, store.ErrCASMismatch
+		}
+		projection, projectionErr := correction.Project(ctx, tx, workflowID, "")
+		if projectionErr != nil {
+			return IssueResult{}, projectionErr
+		}
+		if projection.PolicyAware || projection.BlockerRevision == 0 || projection.Authority == correction.AuthorityNone {
+			return IssueResult{}, ErrRecoveryForbidden
 		}
 		var aggregateBody string
 		if err = tx.QueryRowContext(ctx, `SELECT content FROM artifacts WHERE workflow_id=? AND kind='aggregate_review' ORDER BY id DESC LIMIT 1`, workflowID).Scan(&aggregateBody); err != nil {
@@ -699,6 +917,40 @@ func writeAtomic(path string, h Handle) error {
 	}
 	if err = os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func writeExclusive(path string, h Handle) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	cleanup := func() { _ = f.Close(); _ = os.Remove(tmp) }
+	if err = json.NewEncoder(f).Encode(h); err != nil {
+		cleanup()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err = os.Chmod(tmp, 0o600); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err = os.Link(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err = os.Remove(tmp); err != nil {
+		_ = os.Remove(path)
 		return err
 	}
 	return nil

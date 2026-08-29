@@ -27,6 +27,7 @@ type Service struct {
 func NewService(s *store.Store, now func() time.Time) *Service { return &Service{db: s.DB(), now: now} }
 
 func (s *Service) Submit(ctx context.Context, workflowID string, expected int64, actor string, p Plan) (workflow.Workflow, error) {
+	p = NormalizeForSubmission(p)
 	if err := Validate(p); err != nil {
 		return workflow.Workflow{}, err
 	}

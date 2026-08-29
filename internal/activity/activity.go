@@ -26,34 +26,36 @@ type Entry struct {
 }
 
 const (
-	WorkflowCreated         Action      = "workflow_created"
-	ExplorationRecorded     Action      = "exploration_recorded"
-	SpecificationRecorded   Action      = "specification_recorded"
-	DesignRecorded          Action      = "design_recorded"
-	PlanSubmitted           Action      = "plan_submitted"
-	PlanApproved            Action      = "plan_approved"
-	ImplementationStarted   Action      = "implementation_started"
-	WorkflowCompleted       Action      = "workflow_completed"
-	WorkflowAbandoned       Action      = "workflow_abandoned"
-	UnitClaimed             Action      = "unit_claimed"
-	UnitClaimRecovered      Action      = "unit_claim_recovered"
-	UnitTDDRecorded         Action      = "unit_tdd_recorded"
-	UnitReviewHandedOff     Action      = "unit_review_handed_off"
-	UnitReviewRecovered     Action      = "unit_review_recovered"
-	UnitReviewRecorded      Action      = "unit_review_recorded"
-	AggregateReviewRecorded Action      = "aggregate_review_recorded"
-	UnitCompleted           Action      = "unit_completed"
-	UnitAggregateRecovered  Action      = "unit_aggregate_recovered"
-	ContinuationRecorded    Action      = "continuation_recorded"
-	ProgressRecorded        Action      = "progress_recorded"
-	CapabilityRequested     Action      = "capability_requested"
-	Workflow                SubjectKind = "workflow"
-	Event                   SubjectKind = "event"
-	Artifact                SubjectKind = "artifact"
-	Plan                    SubjectKind = "plan"
-	WorkUnit                SubjectKind = "work_unit"
-	Evidence                SubjectKind = "evidence"
-	Review                  SubjectKind = "review"
+	WorkflowCreated            Action      = "workflow_created"
+	ExplorationRecorded        Action      = "exploration_recorded"
+	SpecificationRecorded      Action      = "specification_recorded"
+	DesignRecorded             Action      = "design_recorded"
+	PlanSubmitted              Action      = "plan_submitted"
+	PlanApproved               Action      = "plan_approved"
+	ImplementationStarted      Action      = "implementation_started"
+	WorkflowCompleted          Action      = "workflow_completed"
+	WorkflowAbandoned          Action      = "workflow_abandoned"
+	UnitClaimed                Action      = "unit_claimed"
+	UnitClaimRecovered         Action      = "unit_claim_recovered"
+	UnitTDDRecorded            Action      = "unit_tdd_recorded"
+	UnitReviewHandedOff        Action      = "unit_review_handed_off"
+	UnitReviewRecovered        Action      = "unit_review_recovered"
+	UnitReviewRecorded         Action      = "unit_review_recorded"
+	AggregateReviewRecorded    Action      = "aggregate_review_recorded"
+	AggregateCorrectionStarted Action      = "aggregate_correction_started"
+	CorrectionAuthorized       Action      = "correction_authorized"
+	UnitCompleted              Action      = "unit_completed"
+	UnitAggregateRecovered     Action      = "unit_aggregate_recovered"
+	ContinuationRecorded       Action      = "continuation_recorded"
+	ProgressRecorded           Action      = "progress_recorded"
+	CapabilityRequested        Action      = "capability_requested"
+	Workflow                   SubjectKind = "workflow"
+	Event                      SubjectKind = "event"
+	Artifact                   SubjectKind = "artifact"
+	Plan                       SubjectKind = "plan"
+	WorkUnit                   SubjectKind = "work_unit"
+	Evidence                   SubjectKind = "evidence"
+	Review                     SubjectKind = "review"
 )
 
 var (
@@ -63,7 +65,7 @@ var (
 		WorkflowCreated: Workflow, ExplorationRecorded: Artifact, SpecificationRecorded: Artifact, DesignRecorded: Artifact,
 		PlanSubmitted: Plan, PlanApproved: Plan, ImplementationStarted: Event, WorkflowCompleted: Event,
 		WorkflowAbandoned: Event, UnitClaimed: WorkUnit, UnitClaimRecovered: WorkUnit, UnitTDDRecorded: Evidence, UnitReviewHandedOff: WorkUnit, UnitReviewRecovered: WorkUnit,
-		UnitReviewRecorded: Review, UnitCompleted: WorkUnit, UnitAggregateRecovered: WorkUnit, AggregateReviewRecorded: Artifact, ContinuationRecorded: Artifact, ProgressRecorded: Artifact, CapabilityRequested: Artifact,
+		UnitReviewRecorded: Review, UnitCompleted: WorkUnit, UnitAggregateRecovered: WorkUnit, AggregateReviewRecorded: Artifact, AggregateCorrectionStarted: Artifact, CorrectionAuthorized: Artifact, ContinuationRecorded: Artifact, ProgressRecorded: Artifact, CapabilityRequested: Artifact,
 	}
 )
 
