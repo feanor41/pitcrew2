@@ -25,6 +25,7 @@ type Progress struct {
 }
 type PlannedWork struct {
 	Total, Done, Percent int
+	Units                []UnitStatus
 	Pending              []UnitStatus
 }
 type Synopsis struct {
@@ -143,6 +144,7 @@ func (s *Service) plannedWork(ctx context.Context, workflowID string, units map[
 		if !ok || unit.state != "pending" && unit.state != "reviewing" && unit.state != "done" {
 			return nil, "Planned progress unavailable: incomplete plan data", nil
 		}
+		planned.Units = append(planned.Units, unit.status)
 		if unit.state == "done" {
 			planned.Done++
 			continue

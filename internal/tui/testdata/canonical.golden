@@ -1,27 +1,30 @@
 [38;2;71;85;105m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[m
-[38;2;71;85;105m│[m [1;38;2;224;242;254mPitCrew2[m                                                                                                     [1;38;2;244;114;182mv0.12.0[m [38;2;71;85;105m│[m
+[38;2;71;85;105m│[m [1;38;2;224;242;254mPitCrew2[m                                                                                                     [1;38;2;244;114;182mv0.14.0[m [38;2;71;85;105m│[m
 [38;2;71;85;105m│[m [38;2;148;163;184mControl Plane[m                                                                                                        [38;2;71;85;105m│[m
 [38;2;71;85;105m╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯[m
-
-[1;38;2;226;232;240mRedesign TUI history  IMPLEMENTING  r7[m
-[1mGoal[m  Ship read-only terminal inspection
-[1mProgress[m  2/3 planned · 66%
-[1mNext[m  workflow list-ready-units
-
-[1;38;2;226;232;240mPENDING WORK[m  1
-[REVIEWING] Render diseño operativo · try 1
-[1;38;2;226;232;240mHISTORY[m  4 occurrences
-  2026-08-22 03:17 · Explore · Created workflow
-  Redesign TUI history · daimon
-  2026-08-22 03:18 · Specify · Recorded specification
-  Diseño operativo · pc2-specifier
-  2026-08-22 03:19 · Implement · Recorded TDD
-  Render diseño operativo · try 1 · pc2-implementer
-  Validation recorded
-[1;38;2;103;232;249m▶ [m2026-08-22 03:20 · Review · Recorded review
-  Render diseño operativo · try 1 · pc2-reviewer
-  Approved
-     Unit review
-      Verdict: approved
-      Store access preserves logical state.
-[38;2;203;213;225m↑/k ↓/j move • pg/home/end • enter evidence • r refresh • row 4/4 • q quit  ·  120x28                                   [m
+[1;38;2;226;232;240mRedesign TUI history  ·  IMPLEMENTING  ·  r7[m
+[1mPROGRESS[m  2/3 done · 66%
+[1mNOW[m  Reviewing · Render diseño operativo
+[1mNEXT[m  workflow list-ready-units
+[1mSTAGES[m  ○ Explore ─ ✓ Spec ─ ○ Design ─ ○ Plan ─ ● Build ─ ○ Review
+[1mGOAL[m  Ship read-only terminal inspection
+[1;38;2;226;232;240mUNITS[m  2/3 done                                 [38;2;71;85;105m│[m[1;38;2;226;232;240mTIMELINE[m  4 events
+✓ Map history signals · Done                    [38;2;71;85;105m│[m  03:17  Explore · Created workflow — Redesign TUI history
+✓ Define responsive hierarchy · Done            [38;2;71;85;105m│[m  03:18  Specify · Recorded specification — Diseño operativo
+● Render diseño operativo · Reviewing           [38;2;71;85;105m│[m  03:19  Implement · Recorded TDD — Validation recorded · Render diseñ…
+                                                [38;2;71;85;105m│[m[1;38;2;103;232;249m▶ [m03:20  Review · Recorded review — Approved · Render diseño operativo
+                                                [38;2;71;85;105m│[m    actor pc2-reviewer · try 1
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+                                                [38;2;71;85;105m│[m
+[38;2;203;213;225m↑/k ↓/j move • pg/home/end • enter evidence • r refresh • row 4/4 • q quit  ·  120x30                                   [m

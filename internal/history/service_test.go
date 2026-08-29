@@ -180,6 +180,9 @@ func TestServicePlannedWorkUsesAcceptedOrderAndStableProgress(t *testing.T) {
 	if len(planned.Pending) != 2 || planned.Pending[0].ID != "wu-000000000000000000000002" || planned.Pending[0].Status != "Claimed" || planned.Pending[1].ID != "wu-000000000000000000000003" || planned.Pending[1].Status != "Correction" || planned.Pending[1].Reason != "fix percentage rounding" {
 		t.Fatalf("ordered pending work = %#v", planned.Pending)
 	}
+	if len(planned.Units) != 3 || planned.Units[0].Status != "Done" || planned.Units[1].Status != "Claimed" || planned.Units[2].Status != "Correction" {
+		t.Fatalf("ordered unit progress = %#v", planned.Units)
+	}
 	if _, err = s.DB().ExecContext(ctx, `UPDATE work_units SET state='done' WHERE workflow_id='wf-planned' AND id!='wu-unplanned'`); err != nil {
 		t.Fatal(err)
 	}

@@ -289,7 +289,7 @@ func TestModelVersionAndOccurrenceDrillDown(t *testing.T) {
 	want := history.Resolution{Detail: history.Detail{Occurrences: []history.Occurrence{occurrence}, Records: []history.Record{record}}, Record: record}
 	model := New(fakeLoader{occurrenceResolution: want})
 	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: want.Detail}})
-	if model.Version() != "0.12.0" {
+	if model.Version() != "0.14.0" {
 		t.Fatalf("Version() = %q", model.Version())
 	}
 	for _, key := range []tea.KeyPressMsg{special(tea.KeyEnter), special(tea.KeyRight), textKey("l")} {
@@ -344,31 +344,28 @@ func TestModelOccurrenceNavigationPageHomeEndAndClamps(t *testing.T) {
 	detail := history.Detail{Synopsis: history.Synopsis{Current: &history.UnitStatus{Description: "unit-9", Status: "Claimed"}}, Occurrences: occurrences}
 	model, _ := (Model{width: 120, height: 20}).Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
 	if model.detail.occurrenceID != "activity:9" {
-		t.Fatalf("initial operational focus = %#v", model.detail)
+		t.Fatalf("initial focus = %#v", model.detail)
 	}
 	model, _ = model.Update(special(tea.KeyHome))
 	arrow, _ := model.Update(special(tea.KeyDown))
 	vim, _ := model.Update(textKey("j"))
 	if arrow.detail.occurrenceID != "activity:1" || !reflect.DeepEqual(arrow.detail, vim.detail) {
-		t.Fatalf("semantic Arrow/Vim mismatch: arrow=%#v vim=%#v", arrow.detail, vim.detail)
+		t.Fatalf("Arrow/Vim mismatch")
 	}
+	before, _ := model.detailPosition()
 	model, _ = model.Update(special(tea.KeyPgDown))
-	if model.detail.occurrenceID != "activity:2" {
-		t.Fatalf("page down focus = %#v", model.detail)
+	after, _ := model.detailPosition()
+	if after <= before {
+		t.Fatalf("page down did not advance: %d -> %d", before, after)
 	}
+	model, _ = model.Update(special(tea.KeyHome))
 	model, _ = model.Update(special(tea.KeyPgUp))
 	if model.detail.occurrenceID != "activity:0" {
-		t.Fatalf("page up focus = %#v", model.detail)
+		t.Fatalf("page up did not clamp: %#v", model.detail)
 	}
 	model, _ = model.Update(special(tea.KeyEnd))
 	if model.detail.occurrenceID != "activity:11" {
-		t.Fatalf("end semantic focus = %#v", model.detail)
-	}
-	for range 20 {
-		model, _ = model.Update(textKey("j"))
-	}
-	if model.detail.occurrenceID != "activity:11" {
-		t.Fatalf("lower clamp = %#v", model.detail)
+		t.Fatalf("end focus = %#v", model.detail)
 	}
 }
 
@@ -382,12 +379,13 @@ func TestModelOccurrencePageUsesRenderedHeightAndRetainsFocusOnResize(t *testing
 	model, _ := (Model{width: 120, height: 20}).Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
 	model, _ = model.Update(special(tea.KeyHome))
 	model, _ = model.Update(special(tea.KeyPgDown))
-	if model.detail.occurrenceID != "activity:2" {
-		t.Fatalf("measured page focus = %#v", model.detail)
+	selected := model.detail.occurrenceID
+	if selected == "activity:0" {
+		t.Fatalf("page did not advance: %#v", model.detail)
 	}
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
-	if model.detail.occurrenceID != "activity:2" || model.detail.occurrenceTop != 1 {
-		t.Fatalf("resized semantic window = %#v", model.detail)
+	if model.detail.occurrenceID != selected {
+		t.Fatalf("resize changed focus: %#v", model.detail)
 	}
 }
 

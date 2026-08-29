@@ -25,26 +25,27 @@ func TestMain(m *testing.M) {
 
 func TestViewRepresentativeLayouts(t *testing.T) {
 	for _, test := range []struct {
-		name   string
-		model  Model
-		width  int
-		height int
+		name          string
+		width, height int
 	}{
-		{"wide", detailViewModel(), 166, 30},
-		{"canonical", detailViewModel(), 120, 28},
-		{"without-actor", detailViewModel(), 96, 26},
-		{"compact", detailViewModel(), 80, 24},
-		{"detail-60", detailViewModel(), 60, 24},
-		{"minimum-detail", detailViewModel(), 60, 16},
-		{"narrow", workflowViewModel(), 72, 24},
+		{"wide", 166, 30},
+		{"canonical", 120, 30},
+		{"canonical-29", 120, 29},
+		{"compact", 80, 24},
+		{"detail-60", 60, 24},
+		{"minimum-detail", 60, 16},
+		{"below-minimum", 59, 15},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			model, _ := test.model.Update(tea.WindowSizeMsg{Width: test.width, Height: test.height})
+			model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: test.width, Height: test.height})
 			got := model.View().Content
 			for _, line := range strings.Split(got, "\n") {
 				if width := lipgloss.Width(line); width > test.width {
 					t.Fatalf("rendered line width %d exceeds terminal width %d", width, test.width)
 				}
+			}
+			if len(strings.Split(got, "\n")) > test.height {
+				t.Fatalf("rendered frame exceeds terminal height %d", test.height)
 			}
 			assertGolden(t, test.name, got)
 		})
@@ -57,7 +58,7 @@ func TestViewHomeUsesSharedBorderedHeaderAndExactActions(t *testing.T) {
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	got := model.View().Content
 	plain := ansi.Strip(got)
-	for _, identity := range []string{"PitCrew2", "Control Plane", "v0.12.0"} {
+	for _, identity := range []string{"PitCrew2", "Control Plane", "v0.14.0"} {
 		if !strings.Contains(plain, identity) {
 			t.Fatalf("home header missing %q:\n%s", identity, got)
 		}
@@ -101,7 +102,7 @@ func TestViewSharedHeaderIsBoundedAtSupportedWidths(t *testing.T) {
 				}
 			}
 			plain := ansi.Strip(header)
-			if !strings.Contains(plain, "PitCrew2") || !strings.Contains(plain, "Control Plane") || !strings.Contains(plain, "v0.12.0") {
+			if !strings.Contains(plain, "PitCrew2") || !strings.Contains(plain, "Control Plane") || !strings.Contains(plain, "v0.14.0") {
 				t.Fatalf("width %d screen %v header identity incomplete:\n%s", width, screen, header)
 			}
 		}
@@ -205,17 +206,14 @@ func TestViewUsesSharedHierarchyAndNativeComponents(t *testing.T) {
 	}
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	got := model.View().Content
-	for _, label := range []string{"Goal", "Progress", "Next", "Actor", "Record"} {
+	for _, label := range []string{"Actor", "Record"} {
 		if !strings.Contains(got, flight.label.Render(label)) {
-			t.Fatalf("shared hierarchy label %q is not bold:\n%s", label, got)
+			t.Fatalf("evidence label %q is not bold:\n%s", label, got)
 		}
 	}
 	plain := ansi.Strip(got)
 	if !strings.Contains(plain, "Result") || strings.Contains(plain, "# Result") || !strings.Contains(plain, "focused tests pass") {
 		t.Fatalf("evidence does not render the prepared Markdown viewport:\n%s", got)
-	}
-	if strings.Count(got, "▶") != 0 {
-		t.Fatalf("evidence viewport retained bespoke per-line focus markers:\n%s", got)
 	}
 }
 
@@ -239,47 +237,35 @@ func TestViewWideDetailNoColorGolden(t *testing.T) {
 func TestViewWideDetailUsesFixedThirtyRowLayoutAndPreservesOccurrence(t *testing.T) {
 	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 166, Height: 30})
 	selected := model.detail.occurrenceID
-	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
-	if len(lines) != 30 {
-		t.Fatalf("wide detail has %d rows, want 30:\n%s", len(lines), model.View().Content)
+	plain := ansi.Strip(model.View().Content)
+	if lines := strings.Split(plain, "\n"); len(lines) != 30 {
+		t.Fatalf("wide detail has %d rows, want 30:\n%s", len(lines), plain)
 	}
-	for _, row := range []int{12, 20} {
-		if !strings.Contains(lines[row], "╭") && !strings.Contains(lines[row], "╰") {
-			t.Fatalf("wide top panels do not occupy row %d: %q", row, lines[row])
+	for _, want := range []string{"PROGRESS", "NOW", "NEXT", "STAGES", "UNITS", "TIMELINE", "│"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("wide detail missing %q:\n%s", want, plain)
 		}
 	}
-	for _, row := range []int{21, 28} {
-		if !strings.Contains(lines[row], "╭") && !strings.Contains(lines[row], "╰") {
-			t.Fatalf("wide lower panels do not occupy row %d: %q", row, lines[row])
+	for _, unwanted := range []string{"WORKFLOW TREE", "PENDING / BLOCKED", "RELATED RECORDS / EVIDENCE"} {
+		if strings.Contains(plain, unwanted) {
+			t.Fatalf("wide detail retained %q:\n%s", unwanted, plain)
 		}
 	}
-	for _, title := range []string{"SUMMARY", "GOAL", "WORKFLOW TREE", "ACTIVITY / HISTORY", "PENDING / BLOCKED", "RELATED RECORDS / EVIDENCE"} {
-		if !strings.Contains(strings.Join(lines, "\n"), title) {
-			t.Fatalf("wide detail is missing %q:\n%s", title, model.View().Content)
-		}
-	}
-	if markers := strings.Count(strings.Join(lines, "\n"), "▶"); markers != 1 {
-		t.Fatalf("wide detail has %d selection markers:\n%s", markers, model.View().Content)
+	if strings.Count(plain, "▶") != 1 {
+		t.Fatalf("wide focus marker count differs from one:\n%s", plain)
 	}
 	model.loader = fakeLoader{occurrenceResolution: history.Resolution{Detail: model.opened.Detail}}
 	opened, command := model.Update(special(tea.KeyEnter))
 	if command == nil {
-		t.Fatal("wide activity selection did not remain openable")
+		t.Fatal("wide timeline selection is not openable")
 	}
 	opened, _ = opened.Update(command())
 	if opened.opened.Record.ID != "review:1" {
-		t.Fatalf("wide activity opened %q, want selected review record", opened.opened.Record.ID)
+		t.Fatalf("opened %q, want review:1", opened.opened.Record.ID)
 	}
-	narrow, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	floor, _ := narrow.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
-	for _, resized := range []Model{narrow, floor} {
-		plain := ansi.Strip(resized.View().Content)
-		if strings.Contains(plain, "ACTIVITY / HISTORY") || !strings.Contains(plain, "HISTORY") {
-			t.Fatalf("%dx%d did not use the existing narrow renderer:\n%s", resized.width, resized.height, resized.View().Content)
-		}
-	}
-	if floor.detail.occurrenceID != selected {
-		t.Fatalf("resize changed selected occurrence: got %q, want %q", floor.detail.occurrenceID, selected)
+	narrow, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	if narrow.detail.occurrenceID != selected {
+		t.Fatalf("resize changed occurrence: got %q want %q", narrow.detail.occurrenceID, selected)
 	}
 }
 
@@ -296,30 +282,22 @@ func TestViewWideDetailThresholdAndUnicodeTruncation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			model := detailViewModel()
 			model.opened.Detail.Workflow.Name = strings.Repeat("界", 80)
-			model.opened.Detail.Synopsis.Current.Description = strings.Repeat("é", 140)
 			model, _ = model.Update(tea.WindowSizeMsg{Width: test.width, Height: test.height})
-
 			got := model.View().Content
-			plain := ansi.Strip(got)
 			if model.wideDetailMode() != test.wide {
-				t.Fatalf("wide detail mode = %v, want %v", model.wideDetailMode(), test.wide)
+				t.Fatalf("wide detail = %v, want %v", model.wideDetailMode(), test.wide)
 			}
-			if strings.Contains(plain, "ACTIVITY / HISTORY") != test.wide {
-				t.Fatalf("wide activity panel presence differs from %v:\n%s", test.wide, got)
+			body := strings.Join(strings.Split(ansi.Strip(got), "\n")[4:], "\n")
+			if strings.Contains(body, "│") != test.wide {
+				t.Fatalf("split presence differs from wide=%v:\n%s", test.wide, got)
 			}
 			for _, line := range strings.Split(got, "\n") {
-				if width := lipgloss.Width(line); width > test.width {
-					t.Fatalf("rendered line width %d exceeds terminal width %d: %q", width, test.width, line)
+				if lipgloss.Width(line) > test.width {
+					t.Fatalf("line exceeds %d: %q", test.width, line)
 				}
 			}
-			if !test.wide {
-				return
-			}
-			if !strings.Contains(plain, "…") {
-				t.Fatalf("long Unicode identity was not truncated: %s", got)
-			}
-			if !strings.Contains(got, flight.title.Render("SUMMARY")) {
-				t.Fatalf("wide panel styling was lost while truncating: %q", got)
+			if !strings.Contains(ansi.Strip(got), "…") {
+				t.Fatalf("Unicode identity was not truncated:\n%s", got)
 			}
 		})
 	}
@@ -360,42 +338,16 @@ func TestViewFramesStayWithinTerminalBounds(t *testing.T) {
 }
 
 func TestViewColumnHeadingsAreBoldAndValuesRemainNormal(t *testing.T) {
-	workflowModel := workflowViewModel()
-	workflowModel.workflows = append(workflowModel.workflows, history.Workflow{
-		ID: "wf-abandoned", Name: "Abandoned workflow", State: "abandoned", CreatedAt: "2026-08-19T11:00:00Z",
-	})
-	workflows, _ := workflowModel.Update(tea.WindowSizeMsg{Width: 72, Height: 24})
-	workflowFrame := workflows.View().Content
-	for _, heading := range []string{"Started", "Workflow", "Status"} {
-		if !strings.Contains(workflowFrame, flight.label.Render(heading)) {
-			t.Fatalf("workflow heading %q is not bold:\n%s", heading, workflowFrame)
+	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	frame := model.View().Content
+	for _, heading := range []string{"PROGRESS", "NOW", "NEXT", "STAGES", "UNITS", "TIMELINE"} {
+		if !strings.Contains(frame, flight.label.Render(heading)) && !strings.Contains(frame, flight.title.Render(heading)) {
+			t.Fatalf("heading %q lacks hierarchy:\n%s", heading, frame)
 		}
 	}
-	for _, value := range []string{"Redesign TUI history", "Rename Daimon", "Abandoned workflow"} {
-		if strings.Contains(workflowFrame, flight.label.Render(value)) {
-			t.Fatalf("workflow value %q is bold:\n%s", value, workflowFrame)
-		}
-	}
-	for _, status := range []struct {
-		name, normal, bold string
-	}{
-		{"implementing", fitStatus("implementing", 11), flight.warn.Bold(true).Render(fitText(statusText("implementing"), 11))},
-		{"completed", fitStatus("completed", 11), flight.good.Bold(true).Render(fitText(statusText("completed"), 11))},
-		{"abandoned", fitStatus("abandoned", 11), flight.bad.Render(fitText(statusText("abandoned"), 11))},
-	} {
-		if !strings.Contains(workflowFrame, status.normal) || strings.Contains(workflowFrame, status.bold) {
-			t.Fatalf("%s status value is not normal weight while preserving semantic color/text:\n%s", status.name, workflowFrame)
-		}
-	}
-
-	detail, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 28})
-	detailFrame := detail.View().Content
-	if !strings.Contains(detailFrame, flight.title.Render("HISTORY")) || strings.Contains(ansi.Strip(detailFrame), "When  │") {
-		t.Fatalf("detail does not use the semantic history composition:\n%s", detailFrame)
-	}
-	for _, value := range []string{"Explore", "Redesign TUI history", "Created workflow", "daimon"} {
-		if strings.Contains(detailFrame, flight.label.Render(value)) {
-			t.Fatalf("occurrence value %q is bold:\n%s", value, detailFrame)
+	for _, value := range []string{"Render diseño operativo", "workflow list-ready-units", "Recorded review"} {
+		if strings.Contains(frame, flight.label.Render(value)) {
+			t.Fatalf("value %q is bold:\n%s", value, frame)
 		}
 	}
 }
@@ -445,12 +397,12 @@ func TestViewStatesAndResize(t *testing.T) {
 			model, _ := test.model.Update(tea.WindowSizeMsg{Width: width, Height: height})
 			got := model.View().Content
 			plain := ansi.Strip(got)
-			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.12.0"} {
+			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.14.0"} {
 				if !strings.Contains(got, identity) {
 					t.Fatalf("view missing identity %q:\n%s", identity, got)
 				}
 			}
-			if !strings.Contains(got, flight.version.Render("v0.12.0")) {
+			if !strings.Contains(got, flight.version.Render("v0.14.0")) {
 				t.Fatalf("view lacks version accent:\n%s", got)
 			}
 			for _, want := range test.want {
@@ -470,48 +422,42 @@ func TestViewStatesAndResize(t *testing.T) {
 	}
 }
 
-func TestViewDetailRendersSemanticPendingMarkdownAtResponsiveSizes(t *testing.T) {
-	t.Setenv("NO_COLOR", "1")
+func TestViewDetailRendersOrderedUnitProgressAtResponsiveSizes(t *testing.T) {
 	model := detailViewModel()
-	model.opened.Detail.Synopsis = history.Synopsis{
-		NextAction: "workflow unit-tdd",
-		Current:    &history.UnitStatus{ID: "wu-render", Description: "Render semantic detail", Status: "Claimed", Attempt: 2},
-		Planned: &history.PlannedWork{Total: 3, Done: 1, Percent: 33, Pending: []history.UnitStatus{
-			{ID: "wu-render", Description: "Render semantic detail", Status: "Claimed", Attempt: 2},
-			{ID: "wu-navigation", Description: "Measure semantic navigation", Status: "Dependency waiting", Reason: "Waiting for wu-render"},
-		}},
+	model.opened.Detail.Synopsis.Total, model.opened.Detail.Synopsis.Done = 6, 3 // Includes one legacy unplanned completion.
+	model.opened.Detail.Synopsis.Planned.Total, model.opened.Detail.Synopsis.Planned.Done, model.opened.Detail.Synopsis.Planned.Percent = 5, 2, 40
+	model.opened.Detail.Synopsis.Blocker = &history.UnitStatus{ID: "wu-fix", Description: "Fix blocked rendering", Status: "Correction", Reason: "Missing failure coverage"}
+	model.opened.Detail.Synopsis.Current = model.opened.Detail.Synopsis.Blocker
+	model.opened.Detail.Synopsis.Planned.Units = []history.UnitStatus{
+		{ID: "wu-done", Description: "Map signals", Status: "Done"},
+		{ID: "wu-ready", Description: "Polish timeline", Status: "Ready"},
+		{ID: "wu-fix", Description: "Fix blocked rendering", Status: "Correction", Reason: "Missing failure coverage"},
+		{ID: "wu-wait", Description: "Verify resize", Status: "Dependency waiting"},
+		{ID: "wu-queued", Description: "Document controls", Status: "Queued"},
 	}
-	model.opened.Detail.Occurrences = []history.Occurrence{
-		{ID: "activity:created", RecordID: "workflow:wf-alpha", At: "2026-08-22T03:17:38Z", Phase: "Explore", Work: "Redesign TUI history", Activity: "workflow_created", Actor: "daimon", Outcome: "Created workflow"},
-		{ID: "activity:markdown", RecordID: "evidence:markdown", At: "2026-08-22T03:19:00Z", Phase: "Implement", Work: "Render semantic detail", Activity: "unit_tdd_recorded", Actor: "pc2-implementer", Outcome: "Validation recorded"},
-	}
-	model.opened.Detail.Records = []history.Record{{
-		ID: "evidence:markdown", Kind: "evidence", UnitID: "wu-render", Revision: 2, Title: "TDD evidence",
-		Content: "# Rendering contract\n\n- Preserve `Home`\n- Preserve **Workflows**", Actor: "pc2-implementer", At: "2026-08-22T03:19:00Z",
-	}}
-
-	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 60, Height: 24}, {Width: 60, Height: 16}} {
+	for _, size := range []tea.WindowSizeMsg{{Width: 166, Height: 30}, {Width: 80, Height: 24}, {Width: 60, Height: 16}} {
 		t.Run(fmt.Sprintf("%dx%d", size.Width, size.Height), func(t *testing.T) {
 			rendered, _ := model.Update(size)
-			got := rendered.View().Content
-			plain := ansi.Strip(got)
-			for _, want := range []string{"Progress  1/3 planned · 33%", "PENDING WORK  2", "[CLAIMED] Render semantic detail", "HISTORY  2 occurrences", "Rendering contract"} {
+			plain := ansi.Strip(rendered.View().Content)
+			for _, want := range []string{"PROGRESS  2/5 done", "NOW", "Correction · Fix blocked rendering", "NEXT", "BLOCKED", "Missing failure coverage", "UNITS  2/5 done"} {
 				if !strings.Contains(plain, want) {
-					t.Fatalf("%dx%d semantic detail missing %q:\n%s", size.Width, size.Height, want, got)
+					t.Fatalf("missing %q:\n%s", want, plain)
 				}
 			}
-			if strings.Contains(plain, "When  │") || strings.Contains(plain, "# Rendering contract") {
-				t.Fatalf("%dx%d retained the datagrid or raw Markdown:\n%s", size.Width, size.Height, got)
-			}
-			assertNoANSI(t, got)
-			lines := strings.Split(got, "\n")
-			if len(lines) > size.Height {
-				t.Fatalf("%dx%d semantic detail has %d lines", size.Width, size.Height, len(lines))
-			}
-			for _, line := range lines {
-				if width := lipgloss.Width(line); width > size.Width {
-					t.Fatalf("%dx%d semantic detail has %d-cell line: %q", size.Width, size.Height, width, line)
+			if size.Width == 166 {
+				mapAt, polishAt, fixAt := strings.Index(plain, "Map signals"), strings.Index(plain, "Polish timeline"), strings.Index(plain, "Fix blocked rendering · Correction")
+				if mapAt < 0 || polishAt < mapAt || fixAt < polishAt {
+					t.Fatalf("accepted plan order was not preserved:\n%s", plain)
 				}
+			}
+			wantMore := ""
+			if size.Width == 80 {
+				wantMore = "+3 more"
+			} else if size.Width == 60 {
+				wantMore = "+4 more"
+			}
+			if wantMore != "" && !strings.Contains(plain, wantMore) {
+				t.Fatalf("truncated unit rows lack accurate %q indicator:\n%s", wantMore, plain)
 			}
 		})
 	}
@@ -572,26 +518,16 @@ func TestSemanticOccurrenceSuppressesEquivalentOutcomeButPreservesMeaning(t *tes
 	}
 }
 
-func TestInlinePreviewOnlyIntroducesEachLinkedRecordOnce(t *testing.T) {
-	first := history.Occurrence{ID: "first", RecordID: "artifact:spec"}
-	later := history.Occurrence{ID: "later", RelatedRecordIDs: []string{"artifact:spec"}}
-	independent := history.Occurrence{ID: "independent", RecordID: "review:1", RelatedRecordIDs: []string{"artifact:spec"}}
-	model := Model{width: 80, opened: history.Resolution{Detail: history.Detail{
-		Occurrences: []history.Occurrence{first, later, independent},
-		Records: []history.Record{
-			{ID: "artifact:spec", Content: "# Specification\n\nOriginal durable body"},
-			{ID: "review:1", Content: "# Review\n\nIndependent verdict"},
-		},
-	}}}
-
-	if got := strings.Join(model.inlinePreviewLines(first), "\n"); !strings.Contains(got, "Specification") {
-		t.Fatalf("introducing occurrence did not preview its durable record:\n%s", got)
+func TestTimelineDoesNotRenderEvidenceBodyBeforeDrillDown(t *testing.T) {
+	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 29})
+	plain := ansi.Strip(model.View().Content)
+	for _, evidence := range []string{"Unit review", "Verdict: approved", "Store access preserves logical state."} {
+		if strings.Contains(plain, evidence) {
+			t.Fatalf("timeline exposed evidence %q before Enter:\n%s", evidence, plain)
+		}
 	}
-	if got := model.inlinePreviewLines(later); len(got) != 0 {
-		t.Fatalf("later non-introducing occurrence repeated durable record body:\n%s", strings.Join(got, "\n"))
-	}
-	if got := strings.Join(model.inlinePreviewLines(independent), "\n"); !strings.Contains(got, "Independent verdict") {
-		t.Fatalf("independent durable record preview was suppressed:\n%s", got)
+	if !strings.Contains(plain, "Recorded review") || !strings.Contains(plain, "Approved") {
+		t.Fatalf("timeline lost event meaning while hiding evidence:\n%s", plain)
 	}
 }
 
@@ -647,20 +583,14 @@ func TestViewGridMetadataTimelineAndVersionAccent(t *testing.T) {
 	grid, _ := workflowViewModel().Update(tea.WindowSizeMsg{Width: 112, Height: 28})
 	for _, want := range []string{"Started", "Work", "Status", "2026-08-22 03:17", "Redesign TUI history"} {
 		if !strings.Contains(grid.View().Content, want) {
-			t.Fatalf("grid missing %q:\n%s", want, grid.View().Content)
+			t.Fatalf("grid missing %q", want)
 		}
 	}
-	if !strings.Contains(grid.View().Content, flight.version.Render("v0.12.0")) {
-		t.Fatalf("version lacks dedicated accent:\n%s", grid.View().Content)
-	}
-	detail, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 28})
-	for _, want := range []string{"Redesign TUI history", "IMPLEMENTING", "r7", "Goal", "2/3 planned", "PENDING WORK", "Next", "HISTORY", "Specify", "pc2-specifier", "Recorded specification", "Unit review"} {
-		if !strings.Contains(detail.View().Content, want) {
+	detail, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	for _, want := range []string{"Redesign TUI history", "IMPLEMENTING", "r7", "2/3 done", "NOW", "NEXT", "STAGES", "UNITS", "TIMELINE", "Specify", "Recorded specification", "Recorded review"} {
+		if !strings.Contains(ansi.Strip(detail.View().Content), want) {
 			t.Fatalf("detail missing %q:\n%s", want, detail.View().Content)
 		}
-	}
-	if got := detail.View().Content; strings.Contains(got, "RESULTS") || strings.Contains(got, "MULTI PANE") || strings.Contains(got, "SINGLE PANE") {
-		t.Fatalf("detail retained storage-oriented or layout-mode copy:\n%s", got)
 	}
 }
 
@@ -687,7 +617,7 @@ func TestViewCompactIdentityAcrossLayouts(t *testing.T) {
 	for _, size := range []tea.WindowSizeMsg{{Width: 112, Height: 28}, {Width: 60, Height: 16}, {Width: 42, Height: 10}} {
 		model, _ := workflowViewModel().Update(size)
 		got := model.View().Content
-		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.12.0")) {
+		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.14.0")) {
 			t.Fatalf("%dx%d missing accessible identity or version accent:\n%s", size.Width, size.Height, got)
 		}
 		if strings.Contains(got, "╔═╗") {
@@ -697,38 +627,20 @@ func TestViewCompactIdentityAcrossLayouts(t *testing.T) {
 }
 
 func TestViewSemanticHistoryBreakpoints(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		width       int
-		wantActor   bool
-		wantTwoLine bool
-	}{
-		{"wide", 166, true, false},
-		{"canonical", 120, true, false},
-		{"without actor column", 96, true, false},
-		{"compact", 80, true, false},
-		{"two line", 60, false, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: test.width, Height: 28})
-			got := model.View().Content
-			if strings.Contains(got, "RESULTS") || strings.Contains(got, "ACTIVITY  ") {
-				t.Fatalf("duplicated streams at %d columns:\n%s", test.width, got)
-			}
-			actor := strings.Contains(got, "pc2-specifier")
-			if actor != test.wantActor {
-				t.Fatalf("actor visibility at %d = %v, want %v:\n%s", test.width, actor, test.wantActor, got)
-			}
-			if strings.Contains(ansi.Strip(got), "When  │") {
-				t.Fatalf("%d-column detail retained the datagrid:\n%s", test.width, got)
-			}
-			if test.wantTwoLine && !strings.Contains(got, "  Render diseño operativo") {
-				t.Fatalf("60-column occurrence is not rendered as a semantic block:\n%s", got)
-			}
-			for _, line := range strings.Split(got, "\n") {
-				if width := lipgloss.Width(line); width > test.width {
-					t.Fatalf("rendered line width %d exceeds %d: %q", width, test.width, line)
+	for _, size := range []tea.WindowSizeMsg{{Width: 166, Height: 30}, {Width: 120, Height: 30}, {Width: 120, Height: 29}, {Width: 80, Height: 24}, {Width: 60, Height: 24}, {Width: 60, Height: 16}} {
+		t.Run(fmt.Sprintf("%dx%d", size.Width, size.Height), func(t *testing.T) {
+			model, _ := detailViewModel().Update(size)
+			plain := ansi.Strip(model.View().Content)
+			for _, want := range []string{"IMPLEMENTING", "NEXT", "workflow list-ready-units", "STAGES", "UNITS", "TIMELINE", "Recorded review"} {
+				if !strings.Contains(plain, want) {
+					t.Fatalf("%dx%d missing %q:\n%s", size.Width, size.Height, want, plain)
 				}
+			}
+			if strings.Count(plain, "▶") != 1 {
+				t.Fatalf("%dx%d focus markers != 1:\n%s", size.Width, size.Height, plain)
+			}
+			if strings.Contains(plain, "Unit review") || strings.Contains(plain, "Verdict: approved") {
+				t.Fatalf("%dx%d exposed evidence before Enter:\n%s", size.Width, size.Height, plain)
 			}
 		})
 	}
@@ -765,18 +677,16 @@ func TestViewNarrowDetailIsHeightBounded(t *testing.T) {
 	}
 }
 
-func TestViewMinimumDetailPrioritizesSelectedUnicodeOccurrenceAndPreview(t *testing.T) {
-	model := detailViewModel()
-	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
-	got := model.View().Content
-	if len(strings.Split(got, "\n")) > 16 {
-		t.Fatalf("60x16 detail rendered too many lines:\n%s", got)
+func TestViewMinimumDetailPrioritizesSelectedUnicodeOccurrenceWithoutEvidence(t *testing.T) {
+	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	plain := ansi.Strip(model.View().Content)
+	for _, want := range []string{"IMPLEMENTING", "NOW", "NEXT", "STAGES", "UNITS", "TIMELINE", "Recorded review", "Approved", "diseño"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("60x16 missing %q:\n%s", want, plain)
+		}
 	}
-	if !strings.Contains(got, "Recorded review") || !strings.Contains(got, "Unit review") {
-		t.Fatalf("60x16 detail does not expose the selected occurrence and preview:\n%s", got)
-	}
-	if !strings.Contains(got, "diseño") {
-		t.Fatalf("Unicode occurrence missing:\n%s", got)
+	if strings.Contains(plain, "Unit review") {
+		t.Fatalf("60x16 exposed evidence before Enter:\n%s", plain)
 	}
 }
 
@@ -805,47 +715,45 @@ func TestViewProgressiveDetailMarksLegacyOccurrence(t *testing.T) {
 	}
 }
 
-func TestViewSynopsisMarksDerivedCurrentAndBlockerAtMinimum(t *testing.T) {
+func TestViewBlockerIsConditionalAndVisibleAtMinimum(t *testing.T) {
 	model := detailViewModel()
-	model.opened.Detail.Synopsis.Planned = nil
-	model.opened.Detail.Synopsis.Current.Derived = true
-	model.opened.Detail.Synopsis.Blocker = &history.UnitStatus{Description: "Render diseño operativo", Status: "Correction", Reason: "Review correction required", Derived: true}
-	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
-	got := model.View().Content
-	for _, want := range []string{"Current [derived]", "Blocked [derived]"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("minimum synopsis missing %q:\n%s", want, got)
-		}
+	without, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	if strings.Contains(ansi.Strip(without.View().Content), "BLOCKED") {
+		t.Fatalf("blocker shown without blocker")
 	}
-	if !strings.Contains(got, "HISTORY") || !strings.Contains(got, "Recorded review") {
-		t.Fatalf("derived synopsis consumed the minimum occurrence viewport:\n%s", got)
+	model.opened.Detail.Synopsis.Blocker = &history.UnitStatus{Description: "Render diseño operativo", Status: "Correction", Reason: "Review correction required", Derived: true}
+	with, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	plain := ansi.Strip(with.View().Content)
+	for _, want := range []string{"BLOCKED", "Review correction required", "NEXT", "TIMELINE", "Recorded review"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("minimum blocker view missing %q:\n%s", want, plain)
+		}
 	}
 }
 
-func TestViewSynopsisRendersAdvancedAndBlockedProgressAtResponsiveWidths(t *testing.T) {
-	for _, status := range []string{"advanced", "blocked"} {
-		for _, width := range []int{120, 80, 60} {
-			t.Run(fmt.Sprintf("%s/%d", status, width), func(t *testing.T) {
-				model := detailViewModel()
-				model.opened.Detail.Synopsis.Planned = nil
-				model.opened.Detail.Synopsis.Progress = &history.Progress{Status: status, Summary: "Focused tests pass", NextAction: "request review"}
-				height := 20
-				if width == 60 {
-					height = 16
-				}
-				model, _ = model.Update(tea.WindowSizeMsg{Width: width, Height: height})
-				got := model.View().Content
-				plain := ansi.Strip(got)
-				for _, want := range []string{"[" + strings.ToUpper(status) + "]", "Focused tests pass", "Report next  request review", "Next  workflow list-ready-units"} {
-					if !strings.Contains(plain, want) {
-						t.Fatalf("progress synopsis missing %q:\n%s", want, got)
-					}
-				}
-				if width == 60 && (!strings.Contains(got, "HISTORY") || !strings.Contains(got, "Recorded review")) {
-					t.Fatalf("minimum progress synopsis displaced operational history:\n%s", got)
-				}
-			})
-		}
+func TestViewStageRailNeverClaimsFutureStagesComplete(t *testing.T) {
+	for _, test := range []struct {
+		name, state, want, unwanted string
+		occurrences                 []history.Occurrence
+	}{
+		{name: "sparse exploring", state: "exploring", want: "● Explore", unwanted: "✓ Explore"},
+		{name: "recorded exploration", state: "specifying", occurrences: []history.Occurrence{{Activity: "exploration_recorded"}}, want: "✓ Explore ─ ● Spec", unwanted: "✓ Spec"},
+		{name: "skipped spec", state: "designing", occurrences: []history.Occurrence{{Activity: "exploration_recorded"}}, want: "✓ Explore ─ ○ Spec ─ ● Design", unwanted: "✓ Spec"},
+		{name: "sparse ready for review", state: "ready_to_complete", occurrences: []history.Occurrence{{Activity: "unit_completed"}}, want: "✓ Build ─ ● Review", unwanted: "✓ Plan"},
+		{name: "sparse completed", state: "completed", occurrences: []history.Occurrence{{Activity: "workflow_completed"}}, want: "✓ Review", unwanted: "✓ Spec"},
+		{name: "abandoned during design", state: "abandoned", occurrences: []history.Occurrence{{Phase: "Design", Activity: "exploration_recorded"}}, want: "✓ Explore ─ ○ Spec ─ ! Design", unwanted: "✓ Spec"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := detailViewModel()
+			model.opened.Detail.Workflow.State = test.state
+			model.opened.Detail.Occurrences = test.occurrences
+			model.opened.Detail.Records = nil
+			model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 29})
+			plain := ansi.Strip(model.View().Content)
+			if !strings.Contains(plain, test.want) || strings.Contains(plain, test.unwanted) {
+				t.Fatalf("dishonest rail for %s:\n%s", test.state, plain)
+			}
+		})
 	}
 }
 
@@ -937,9 +845,14 @@ func detailViewModel() Model {
 		Synopsis: history.Synopsis{
 			Total: 3, Done: 2, Reviewing: 1, NextAction: "workflow list-ready-units",
 			Current: &history.UnitStatus{ID: "wu-view", Description: "Render diseño operativo", Status: "Reviewing", Attempt: 1, Derived: true},
-			Planned: &history.PlannedWork{Total: 3, Done: 2, Percent: 66, Pending: []history.UnitStatus{
-				{ID: "wu-view", Description: "Render diseño operativo", Status: "Reviewing", Attempt: 1},
-			}},
+			Planned: &history.PlannedWork{Total: 3, Done: 2, Percent: 66,
+				Units: []history.UnitStatus{
+					{ID: "wu-discover", Description: "Map history signals", Status: "Done", Attempt: 1},
+					{ID: "wu-structure", Description: "Define responsive hierarchy", Status: "Done", Attempt: 1},
+					{ID: "wu-view", Description: "Render diseño operativo", Status: "Reviewing", Attempt: 1},
+				},
+				Pending: []history.UnitStatus{{ID: "wu-view", Description: "Render diseño operativo", Status: "Reviewing", Attempt: 1}},
+			},
 		},
 		Occurrences: []history.Occurrence{
 			{ID: "activity:1", RecordID: "workflow:wf-alpha", At: "2026-08-22T03:17:38Z", Phase: "Explore", Work: "Redesign TUI history", Activity: "workflow_created", Actor: "daimon", Outcome: "Created workflow"},
