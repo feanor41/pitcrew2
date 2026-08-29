@@ -2,8 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/envelope"
 	"github.com/fmazzalomo/pitcrew/internal/handles"
 	"github.com/fmazzalomo/pitcrew/internal/maxims"
+	"github.com/fmazzalomo/pitcrew/internal/project"
 	"github.com/fmazzalomo/pitcrew/internal/runtimeinstall"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 	"github.com/fmazzalomo/pitcrew/internal/workflow"
@@ -32,6 +35,84 @@ func TestPrinciplesPrintsExactTextOrStructuredJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonResult.stdout), &got); err != nil || len(got) != 4 {
 		t.Fatalf("principles JSON=%q, %v", jsonResult.stdout, err)
 	}
+}
+
+func TestProjectInspectConsolidateAndLinkedWorkflowShareCentralState(t *testing.T) {
+	root := t.TempDir()
+	main, linked := filepath.Join(root, "main"), filepath.Join(root, "linked")
+	admin := filepath.Join(main, ".git", "worktrees", "linked")
+	for _, dir := range []string{admin, linked} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, content := range map[string]string{
+		filepath.Join(linked, ".git"):     "gitdir: " + admin + "\n",
+		filepath.Join(admin, "commondir"): "../..\n",
+		filepath.Join(admin, "gitdir"):    filepath.Join(linked, ".git") + "\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dataHome := filepath.Join(root, "data")
+	for _, args := range [][]string{{"workflow", "show", "--workflow-id", "wf-000000000000000000000001"}, {"workflow", "list-ready-units", "--workflow-id", "wf-000000000000000000000001"}} {
+		if got := runCentral(t, linked, dataHome, args...); got.code == 0 {
+			t.Fatalf("absent central read succeeded: %#v", got)
+		}
+	}
+	if _, err := os.Stat(dataHome); !os.IsNotExist(err) {
+		t.Fatalf("workflow read initialized data home: %v", err)
+	}
+	legacy := runAt(t, main, "workflow", "new", "--name", "Legacy", "--goal", "preserve", "--actor", "aion")
+	var created struct {
+		Data struct {
+			Workflow struct {
+				ID string `json:"id"`
+			} `json:"workflow"`
+		} `json:"data"`
+	}
+	if legacy.code != 0 || json.Unmarshal([]byte(legacy.stdout), &created) != nil {
+		t.Fatalf("legacy=%#v", legacy)
+	}
+	legacyStore, err := store.Open(context.Background(), main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacyStore.Close()
+	inspect := runCentral(t, linked, dataHome, "project", "inspect")
+	if inspect.code != 0 {
+		t.Fatalf("inspect=%#v", inspect)
+	}
+	if _, err := os.Stat(dataHome); !os.IsNotExist(err) {
+		t.Fatalf("inspect initialized data home: %v", err)
+	}
+	view, err := project.Inspect(linked, dataHome)
+	if err != nil || len(view.Legacy.Candidates) != 1 {
+		t.Fatalf("view=%#v err=%v", view, err)
+	}
+	manifest := `{"project_id":"` + view.Project.ID + `","candidate_ids":["` + view.Legacy.Candidates[0].ID + `"],"choices":[]}`
+	input := writeInput(t, root, "consolidate.json", manifest)
+	if got := runCentral(t, linked, dataHome, "project", "consolidate", "--input-file", input); got.code != 0 {
+		t.Fatalf("consolidate=%#v", got)
+	}
+	if got := runCentral(t, main, dataHome, "workflow", "show", "--workflow-id", created.Data.Workflow.ID); got.code != 0 {
+		t.Fatalf("shared workflow=%#v", got)
+	}
+	called := ""
+	code := Run([]string{"tui"}, Dependencies{ProjectRoot: linked, DataHome: dataHome, TUIRunner: func(root string, _ io.Reader, _ io.Writer) error { called = root; return nil }})
+	if code != 0 || called != view.Paths.ProjectRoot {
+		t.Fatalf("linked TUI root=%q code=%d", called, code)
+	}
+	if _, err := os.Stat(filepath.Join(linked, ".pitcrew")); !os.IsNotExist(err) {
+		t.Fatalf("linked checkout gained local state: %v", err)
+	}
+}
+
+func runCentral(t *testing.T, root, dataHome string, args ...string) result {
+	var stdout, stderr bytes.Buffer
+	code := Run(args, Dependencies{Stdout: &stdout, Stderr: &stderr, ProjectRoot: root, DataHome: dataHome, Now: time.Now})
+	return result{code, stdout.String(), stderr.String()}
 }
 
 func TestHelpEndsWithEpilogueAndHidesForbiddenSurfaces(t *testing.T) {
@@ -156,7 +237,7 @@ func TestWorkflowNewAndShowUseEnvelopeAndProjectLocalStore(t *testing.T) {
 
 func TestVersionIsAGlobalFlag(t *testing.T) {
 	result := runCLI(t, "--version")
-	if result.code != 0 || result.stdout != "pitcrew 0.15.0\n" || result.stderr != "" {
+	if result.code != 0 || result.stdout != "pitcrew 0.16.0\n" || result.stderr != "" {
 		t.Fatalf("version=%#v", result)
 	}
 }

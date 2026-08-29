@@ -2,20 +2,36 @@
 
 ## Purpose
 
-Define the project-local SQLite persistence, durable records, migrations, and revision safety.
+Define central per-project SQLite persistence, durable records, migrations, and revision safety.
 
 ## Requirements
 
 
-### Requirement: Local single-process store
+### Requirement: Canonical project identity and local single-process store
 
-Each project SHALL use only `<project>/.pitcrew/state.db`; one invocation SHALL open one SQLite connection. There SHALL be no global registry, cross-project index, daemon, IPC, shared cache, HTTP, RPC, polling, or remote access. Filesystem permissions SHALL be the trust boundary; no additional encryption at rest is required.
+The project ID SHALL be the lowercase SHA-256 of the canonical Git common-directory path. Main and linked worktrees SHALL resolve the same ID. Independent clones and moved common directories SHALL resolve different IDs. Each project SHALL use only `<data-home>/pitcrew/projects/<project-id>/state.db`; its identity file, state database, `worktrees/`, and `handles/` SHALL be private. One invocation SHALL open one SQLite connection. There SHALL be no global registry, cross-project index, daemon, IPC, shared cache, HTTP, RPC, polling, or remote access. Filesystem permissions SHALL be the trust boundary.
 
-#### Scenario: Projects remain isolated
+#### Scenario: Linked worktrees coordinate one workflow
 
-- GIVEN two project roots
-- WHEN each invokes the CLI
-- THEN each SHALL access only its own local database
+- GIVEN a main checkout and a reciprocal linked worktree
+- WHEN each invokes workflow commands
+- THEN both SHALL access the same central state and compare-and-swap revisions
+
+#### Scenario: Clone and move boundaries isolate state
+
+- GIVEN an independent clone or a common directory moved to another path
+- WHEN project identity resolves
+- THEN it SHALL receive a different project ID and central root
+
+### Requirement: Explicit legacy consolidation
+
+Checkout-local `.pitcrew/state.db` files SHALL be inert legacy candidates. Inspection SHALL be read-only, non-initializing, bounded to the resolved common directory, and bind candidates including WAL content into an exact set ID. Mutation SHALL fail closed until that set is acknowledged. Consolidation SHALL load complete workflow graphs from safe read-only snapshots, choose divergent copies only as whole graphs, import in one central transaction, and acknowledge only after commit. It SHALL preserve all source databases and WAL files.
+
+#### Scenario: Failed import preserves both sides
+
+- GIVEN an incomplete graph, changed source set, or central conflict
+- WHEN consolidation runs
+- THEN the central transaction SHALL roll back and every source SHALL remain unchanged
 
 ### Requirement: Connection policy
 

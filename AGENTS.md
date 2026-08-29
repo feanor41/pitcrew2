@@ -11,12 +11,14 @@ PitCrew is a local control plane for one person, one machine, and one project pe
 
 ## Scope invariants
 
-- Local subprocess and project-local `.pitcrew/state.db` only.
+- Local subprocess and one central private store per canonical Git common directory. Main and linked worktrees resolve the same project ID and state; independent clones and moved repositories do not.
 - No HTTP, RPC, daemon, shared cache, multi-tenancy, or cross-project registry.
-- The embedded TUI is available only as exact command `pitcrew tui`: same process, project-local, and read-only. It never initializes a project, runs a subprocess, or has a separate binary.
+- The embedded TUI is available only as exact command `pitcrew tui`: same process, central-state, and read-only. It never initializes a project, runs a subprocess, or has a separate binary.
 - No `internal/aion`, `internal/daimon`, `internal/installer`, or v1 migration. Aion and Daimon are external agent roles, never daemons or control-plane components.
 - Production claims use opaque handle files only. Never use or invent `--claim-token` or `--emit-plain-token`.
 - Never retry a CAS failure blindly. Inspect the workflow and decide from its current revision.
+- Run `pitcrew project inspect` before legacy recovery; consolidate only an exact inspected source set and never delete its source databases or WAL files.
+- Durable delivery worktrees and opaque handles belong under the resolved central project roots. Confirm a committed checkpoint exists before worktree cleanup.
 
 ## Role contract
 

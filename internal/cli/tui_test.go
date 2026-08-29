@@ -2,13 +2,55 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fmazzalomo/pitcrew/internal/project"
+	"github.com/fmazzalomo/pitcrew/internal/store"
 )
+
+func TestProjectTUIRequiresExactLegacyAcknowledgementWithoutInitializing(t *testing.T) {
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(checkout, ".pitcrew"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, ".pitcrew", "state.db"), []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dataHome := filepath.Join(t.TempDir(), "absent")
+	inspection, err := project.Inspect(checkout, dataHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened, err := readProjectStore(inspection); opened != nil || !errors.Is(err, project.ErrMigrationRequired) {
+		t.Fatalf("uninitialized legacy read = (%v, %v)", opened, err)
+	}
+	if _, err := os.Lstat(dataHome); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("TUI read initialized central state: %v", err)
+	}
+
+	central, err := store.OpenProject(context.Background(), inspection.Project, inspection.Paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = central.DB().Exec(`CREATE TABLE consolidation_acknowledgements(project_id TEXT NOT NULL,candidate_set_id TEXT NOT NULL); INSERT INTO consolidation_acknowledgements VALUES(?,?)`, inspection.Project.ID, "wrong-set")
+	_ = central.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened, err := readProjectStore(inspection); opened != nil || !errors.Is(err, project.ErrMigrationRequired) {
+		t.Fatalf("wrong acknowledgement read = (%v, %v)", opened, err)
+	}
+}
 
 func TestEmbeddedTUIRefreshLeavesDatabaseBytesUnchanged(t *testing.T) {
 	root := t.TempDir()

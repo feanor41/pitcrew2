@@ -213,7 +213,7 @@ case ${PITCREW_PI_SUPERVISOR_REGRESSION:-} in
 esac
 [ "${PITCREW_PI_SUPERVISOR_REGRESSION:-}" = '' ] || exit 0
 
-[ "${PITCREW_PI_SUPERVISOR_SMOKE:-}" = 1 ] || skip 'set PITCREW_PI_SUPERVISOR_SMOKE=1 to run the real Pi supervisor smoke'
+[ "${PITCREW_PI_SUPERVISOR_SMOKE:-}" = 1 ] || skip 'set PITCREW_PI_SUPERVISOR_SMOKE=1 to run the real Pi supervisor smoke; steered dual-wait has no stable trace contract'
 command -v pi >/dev/null 2>&1 || skip 'Pi executable is unavailable'
 command -v node >/dev/null 2>&1 || skip 'Node.js is unavailable'
 
@@ -288,4 +288,4 @@ case $(verify_runtime_evidence "$TRACE" "$TEST_SESSION" smoke) in
   *) fail 'Pi runtime evidence verifier returned an invalid result' ;;
 esac
 
-printf '%s\n' 'pi_supervisor_runtime_smoke=passed'
+skip 'Pi supervisor relay passed, but steered user-input dual-wait has no stable native trace contract'

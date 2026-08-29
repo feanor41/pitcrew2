@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/activity"
+	"github.com/fmazzalomo/pitcrew/internal/consolidate"
 	"github.com/fmazzalomo/pitcrew/internal/envelope"
 	"github.com/fmazzalomo/pitcrew/internal/evidence"
 	"github.com/fmazzalomo/pitcrew/internal/handles"
 	"github.com/fmazzalomo/pitcrew/internal/history"
 	"github.com/fmazzalomo/pitcrew/internal/maxims"
 	"github.com/fmazzalomo/pitcrew/internal/plan"
+	"github.com/fmazzalomo/pitcrew/internal/project"
 	"github.com/fmazzalomo/pitcrew/internal/runtimeinstall"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 	"github.com/fmazzalomo/pitcrew/internal/tui"
@@ -38,6 +40,7 @@ type Dependencies struct {
 	Stdout        io.Writer
 	Stderr        io.Writer
 	ProjectRoot   string
+	DataHome      string
 	Now           func() time.Time
 	Entropy       io.Reader
 	TUIRunner     func(string, io.Reader, io.Writer) error
@@ -94,6 +97,8 @@ func Run(args []string, deps Dependencies) int {
 		return runTUI(deps)
 	case "principles":
 		return runPrinciples(args[1:], deps)
+	case "project":
+		return runProject(args[1:], deps)
 	case "workflow":
 		return runWorkflow(args[1:], deps)
 	default:
@@ -129,6 +134,19 @@ func isInstallTarget(target string) bool {
 
 func runTUI(deps Dependencies) int {
 	runner := deps.TUIRunner
+	if deps.DataHome != "" {
+		inspection, err := project.Inspect(deps.ProjectRoot, deps.DataHome)
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		if runner != nil {
+			if err := runner(inspection.Paths.ProjectRoot, deps.Stdin, deps.Stdout); err != nil {
+				return fail(deps, err, err.Error())
+			}
+			return int(envelope.OK)
+		}
+		return runProjectTUI(deps, inspection)
+	}
 	if runner == nil {
 		runner = runEmbeddedTUI
 	}
@@ -136,6 +154,72 @@ func runTUI(deps Dependencies) int {
 		return fail(deps, err, err.Error())
 	}
 	return int(envelope.OK)
+}
+
+func runProjectTUI(deps Dependencies, inspection project.Inspection) int {
+	opened, err := readProjectStore(inspection)
+	loader := tui.Loader(failedHistory{err})
+	if err == nil {
+		defer opened.Close()
+		loader = history.New(opened)
+	}
+	if err = tui.Run(tui.New(loader), deps.Stdin, deps.Stdout); err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return int(envelope.OK)
+}
+
+func runProject(args []string, deps Dependencies) int {
+	if equalArgs(args, "--help") {
+		writeHelp(deps.Stdout, "Usage: pitcrew project <inspect|consolidate> [options]\n")
+		return 0
+	}
+	if len(args) == 2 && args[1] == "--help" && (args[0] == "inspect" || args[0] == "consolidate") {
+		writeHelp(deps.Stdout, "Usage: pitcrew project "+args[0]+" [options]\n")
+		return 0
+	}
+	if len(args) == 1 && args[0] == "inspect" {
+		inspection, err := project.Inspect(deps.ProjectRoot, deps.DataHome)
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		next := "workflow new"
+		if len(inspection.Legacy.Candidates) != 0 {
+			next = "project consolidate"
+		}
+		data := map[string]any{"project_id": inspection.Project.ID, "git_common_dir": inspection.Project.CommonDir, "checkout_root": inspection.Project.CheckoutRoot, "initialized": inspection.Initialized, "repository_move_boundary": inspection.RepositoryMoveBoundary, "paths": map[string]string{"project_root": inspection.Paths.ProjectRoot, "state_path": inspection.Paths.StatePath, "worktree_root": inspection.Paths.WorktreeRoot, "handle_root": inspection.Paths.HandleRoot}, "legacy": inspection.Legacy}
+		if err = writeSuccess(deps, data, next); err != nil {
+			return fail(deps, err, err.Error())
+		}
+		return 0
+	}
+	if len(args) >= 1 && args[0] == "consolidate" {
+		values, err := parseFlags(args[1:], flagRules{required: []string{"--input-file"}})
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		manifest, err := decodeInputFile[consolidate.Manifest](values.one("--input-file"))
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		inspection, err := project.Inspect(deps.ProjectRoot, deps.DataHome)
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		destination, err := store.OpenProject(context.Background(), inspection.Project, inspection.Paths)
+		if err == nil {
+			defer destination.Close()
+			err = (consolidate.Service{}).Consolidate(context.Background(), destination.DB(), inspection.Project, manifest)
+		}
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		if err = writeSuccess(deps, map[string]any{"project_id": inspection.Project.ID, "candidate_set_id": inspection.Legacy.CandidateSetID}, "workflow show"); err != nil {
+			return fail(deps, err, err.Error())
+		}
+		return 0
+	}
+	return fail(deps, ErrUsage, "usage: pitcrew project <inspect|consolidate>")
 }
 
 func runEmbeddedTUI(root string, input io.Reader, output io.Writer) error {
@@ -368,7 +452,7 @@ func runWorkflowShow(args []string, deps Dependencies) int {
 	if err != nil {
 		return fail(deps, err, err.Error())
 	}
-	return withStore(deps, func(s *store.Store) error {
+	return withReadStore(deps, func(s *store.Store) error {
 		svc := workflow.New(s, deps.Now)
 		current, err := svc.Get(context.Background(), values.one("--workflow-id"))
 		if err != nil {
@@ -482,7 +566,7 @@ func runReady(args []string, deps Dependencies) int {
 	if err != nil {
 		return fail(deps, err, err.Error())
 	}
-	return withStore(deps, func(s *store.Store) error {
+	return withReadStore(deps, func(s *store.Store) error {
 		units, err := plan.NewService(s, deps.Now).Ready(context.Background(), values.one("--workflow-id"))
 		if err != nil {
 			return err
@@ -715,7 +799,28 @@ func runUnitComplete(args []string, deps Dependencies) int {
 }
 
 func withStore(deps Dependencies, action func(*store.Store) error) int {
-	s, err := store.Open(context.Background(), deps.ProjectRoot)
+	var s *store.Store
+	var err error
+	if deps.DataHome == "" {
+		s, err = store.Open(context.Background(), deps.ProjectRoot)
+	} else {
+		inspection, inspectErr := project.Inspect(deps.ProjectRoot, deps.DataHome)
+		if inspectErr != nil {
+			err = inspectErr
+		} else if len(inspection.Legacy.Candidates) != 0 && !inspection.Initialized {
+			err = project.ErrMigrationRequired
+		} else {
+			s, err = store.OpenProject(context.Background(), inspection.Project, inspection.Paths)
+			if err == nil {
+				current, discoverErr := project.DiscoverLegacy(inspection.Project)
+				if discoverErr != nil {
+					err = discoverErr
+				} else {
+					err = gateLegacy(s, inspection.Project.ID, current)
+				}
+			}
+		}
+	}
 	if err == nil {
 		defer s.Close()
 		err = action(s)
@@ -724,6 +829,66 @@ func withStore(deps Dependencies, action func(*store.Store) error) int {
 		return fail(deps, err, err.Error())
 	}
 	return 0
+}
+func withReadStore(deps Dependencies, action func(*store.Store) error) int {
+	var s *store.Store
+	var err error
+	if deps.DataHome == "" {
+		opened, openErr := store.OpenReadOnly(context.Background(), deps.ProjectRoot)
+		err = openErr
+		if err == nil && opened.State == store.Initialized {
+			s = opened.Store
+		} else if err == nil {
+			err = tui.ErrUninitialized
+		}
+	} else {
+		var inspection project.Inspection
+		inspection, err = project.Inspect(deps.ProjectRoot, deps.DataHome)
+		if err == nil {
+			s, err = readProjectStore(inspection)
+		}
+	}
+	if err == nil {
+		defer s.Close()
+		err = action(s)
+	}
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return 0
+}
+func readProjectStore(inspection project.Inspection) (*store.Store, error) {
+	opened, err := store.OpenProjectReadOnly(context.Background(), inspection.Project, inspection.Paths)
+	if err != nil {
+		return nil, err
+	}
+	if opened.State == store.Uninitialized {
+		if err := project.GateLegacy(inspection.Legacy, ""); err != nil {
+			return nil, err
+		}
+		return nil, tui.ErrUninitialized
+	}
+	current, err := project.DiscoverLegacy(inspection.Project)
+	if err == nil {
+		err = gateLegacy(opened.Store, inspection.Project.ID, current)
+	}
+	if err != nil {
+		_ = opened.Store.Close()
+		return nil, err
+	}
+	return opened.Store, nil
+}
+func gateLegacy(s *store.Store, projectID string, discovery project.LegacyDiscovery) error {
+	acknowledged, table := 0, 0
+	_ = s.DB().QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='consolidation_acknowledgements'`).Scan(&table)
+	if table != 0 {
+		_ = s.DB().QueryRow(`SELECT count(*) FROM consolidation_acknowledgements WHERE project_id=? AND candidate_set_id=?`, projectID, discovery.CandidateSetID).Scan(&acknowledged)
+	}
+	value := ""
+	if acknowledged != 0 {
+		value = discovery.CandidateSetID
+	}
+	return project.GateLegacy(discovery, value)
 }
 func writeSuccess(deps Dependencies, data any, next string) error {
 	return envelope.WriteSuccess(deps.Stdout, data, nil, next)
@@ -736,7 +901,7 @@ func classify(err error) envelope.ExitCode {
 		return envelope.CAS
 	case errors.Is(err, handles.ErrInvalid), errors.Is(err, handles.ErrExpired), errors.Is(err, handles.ErrUnsafePath), errors.Is(err, handles.ErrUnsafePermissions), errors.Is(err, evidence.ErrInvalidHandle):
 		return envelope.Handle
-	case errors.Is(err, ErrState), errors.Is(err, sql.ErrNoRows), errors.Is(err, workflow.ErrInvalidName), errors.Is(err, workflow.ErrInvalidActor), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
+	case errors.Is(err, ErrState), errors.Is(err, tui.ErrUninitialized), errors.Is(err, sql.ErrNoRows), errors.Is(err, project.ErrMigrationRequired), errors.Is(err, consolidate.ErrInvalidManifest), errors.Is(err, consolidate.ErrConflict), errors.Is(err, workflow.ErrInvalidName), errors.Is(err, workflow.ErrInvalidActor), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
 		return envelope.State
 	default:
 		return envelope.Internal
@@ -773,6 +938,7 @@ const rootHelp = `Usage: pitcrew <command> [options]
 
 Commands:
   install codex|opencode|claude|pi
+  project inspect|consolidate
   tui
   principles
   workflow new|continue|show|progress|request-capability|explore|spec|design|plan|amend-plan|approve-plan

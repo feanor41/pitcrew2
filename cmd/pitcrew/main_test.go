@@ -14,7 +14,7 @@ import (
 
 func TestRunDelegatesGlobalVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--version"}, strings.NewReader(""), &stdout, &stderr, t.TempDir()); code != 0 || stdout.String() != "pitcrew 0.15.0\n" || stderr.Len() != 0 {
+	if code := run([]string{"--version"}, strings.NewReader(""), &stdout, &stderr, t.TempDir()); code != 0 || stdout.String() != "pitcrew 0.16.0\n" || stderr.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }
@@ -73,7 +73,7 @@ func TestTUIRealPTYUninitializedQuitsWithoutCreatingState(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, script, "-qfec", "stty rows 24 cols 80; exec "+binary+" tui", "/dev/null")
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "XDG_DATA_HOME="+filepath.Join(t.TempDir(), "data"))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)

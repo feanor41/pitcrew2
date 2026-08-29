@@ -9,13 +9,19 @@ Define the opaque-only claim path that keeps bearer secrets out of agent context
 
 ### Requirement: Opaque production path
 
-`claim-unit`, `recover-unit-claim`, `recover-review`, and `recover-aggregate` SHALL require `--workflow-id`, `--unit-id`, `--revision`, `--actor`, and caller-supplied `--handle-dir`. They SHALL write a `0600` opaque handle inside a caller-owned `0700` directory. No production command, flag, template, or payload SHALL accept or emit a raw claim token; `--emit-plain-token` and `--claim-token` SHALL NOT exist.
+`claim-unit`, `recover-unit-claim`, `recover-review`, and `recover-aggregate` SHALL require `--workflow-id`, `--unit-id`, `--revision`, `--actor`, and caller-supplied `--handle-dir`. Production orchestration SHALL select the resolved private `<data-home>/pitcrew/projects/<project-id>/handles/` root, with workflow-specific subdirectories as needed. Commands SHALL write a `0600` opaque handle inside a caller-owned `0700` directory. No production command, flag, template, or payload SHALL accept or emit a raw claim token; `--emit-plain-token` and `--claim-token` SHALL NOT exist.
 
 #### Scenario: Production claim returns only a path
 
 - GIVEN matching ids, revision, actor, and secure directory
 - WHEN claim-unit succeeds
 - THEN only an opaque handle path SHALL be returned
+
+#### Scenario: Linked worktrees share durable handle placement
+
+- GIVEN callers operating from a main checkout and its linked worktree
+- WHEN Aion supplies their resolved handle directory
+- THEN both SHALL place authority under the same private central project root
 
 ### Requirement: Handle document and validation
 

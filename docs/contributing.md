@@ -8,6 +8,7 @@ Run these checks before requesting review:
 
 ```sh
 sh scripts/tests/run.sh
+bash scripts/tests/docs-contracts.sh
 go test ./...
 go build ./...
 go vet ./...
@@ -40,14 +41,18 @@ selecting stronger rigor, briefly name the protected constraint and
 explain why the simpler option is insufficient in the design-bearing output.
 Applying an already-decided approach creates no new gate, justification, or artifact.
 
-- One local project store at `.pitcrew/state.db` per invocation.
+- Resolve project identity from the canonical Git common directory. Use only
+  `<data-home>/pitcrew/projects/<project-id>/state.db`; linked worktrees share
+  it, while clones and moved common directories remain separate.
 - One SQLite connection; no daemon, IPC, network, shared cache, or remote API.
 - `MAXIMS.md` is canonical. Change it only through its own OpenSpec change.
 - The command surface is closed. Adding a command or flag requires an OpenSpec change.
-- `pitcrew tui` is the only visual entry point. Keep it same-process, project-local, read-only, non-initializing, and free of self-subprocesses.
+- `pitcrew tui` is the only visual entry point. Keep it same-process, central-state, read-only, non-initializing, and free of self-subprocesses.
 - Large command payloads travel only through strict, no-follow `--input-file` JSON.
 - Production claims remain opaque. Never add a raw-token input or output path.
 - Implementer and Reviewer actor labels remain distinct collision metadata, not authentication.
+- Legacy consolidation is explicit, exact-set, whole-graph, atomic, and source-preserving. Never rewrite or remove a checkout-local database or WAL as part of import.
+- Central delivery worktrees and handles are private. Verify a committed checkpoint exists before worktree cleanup; never delete the only copy of unfinished work.
 - The installer remains POSIX `/bin/sh`; do not add bash arrays, `[[ ... ]]`, process substitution, or shell-specific options.
 
 ## Installer changes
