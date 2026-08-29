@@ -70,6 +70,20 @@ if test -s "$findings"; then
   exit 1
 fi
 
+runtime_contract="$repo_root/openspec/specs/runtime-install/spec.md"
+for required in \
+  'active user-visible turn' \
+  'host-native dual wait/select' \
+  'requested state' \
+  'terminal completion, a genuine blocker, or user cancellation' \
+  'exactly one request-capability' \
+  'polling, daemon, IPC, or durable inbox'; do
+  grep -Fq "$required" "$runtime_contract" || {
+    printf 'runtime live-turn contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
 archive_snapshot "$archive_after"
 if ! cmp -s "$archive_before" "$archive_after"; then
   echo "archived OpenSpec content changed during active-contract validation" >&2

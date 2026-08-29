@@ -9,11 +9,13 @@ Define the closed CLI, command inputs, envelopes, errors, and caller identity se
 
 ### Requirement: Closed command and input contract
 
-The CLI SHALL expose only `install`, `principles`, `tui`, global `--help`/`--version`, and the 23 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, and review bodies.
+The CLI SHALL expose only `install`, `project`, `principles`, `tui`, global `--help`/`--version`, and the 23 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, review, and consolidation bodies.
 
 | Command | Required inputs |
 |---|---|
 | `install` | exactly one of `codex`, `opencode`, `claude`, or `pi` |
+| `project inspect` | none |
+| `project consolidate` | `--input-file <path>` |
 | `new` | `--name <text> --goal <text> --actor <label>` |
 | `continue` | `--from <terminal-wf-id> --actor <label>` |
 | `show` | `--workflow-id <wf-id>` |
@@ -41,7 +43,7 @@ Runtimes: codex, opencode, claude, pi
 Read the four maxims of the harness: pitcrew principles.
 ```
 
-Root help SHALL list `install codex|opencode|claude|pi`. Unknown flags, missing flags, unreadable/non-regular input files, malformed JSON, or an invalid install runtime SHALL fail with exit code `2` before mutation. `--name` SHALL be explicit, non-empty after trimming, and bounded by the workflow name limit; it SHALL NOT be derived for new workflows. A well-formed payload that violates its domain contract SHALL fail with exit code `3` without mutation. `--handle-dir` is the only production handle-output selector. The hidden claim debug flag is defined by `claim-handles`. No install, install-help, or install-usage path SHALL open or create `.pitcrew/state.db`.
+Root help SHALL list `install codex|opencode|claude|pi` and `project inspect|consolidate`. Unknown flags, missing flags, unreadable/non-regular input files, malformed JSON, or an invalid install runtime SHALL fail with exit code `2` before mutation. `--name` SHALL be explicit, non-empty after trimming, and bounded by the workflow name limit; it SHALL NOT be derived for new workflows. A well-formed payload that violates its domain contract SHALL fail with exit code `3` without mutation. `--handle-dir` is the only production handle-output selector. The hidden claim debug flag is defined by `claim-handles`. No install, install-help, install-usage, project-inspect, TUI, help, version, or principles path SHALL initialize project state.
 
 #### Scenario: Every command enforces its row
 
@@ -68,6 +70,23 @@ Root help SHALL list `install codex|opencode|claude|pi`. Unknown flags, missing 
 - THEN only an exact supported runtime SHALL invoke installation once with the original caller working directory
 - AND every rejected invocation SHALL leave runtime targets and `.pitcrew` unchanged
 
+### Requirement: Project inspection and consolidation surfaces
+
+`project inspect` SHALL resolve the canonical Git common directory without mutation and return `project_id`, `git_common_dir`, `checkout_root`, `initialized`, `repository_move_boundary`, central `paths` (`project_root`, `state_path`, `worktree_root`, `handle_root`), and `legacy` (`candidates`, `diagnostics`, `candidate_set_id`). `project consolidate` SHALL accept a strict manifest with `project_id`, exact `candidate_ids`, and zero or more whole-workflow `choices` containing `workflow_id` and `candidate_id`. Unknown fields, malformed IDs, stale or incomplete source sets, incomplete graphs, and unchosen divergence SHALL fail closed. Success SHALL return the acknowledged `project_id` and `candidate_set_id` only after the atomic import commits.
+
+#### Scenario: Changed inspection requires recovery
+
+- GIVEN sources changed after inspection or a prior import failed
+- WHEN consolidation validates the submitted manifest
+- THEN it SHALL fail without partial central writes or source mutation
+- AND the operator SHALL inspect again and submit a new exact manifest rather than retry unchanged input
+
+#### Scenario: Project-independent surfaces remain inert
+
+- GIVEN a non-repository directory or unusable central root
+- WHEN help, version, principles, or install help/usage runs
+- THEN it SHALL complete without resolving or initializing project state
+
 ### Requirement: Representations and exits
 
 Each successful workflow command SHALL emit one JSON document:
@@ -76,7 +95,7 @@ Each successful workflow command SHALL emit one JSON document:
 {"ok":true,"data":{},"warnings":[],"next_action":"..."}
 ```
 
-Workflow and install-argument failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. After valid install dispatch, the embedded POSIX installer SHALL stream actionable plain diagnostics directly to stderr, preserve its non-zero process status, and emit no success stdout on failure. Successful installation SHALL emit exactly `Installed PitCrew agents for <Runtime> in <registry>` followed by a newline; managed-update warnings MAY precede it on stderr. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.15.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
+Workflow and install-argument failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. After valid install dispatch, the embedded POSIX installer SHALL stream actionable plain diagnostics directly to stderr, preserve its non-zero process status, and emit no success stdout on failure. Successful installation SHALL emit exactly `Installed PitCrew agents for <Runtime> in <registry>` followed by a newline; managed-update warnings MAY precede it on stderr. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.16.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
 
 (Previously: Version output was plain text without a canonical baseline, SemVer policy, or shared CLI/TUI source.)
 

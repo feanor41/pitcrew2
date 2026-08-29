@@ -63,9 +63,10 @@ The six rules of scope:
   no polling, no remote procedure of any kind.
 - **One writer per database.** One SQLite connection per process. No daemon,
   no IPC, no shared cache. Busy timeout rejects concurrent writers.
-- **One or more projects locally.** Each project has its own
-  `<project>/.pitcrew/state.db`. Each CLI invocation operates on exactly one
-  project. No global registry, no cross-project index.
+- **One or more projects locally.** Each canonical Git common directory maps
+  to one `<data-home>/pitcrew/projects/<project-id>/state.db`; linked worktrees
+  share it. Each invocation operates on exactly one project. No registry or
+  cross-project index exists.
 - **No multi-tenancy.** No tenants, no organizations, no teams, no shared
   workspaces. A second user installs their own clone.
 - **No threat model beyond "the agent is on your machine".** The handle
@@ -82,13 +83,20 @@ justified explicitly in its own OpenSpec proposal.
 ## What is NOT in this repository
 
 - **No separate TUI binary.** The read-only TUI is embedded in `pitcrew` and
-  invoked only as `pitcrew tui`. It opens the project-local store in the same
+  invoked only as `pitcrew tui`. It opens the resolved central store in the same
   process, never initializes state, and never invokes `pitcrew` as a subprocess.
 - **No `internal/installer` package.** The runtime installer is an external
   POSIX shell script (`scripts/install-templates.sh`).
 - **No `internal/aion` or `internal/daimon` package.** Aion and Daimon are external LLM agent roles, not daemons or control-plane components. They call `pitcrew` as a subprocess; Aion decides workflow choreography while the control plane only enforces domain rules.
 - **No v1 data migration.** v1 (`agent-controller` in `$PATH`) stays usable
   for those who need it. v2 is a clean start.
+
+Checkout-local PitCrew v2 databases are legacy inputs, not active workflow
+stores. `project inspect` discovers only bounded main/linked candidates without
+initializing state. `project consolidate` imports an exact inspected set in one
+transaction, acknowledges it only after success, and preserves every source.
+Central `worktrees/` and `handles/` are private; cleanup requires a committed
+checkpoint so the removed worktree is never the only copy of unfinished work.
 
 ---
 

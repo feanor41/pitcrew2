@@ -177,6 +177,19 @@ assert_authority_contract() {
   grep -F 'Retain workflow context and orchestration authority across all phases of an accepted delivery until terminal completion or a genuine blocker.' "$aion" >/dev/null || fail "Aion continuity drift in $destination"
   grep -F 'Return only factual revision-bearing status or clarification requests to Daimon.' "$aion" >/dev/null || fail "Aion hand-off drift in $destination"
   grep -F 'reuse one addressable Aion instance across all phases until terminal completion or a genuine blocker' "$contract" >/dev/null || fail "shared continuity drift in $destination"
+  for live_rule in \
+    'retain the active user-visible turn' \
+    'host-native dual wait/select' \
+    'same addressable Aion event or steered user input' \
+    'forward it to that Aion as requested state' \
+    'resume the same wait/select' \
+    'terminal completion, a genuine blocker, or user cancellation' \
+    'surface the missing host concurrency exactly once to Aion' \
+    'never poll, start a daemon, use IPC, or create an inbox'; do
+    grep -F "$live_rule" "$daimon" >/dev/null || fail "Daimon live-turn rule omitted $live_rule in $destination"
+    grep -F "$live_rule" "$contract" >/dev/null || fail "shared live-turn rule omitted $live_rule in $destination"
+  done
+  grep -F 'record exactly one workflow request-capability' "$aion" >/dev/null || fail "Aion concurrency capability rule omitted in $destination"
   for specialist in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
     file=$(role_path "$destination" "$specialist")
     grep -F 'Return only a one-line revision-bearing completion status to Aion.' "$file" >/dev/null || fail "$specialist hand-off drift in $destination"

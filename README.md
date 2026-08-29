@@ -4,7 +4,7 @@ PitCrew is a **local subprocess control plane for agent-assisted software
 delivery**. It gives one person, on one machine, a durable way to coordinate a
 project without turning the coordination layer into a service. Agents call the
 `pitcrew` CLI, and PitCrew records workflow state, evidence, and the next valid
-action in the current project's `.pitcrew/state.db`.
+action in one central database shared by every linked worktree of the project.
 
 It is a harness, not an autonomous agent platform: PitCrew does not run a
 daemon, contact models, choose what to build, or replace the agent runtime that
@@ -36,7 +36,7 @@ user <-> Daimon <-> Aion <-> pc2-* specialists
                        \        /
                     pitcrew subprocess
                            |
-                  .pitcrew/state.db
+       <data-home>/pitcrew/projects/<project-id>/state.db
 ```
 
 - **Daimon** keeps the user conversation coherent and reports only facts that
@@ -98,7 +98,7 @@ pitcrew workflow new \
   --actor aion
 ```
 
-The command creates that project's `.pitcrew/state.db` and returns a workflow
+The command creates that project's central database and returns a workflow
 ID, current revision, and `next_action`. Inspect it at any time:
 
 ```sh
@@ -136,11 +136,16 @@ less demanding route would satisfy the expected outcome equally well.
 
 PitCrew has a deliberately narrow boundary:
 
-- **Project-local state:** the current project owns `.pitcrew/state.db`; there
-  is no shared registry or cross-project cache.
+- **Stable project identity:** `project-id` is the lowercase SHA-256 of the
+  canonical Git common-directory path. Main and linked worktrees share it; an
+  independent clone or a moved common directory receives a different project ID.
+- **Central private state:** state lives at
+  `${XDG_DATA_HOME:-$HOME/.local/share}/pitcrew/projects/<project-id>/state.db`.
+  The same `0700` project root owns `worktrees/` and `handles/`; database and
+  identity files are `0600`. There is no cross-project registry or cache.
 - **No service layer:** no HTTP, RPC, daemon, polling loop, or remote API is
   involved.
-- **Read-only TUI:** `pitcrew tui` reads the local database in the current
+- **Read-only TUI:** `pitcrew tui` resolves and reads the central database in the current
   process. It does not initialize a project, mutate a workflow, run migrations,
   or invoke another executable.
 - **Opaque authority:** implementation and review claims cross role boundaries
@@ -149,6 +154,16 @@ PitCrew has a deliberately narrow boundary:
   conflict, inspect current state instead of retrying blindly.
 - **Bounded inputs:** durable artifacts use strict JSON input files rather than
   large command-line payloads.
+
+## Existing checkout-local history
+
+Run `pitcrew project inspect` first. It is read-only and reports the resolved
+identity, central paths, initialization state, and the exact bounded set of
+legacy checkout-local databases. If candidates exist, create the strict
+manifest described in the [CLI reference](docs/cli-reference.md#project-inspection-and-consolidation),
+then run `pitcrew project consolidate --input-file <path>`. Consolidation copies
+complete workflow graphs atomically; source databases and WAL files remain in
+place for recovery.
 
 For exact flags, payload schemas, exit behavior, lifecycle rules, and TUI keys,
 use the [CLI reference](docs/cli-reference.md).

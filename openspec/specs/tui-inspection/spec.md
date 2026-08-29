@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the project-local, read-only terminal experience for inspecting workflow history and its durable results.
+Define the central-state, read-only terminal experience for inspecting workflow history and its durable results.
 
 ## Requirements
 
@@ -15,19 +15,19 @@ Define the project-local, read-only terminal experience for inspecting workflow 
 - WHEN a user browses, searches, and exits the TUI
 - THEN all captured state SHALL remain unchanged
 
-### Requirement: Project-local history
+### Requirement: Shared project history
 
-The TUI MUST read only `<project>/.pitcrew/state.db`. Its workflow grid MUST order by `created_at` descending then id ascending and mark columns for start time, short name, and state. Selection MUST expose workflow metadata and every aggregate, event, artifact, plan, unit, dependency, exception, TDD evidence, review, and activity. Activities MUST be chronological with actor, timestamp, and action. Records MUST remain fully inspectable beyond the visible region.
+The TUI MUST resolve the current checkout's canonical project identity and open its central state database read-only. It MUST NOT initialize central paths or checkout-local state. Main and linked worktrees MUST show the same history. Its workflow grid MUST order by `created_at` descending then id ascending and mark columns for start time, short name, and state. Selection MUST expose workflow metadata and every aggregate, event, artifact, plan, unit, dependency, exception, TDD evidence, review, and activity. Activities MUST be chronological with actor, timestamp, and action. Records MUST remain fully inspectable beyond the visible region.
 
 #### Scenario: Historical workflow inspection
 - GIVEN active, completed, and abandoned workflows in one project
 - WHEN history opens
 - THEN every workflow and related review data SHALL be inspectable in required grid order
 
-#### Scenario: Projects remain isolated
-- GIVEN two initialized project roots
-- WHEN the TUI starts in the first root
-- THEN no data from the second root SHALL appear
+#### Scenario: Linked worktrees share inspection
+- GIVEN an initialized main checkout and linked worktree
+- WHEN the TUI starts from either checkout
+- THEN each SHALL display the same central workflows without mutation
 
 #### Scenario: Long evidence remains reachable
 - GIVEN evidence longer than its visible region

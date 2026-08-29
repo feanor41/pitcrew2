@@ -78,6 +78,44 @@ target exactly the six specialists, and specialists SHALL NOT delegate.
 - WHEN the installer validates their declared targets
 - THEN every bounded edge and common prohibition SHALL match the role contract
 
+### Requirement: Live user turn and addressable Aion
+
+For each accepted non-terminal delivery, generated Daimon instructions SHALL
+retain the active user-visible turn and the same addressable Aion. Daimon SHALL
+use the host-native dual wait/select for either an event from that Aion or
+steered user input. User input SHALL be forwarded to that Aion as requested state,
+not applied state, before Daimon resumes the same wait/select. Only Aion-acknowledged
+changed meaningful facts MAY reach the user: accepted transitions, completed
+units, resolved corrections, achieved objectives, actual blockers, or
+clarification requests. Daimon SHALL remain silent otherwise and exit the live
+turn only for terminal completion, a genuine blocker, or user cancellation.
+
+If the host cannot keep the turn and Aion concurrently addressable, Daimon SHALL
+surface that missing capability once. Aion SHALL record exactly one request-capability
+and SHALL NOT imply fulfillment or fabricate live progress. No runtime SHALL
+compensate with polling, daemon, IPC, or durable inbox behavior.
+
+#### Scenario: User steering returns to the same wait
+
+- GIVEN Daimon is waiting on the retained Aion and the user supplies new input
+- WHEN the host-native selection yields that input
+- THEN Daimon SHALL forward it to the same Aion as requested state
+- AND resume waiting after Aion admits, rejects, or requests clarification
+
+#### Scenario: Missing concurrency is durable once
+
+- GIVEN a host lacks native concurrent user/Aion selection
+- WHEN Daimon detects the limitation
+- THEN it SHALL notify Aion once and Aion SHALL record one capability request
+- AND no agent SHALL poll or create another transport
+
+#### Scenario: Pi runtime evidence remains honest
+
+- GIVEN the opt-in official Pi supervisor smoke is disabled or its stable native prerequisites are unavailable
+- WHEN runtime verification runs
+- THEN it SHALL report `SKIP` rather than claim live-turn proof
+- AND static Pi instructions SHALL retain the same acknowledgement and transport prohibitions
+
 ### Requirement: Explicit selection and current registry paths
 
 The public command SHALL select exactly one lowercase, alias-free runtime and

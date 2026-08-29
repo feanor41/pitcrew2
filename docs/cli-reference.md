@@ -1,6 +1,6 @@
 # PitCrew CLI reference
 
-PitCrew exposes `install`, `tui`, `principles`, two global flags, and exactly 23 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `install`, `project`, `tui`, `principles`, two global flags, and exactly 23 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
 The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon interviews, clarifies intent, preserves conversational continuity, and reports only Aion-acknowledged facts or questions. Aion alone owns routing and workflow coordination. For each accepted delivery, Daimon and the addressable-agent host reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and authority throughout. Mid-flight input remains requested, not applied, until Aion admits it against current state; concurrent Daimon availability depends on host support for addressable agents, not a PitCrew daemon, service, IPC, polling, or inbox.
 
@@ -81,6 +81,8 @@ install the extension, access the network, or modify Pi configuration.
 | Command | Required inputs |
 |---|---|
 | `install` | exactly one of `codex`, `opencode`, `claude`, or `pi` |
+| `project inspect` | None. |
+| `project consolidate` | `--input-file <path>` |
 | `tui` | None; extra arguments are rejected. |
 | `workflow new` | `--name <text> --goal <text> --actor <label>` |
 | `workflow continue` | `--from <terminal-wf-id> --actor <label>` |
@@ -105,6 +107,60 @@ install the extension, access the network, or modify Pi configuration.
 | `workflow unit-tdd` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
+
+## Project inspection and consolidation
+
+The project ID is the lowercase SHA-256 of the canonical Git common-directory
+path. A main checkout and its linked worktrees share one ID. An independent
+clone or a repository moved to another canonical path receives a different ID
+and therefore a different central root.
+
+`pitcrew project inspect` is read-only and non-initializing. Its success
+envelope contains:
+
+```json
+{
+  "project_id": "<64hex>",
+  "git_common_dir": "/canonical/repo/.git",
+  "checkout_root": "/current/checkout",
+  "initialized": false,
+  "repository_move_boundary": false,
+  "paths": {
+    "project_root": "<data-home>/pitcrew/projects/<project-id>",
+    "state_path": ".../state.db",
+    "worktree_root": ".../worktrees",
+    "handle_root": ".../handles"
+  },
+  "legacy": {
+    "candidates": [{"id":"<64hex>","checkout_root":"...","state_path":".../.pitcrew/state.db"}],
+    "diagnostics": [],
+    "candidate_set_id": "<64hex>"
+  }
+}
+```
+
+If candidates exist, workflow mutation fails closed until their exact set is
+acknowledged by a successful consolidation. Submit one strict JSON document:
+
+```json
+{
+  "project_id": "<64hex>",
+  "candidate_ids": ["<64hex>"],
+  "choices": [{"workflow_id":"wf-<24hex>","candidate_id":"<64hex>"}]
+}
+```
+
+`choices` is required only for divergent copies of the same complete workflow;
+it selects one whole graph, never individual rows. Run
+`pitcrew project consolidate --input-file <path>`. Success atomically writes
+all selected graphs and returns `project_id` plus `candidate_set_id`. Equal
+copies deduplicate deterministically. Conflicts or incomplete graphs roll back
+the central transaction. Source databases and WAL files are never deleted or rewritten.
+
+If inspection changes before import, inspect again and generate a new manifest;
+do not edit candidate IDs or retry unchanged input. A successful repeat is
+idempotent. The central root is private and defaults to
+`${XDG_DATA_HOME:-$HOME/.local/share}/pitcrew/projects/<project-id>/`.
 
 Global `--help` and `--version` are flags, not commands. `principles [--json]` prints the embedded maxims as exact text or a raw structured JSON array.
 
@@ -131,7 +187,7 @@ message `usage: pitcrew install <codex|opencode|claude|pi>`.
 
 At `120x30` or larger the panes render as an exact-height 2x2 grid. Smaller supported terminals, including `80x24`, `60x24`, and the `60x16` minimum, render one focused pane with a tab strip rather than squeezing columns. `Tab` and `Shift+Tab` cycle panes in reading order and reverse order. Arrow and Vim keys move within the focused pane; Tree uses Left/`h` and Right/`l` to collapse, ascend, expand, or descend; Activity additionally supports Page Up/Page Down/Home/End. `Enter` expands Tree branches or opens the selected record/activity evidence. Left/`h` or `Esc` returns from drill-down. `/` opens a visible focused search row, where `Enter` submits and `Esc` cancels. `r` refreshes without losing semantic focus, except while search owns text input, and `q` exits outside text entry.
 
-Color never carries meaning alone. `NO_COLOR` disables ANSI color while retaining selection and focused-pane cues. `PITCREW_ASCII=1` replaces Unicode state, tree, selection, and border glyphs with ASCII equivalents while retaining color when supported. `TERM=dumb` selects both ASCII and monochrome fallbacks. Refresh errors retain the prior data for retry. Home and Workflows retain their established compositions. All views read only `<project>/.pitcrew/state.db`; the TUI does not initialize a repository, run migrations, mutate workflow state, or invoke another executable. An uninitialized project shows `No PitCrew repository is initialized for this project.` and remains unchanged.
+Color never carries meaning alone. `NO_COLOR` disables ANSI color while retaining selection and focused-pane cues. `PITCREW_ASCII=1` replaces Unicode state, tree, selection, and border glyphs with ASCII equivalents while retaining color when supported. `TERM=dumb` selects both ASCII and monochrome fallbacks. Refresh errors retain the prior data for retry. Home and Workflows retain their established compositions. All views resolve Git identity and read only the central state database; the TUI does not initialize a repository, run migrations, mutate workflow state, or invoke another executable. An uninitialized project shows `No PitCrew repository is initialized for this project.` and remains unchanged.
 
 ## JSON input files
 

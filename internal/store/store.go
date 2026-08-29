@@ -57,7 +57,9 @@ func Open(ctx context.Context, projectRoot string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, "state.db")
+	return openWritablePath(ctx, filepath.Join(dir, "state.db"))
+}
+func openWritablePath(ctx context.Context, path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
@@ -91,6 +93,9 @@ func OpenReadOnly(ctx context.Context, projectRoot string) (OpenReadOnlyResult, 
 		return OpenReadOnlyResult{}, &InvalidStateError{Path: path, Mode: info.Mode()}
 	}
 
+	return openReadOnlyPath(ctx, path)
+}
+func openReadOnlyPath(ctx context.Context, path string) (OpenReadOnlyResult, error) {
 	uri := url.URL{Scheme: "file", Path: path}
 	query := uri.Query()
 	query.Set("mode", "ro")
