@@ -228,6 +228,103 @@ func TestViewNoColorGolden(t *testing.T) {
 	assertGolden(t, "no-color", got)
 }
 
+func TestViewWideDetailNoColorGolden(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 166, Height: 30})
+	got := model.View().Content
+	assertNoANSI(t, got)
+	assertGolden(t, "wide-no-color", got)
+}
+
+func TestViewWideDetailUsesFixedThirtyRowLayoutAndPreservesOccurrence(t *testing.T) {
+	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 166, Height: 30})
+	selected := model.detail.occurrenceID
+	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
+	if len(lines) != 30 {
+		t.Fatalf("wide detail has %d rows, want 30:\n%s", len(lines), model.View().Content)
+	}
+	for _, row := range []int{12, 20} {
+		if !strings.Contains(lines[row], "╭") && !strings.Contains(lines[row], "╰") {
+			t.Fatalf("wide top panels do not occupy row %d: %q", row, lines[row])
+		}
+	}
+	for _, row := range []int{21, 28} {
+		if !strings.Contains(lines[row], "╭") && !strings.Contains(lines[row], "╰") {
+			t.Fatalf("wide lower panels do not occupy row %d: %q", row, lines[row])
+		}
+	}
+	for _, title := range []string{"SUMMARY", "GOAL", "WORKFLOW TREE", "ACTIVITY / HISTORY", "PENDING / BLOCKED", "RELATED RECORDS / EVIDENCE"} {
+		if !strings.Contains(strings.Join(lines, "\n"), title) {
+			t.Fatalf("wide detail is missing %q:\n%s", title, model.View().Content)
+		}
+	}
+	if markers := strings.Count(strings.Join(lines, "\n"), "▶"); markers != 1 {
+		t.Fatalf("wide detail has %d selection markers:\n%s", markers, model.View().Content)
+	}
+	model.loader = fakeLoader{occurrenceResolution: history.Resolution{Detail: model.opened.Detail}}
+	opened, command := model.Update(special(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("wide activity selection did not remain openable")
+	}
+	opened, _ = opened.Update(command())
+	if opened.opened.Record.ID != "review:1" {
+		t.Fatalf("wide activity opened %q, want selected review record", opened.opened.Record.ID)
+	}
+	narrow, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	floor, _ := narrow.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	for _, resized := range []Model{narrow, floor} {
+		plain := ansi.Strip(resized.View().Content)
+		if strings.Contains(plain, "ACTIVITY / HISTORY") || !strings.Contains(plain, "HISTORY") {
+			t.Fatalf("%dx%d did not use the existing narrow renderer:\n%s", resized.width, resized.height, resized.View().Content)
+		}
+	}
+	if floor.detail.occurrenceID != selected {
+		t.Fatalf("resize changed selected occurrence: got %q, want %q", floor.detail.occurrenceID, selected)
+	}
+}
+
+func TestViewWideDetailThresholdAndUnicodeTruncation(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		width, height int
+		wide          bool
+	}{
+		{"120x30 enables wide detail", 120, 30, true},
+		{"119x30 disables wide detail", 119, 30, false},
+		{"120x29 disables wide detail", 120, 29, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := detailViewModel()
+			model.opened.Detail.Workflow.Name = strings.Repeat("界", 80)
+			model.opened.Detail.Synopsis.Current.Description = strings.Repeat("é", 140)
+			model, _ = model.Update(tea.WindowSizeMsg{Width: test.width, Height: test.height})
+
+			got := model.View().Content
+			plain := ansi.Strip(got)
+			if model.wideDetailMode() != test.wide {
+				t.Fatalf("wide detail mode = %v, want %v", model.wideDetailMode(), test.wide)
+			}
+			if strings.Contains(plain, "ACTIVITY / HISTORY") != test.wide {
+				t.Fatalf("wide activity panel presence differs from %v:\n%s", test.wide, got)
+			}
+			for _, line := range strings.Split(got, "\n") {
+				if width := lipgloss.Width(line); width > test.width {
+					t.Fatalf("rendered line width %d exceeds terminal width %d: %q", width, test.width, line)
+				}
+			}
+			if !test.wide {
+				return
+			}
+			if !strings.Contains(plain, "…") {
+				t.Fatalf("long Unicode identity was not truncated: %s", got)
+			}
+			if !strings.Contains(got, flight.title.Render("SUMMARY")) {
+				t.Fatalf("wide panel styling was lost while truncating: %q", got)
+			}
+		})
+	}
+}
+
 func TestViewNoColorEmitsNoANSIAcrossScreens(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	home := Model{screen: HomeScreen}
