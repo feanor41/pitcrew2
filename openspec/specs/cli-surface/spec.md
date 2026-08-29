@@ -9,7 +9,7 @@ Define the closed CLI, command inputs, envelopes, errors, and caller identity se
 
 ### Requirement: Closed command and input contract
 
-The CLI SHALL expose only `install`, `principles`, `tui`, global `--help`/`--version`, and the 21 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, and review bodies.
+The CLI SHALL expose only `install`, `principles`, `tui`, global `--help`/`--version`, and the 23 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, and review bodies.
 
 | Command | Required inputs |
 |---|---|
@@ -20,13 +20,13 @@ The CLI SHALL expose only `install`, `principles`, `tui`, global `--help`/`--ver
 | `progress` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `request-capability` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `explore`, `spec`, `design` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `plan` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
+| `plan`, `amend-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `approve-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> [--approve-exception <wu-id> ...]` |
 | `list-ready-units` | `--workflow-id <wf-id>` |
 | `begin-implementation` | `--workflow-id <wf-id> --revision <n> --actor <label>` |
 | `complete` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `abandon` | `--workflow-id <wf-id> --revision <n> --actor <label> --reason <text>` |
-| `claim-unit`, `recover-unit-claim`, `handoff-review`, `recover-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
+| `claim-unit`, `recover-unit-claim`, `recover-aggregate`, `handoff-review`, `recover-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
 | `unit-tdd`, `unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
 
@@ -110,6 +110,27 @@ Workflow and install-argument failures SHALL write one single-line error envelop
 - GIVEN any non-empty actor label
 - WHEN a syntactically valid command is invoked
 - THEN access SHALL NOT be granted or denied because of that label
+
+### Requirement: Explicit amendment-authority boundary
+
+`amend-plan` SHALL validate its closed input matrix and plan payload, then exit `3` with an explicit structural-authority error in this revision. No opaque plan-amendment authority exists. The command SHALL NOT inspect or mutate workflow state, plans, units, artifacts, events, or CAS, and `--actor` including `aion` SHALL NOT change that result. A later implementation SHALL add non-forgeable structural authority before permitting amendment.
+
+#### Scenario: Declarative Aion cannot amend a plan
+
+- GIVEN a valid unapproved planning record and either `--actor aion` or another non-empty actor label
+- WHEN `amend-plan` is invoked with a valid payload
+- THEN each invocation SHALL exit `3` without changing the plan or workflow revision
+
+### Requirement: Aggregate recovery command
+
+`recover-aggregate` SHALL require exactly one unit selection and the matrix inputs above. It SHALL reject its secret-print flag. It SHALL return only an opaque handle path, selected unit id, and next unit revision when the current aggregate CAS revision is supplied, workflow state is `ready_to_complete`, the newest aggregate verdict is `corrections`, and the selected unit is done. State/selection/verdict failures SHALL exit `3`, stale aggregate CAS SHALL exit `4`, and handle failures SHALL exit `5`.
+
+#### Scenario: Aggregate recovery keeps authority opaque
+
+- GIVEN a corrections aggregate verdict and exactly one eligible done unit
+- WHEN `recover-aggregate` succeeds
+- THEN its response SHALL reveal no bearer secret
+- AND duplicate or multiple unit selection SHALL fail without mutation
 
 ### Requirement: Role and hand-off contract
 

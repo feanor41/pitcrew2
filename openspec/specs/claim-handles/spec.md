@@ -9,7 +9,7 @@ Define the opaque-only claim path that keeps bearer secrets out of agent context
 
 ### Requirement: Opaque production path
 
-`claim-unit` and `recover-unit-claim` SHALL require `--workflow-id`, `--unit-id`, `--revision`, `--actor`, and caller-supplied `--handle-dir`. They SHALL write a `0600` opaque handle inside a caller-owned `0700` directory. No production command, flag, template, or payload SHALL accept or emit a raw claim token; `--emit-plain-token` and `--claim-token` SHALL NOT exist.
+`claim-unit`, `recover-unit-claim`, `recover-review`, and `recover-aggregate` SHALL require `--workflow-id`, `--unit-id`, `--revision`, `--actor`, and caller-supplied `--handle-dir`. They SHALL write a `0600` opaque handle inside a caller-owned `0700` directory. No production command, flag, template, or payload SHALL accept or emit a raw claim token; `--emit-plain-token` and `--claim-token` SHALL NOT exist.
 
 #### Scenario: Production claim returns only a path
 
@@ -56,6 +56,22 @@ Recovery SHALL issue a fresh secret and increment `claim_generation` only when t
 - GIVEN TDD evidence exists for the current unit revision
 - WHEN recover-unit-claim is invoked
 - THEN exit code 3 SHALL result and no claim SHALL issue
+
+### Requirement: Aggregate-correction recovery
+
+`recover-aggregate` SHALL require exactly one `--unit-id`, current workflow `--revision`, `--actor`, and `--handle-dir`. It SHALL reopen only that completed unit when the workflow is `ready_to_complete` and its latest aggregate review verdict is `corrections`; it SHALL preserve earlier evidence and review records, advance the workflow to `implementing`, increment the selected unit revision, and issue fresh implementation handle authority. The workflow state, aggregate correction record, exact CAS revision, and selected done-unit state are the authority; `--actor` is declarative handle metadata and SHALL NOT authorize recovery. The command SHALL reject stale CAS, no/non-corrections review, terminal state, non-done target, and duplicate or multiple selection flags without mutation. It SHALL NOT support batch or multiple-unit recovery, and SHALL NOT accept `--print-claim-handle-secret-once`.
+
+#### Scenario: Aggregate recovery is exactly one fresh authority
+
+- GIVEN a matching `ready_to_complete` workflow whose latest aggregate review requests corrections and one completed unit
+- WHEN `recover-aggregate` names that one unit at the current revision
+- THEN prior records remain available and only a fresh opaque implementation handle for the incremented unit revision is returned
+
+#### Scenario: Aggregate recovery rejects invalid selection or authority
+
+- GIVEN a stale, terminal, no-corrections, non-done, or duplicate-unit recovery request
+- WHEN `recover-aggregate` is invoked
+- THEN it SHALL fail without issuing a handle or reopening any unit
 
 ### Requirement: One-shot operator escape
 

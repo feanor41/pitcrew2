@@ -45,6 +45,7 @@ Only these transitions SHALL succeed; others SHALL return exit code `3` without 
 | `implementing` | final `unit-complete` | `ready_to_complete` |
 | `ready_to_complete` | approved `complete` | `completed` |
 | `ready_to_complete` | corrections `complete` | `ready_to_complete` |
+| `ready_to_complete` | `recover-aggregate` after corrections | `implementing` |
 | any non-terminal | `abandon` | `abandoned` |
 
 #### Scenario: Each transition is enforced
@@ -52,6 +53,18 @@ Only these transitions SHALL succeed; others SHALL return exit code `3` without 
 - GIVEN each R2 source state
 - WHEN its listed command or an unlisted command runs
 - THEN only the listed transition SHALL succeed
+
+### Requirement: Aggregate correction recovery
+
+After a corrections aggregate review, `recover-aggregate` SHALL require the exact current aggregate revision and one done unit. It SHALL preserve the corrections artifact and all existing evidence, atomically move the workflow to `implementing`, increment workflow and selected-unit revisions, and issue fresh opaque implementation authority for new evidence. It SHALL reject no-corrections, stale, terminal, non-done, or repeated recovery without losing prior evidence.
+
+#### Scenario: Recovery is a new correction cycle
+
+- GIVEN `ready_to_complete` after a corrections aggregate verdict
+- WHEN one eligible unit is recovered
+- THEN only that unit becomes pending at its next revision
+- AND the workflow becomes implementing at its next revision
+- AND the original correction remains inspectable
 
 ### Requirement: Stage artifact input and retention
 

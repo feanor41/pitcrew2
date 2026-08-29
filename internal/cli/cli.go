@@ -190,7 +190,7 @@ func runPrinciples(args []string, deps Dependencies) int {
 	return 0
 }
 
-var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "request-capability": true, "explore": true, "spec": true, "design": true, "plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
+var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "request-capability": true, "explore": true, "spec": true, "design": true, "plan": true, "amend-plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "recover-aggregate": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
 var workflowIDPattern = regexp.MustCompile(`^wf-[0-9a-f]{24}$`)
 
 func runWorkflow(args []string, deps Dependencies) int {
@@ -224,6 +224,8 @@ func runWorkflow(args []string, deps Dependencies) int {
 		return runStage(command, rest, deps)
 	case "plan":
 		return runPlan(rest, deps)
+	case "amend-plan":
+		return runAmendPlan(rest, deps)
 	case "approve-plan":
 		return runApprovePlan(rest, deps)
 	case "list-ready-units":
@@ -234,7 +236,7 @@ func runWorkflow(args []string, deps Dependencies) int {
 		return runComplete(rest, deps)
 	case "abandon":
 		return runAbandon(rest, deps)
-	case "claim-unit", "recover-unit-claim", "recover-review":
+	case "claim-unit", "recover-unit-claim", "recover-review", "recover-aggregate":
 		return runClaim(command, rest, deps)
 	case "handoff-review":
 		return runHandoffReview(rest, deps)
@@ -438,6 +440,26 @@ func runPlan(args []string, deps Dependencies) int {
 		return writeSuccess(deps, map[string]any{"workflow": current, "plan": input}, "workflow approve-plan")
 	})
 }
+func runAmendPlan(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--revision", "--actor", "--input-file"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if _, err = values.int64("--revision"); err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input, err := decodeInputFile[plan.Plan](values.one("--input-file"))
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if err = plan.Validate(input); err != nil {
+		return fail(deps, ErrState, err.Error())
+	}
+	// The current control plane has no opaque plan-amendment authority. Actor is
+	// declarative metadata, so accepting a privileged label would be forgeable.
+	return fail(deps, ErrState, "amend-plan requires structural plan amendment authority; no such authority exists")
+}
+
 func runApprovePlan(args []string, deps Dependencies) int {
 	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--revision", "--actor"}, repeatable: []string{"--approve-exception"}})
 	if err != nil {
@@ -556,6 +578,8 @@ func runClaim(command string, args []string, deps Dependencies) int {
 		var err error
 		if command == "recover-review" {
 			result, err = manager.RecoverReviewAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
+		} else if command == "recover-aggregate" {
+			result, err = manager.RecoverAggregateAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
 		} else if command == "recover-unit-claim" {
 			result, err = manager.RecoverAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
 		} else if values.one("--print-claim-handle-secret-once") != "" {
@@ -575,6 +599,10 @@ func runClaim(command string, args []string, deps Dependencies) int {
 		next := "workflow unit-tdd"
 		if command == "recover-review" {
 			next = "workflow unit-review"
+		}
+		if command == "recover-aggregate" {
+			data["unit_id"] = values.one("--unit-id")
+			data["unit_revision"] = result.UnitRevision
 		}
 		return writeSuccess(deps, data, next)
 	})
@@ -747,9 +775,9 @@ Commands:
   install codex|opencode|claude|pi
   tui
   principles
-  workflow new|continue|show|progress|request-capability|explore|spec|design|plan|approve-plan
+  workflow new|continue|show|progress|request-capability|explore|spec|design|plan|amend-plan|approve-plan
   workflow list-ready-units|begin-implementation|complete|abandon
-  workflow claim-unit|recover-unit-claim|handoff-review|recover-review|unit-tdd|unit-review|unit-complete
+  workflow claim-unit|recover-unit-claim|recover-aggregate|handoff-review|recover-review|unit-tdd|unit-review|unit-complete
 
 Global options:
   --help
@@ -757,8 +785,8 @@ Global options:
 `
 const workflowHelp = `Usage: pitcrew workflow <subcommand> [options]
 
-Commands: new, continue, show, progress, request-capability, explore, spec, design, plan, approve-plan, list-ready-units,
-  begin-implementation, complete, abandon, claim-unit, recover-unit-claim, handoff-review, recover-review,
+Commands: new, continue, show, progress, request-capability, explore, spec, design, plan, amend-plan, approve-plan, list-ready-units,
+  begin-implementation, complete, abandon, claim-unit, recover-unit-claim, recover-aggregate, handoff-review, recover-review,
   unit-tdd, unit-review, unit-complete
 `
 const principlesHelp = `Usage: pitcrew principles [--json]

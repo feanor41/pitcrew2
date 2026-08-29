@@ -475,6 +475,106 @@ func TestRecoverReviewRotatesOnlyReviewAuthorityAndRestoresCompletion(t *testing
 	}
 }
 
+func TestAmendPlanRejectsDeclarativeActorsWithoutStructuralAuthority(t *testing.T) {
+	root := t.TempDir()
+	wfID, revision := createWorkflow(t, root)
+	for _, stage := range []string{"explore", "spec", "design"} {
+		input := writeInput(t, root, stage+"-amendment-setup.json", `{"content":"`+stage+`"}`)
+		revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", stage, "--workflow-id", wfID, "--revision", itoa(revision), "--actor", stage, "--input-file", input)))
+	}
+	originalUnit := "wu-000000000000000000000001"
+	missingUnit := "wu-000000000000000000000002"
+	originalPlan := writeInput(t, root, "original-plan.json", `{"summary":"validated scope","scope":"internal","max_parallel_units":1,"work_units":[{"id":"`+originalUnit+`","description":"original unit","scope":"internal/original","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}]}`)
+	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "planner", "--input-file", originalPlan)))
+	amendedPlan := writeInput(t, root, "validated-missing-unit-plan.json", `{"summary":"validated scope","scope":"internal","max_parallel_units":2,"work_units":[{"id":"`+originalUnit+`","description":"original unit","scope":"internal/original","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"`+missingUnit+`","description":"validated missing unit","scope":"internal/missing","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}]}`)
+	before := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	for _, actor := range []string{"aion", "external-planner"} {
+		if result := runAt(t, root, "workflow", "amend-plan", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", actor, "--input-file", amendedPlan); result.code != 3 || !strings.Contains(result.stderr, "structural plan amendment authority") {
+			t.Fatalf("actor %q authorized amendment or got the wrong rejection: %#v", actor, result)
+		}
+	}
+	after := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	if workflowRevision(t, after) != workflowRevision(t, before) || !strings.Contains(string(after), originalUnit) || strings.Contains(string(after), missingUnit) || strings.Contains(string(after), `"kind":"plan_superseded"`) {
+		t.Fatalf("unauthorized amendment mutated the plan: %s", after)
+	}
+}
+
+func TestRecoverAggregateAllowsFreshTDDForDoneUnitAfterCorrections(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, implementationHandle := setupReviewingUnit(t, root, "implementer")
+	completed := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", implementationHandle))
+	corrections := writeInput(t, root, "aggregate-corrections-for-recovery.json", `{"verdict":"corrections","summary":"missing aggregate behavior","findings":"add the missing behavior"}`)
+	corrected := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(workflowRevision(t, completed)), "--actor", "aggregate-reviewer", "--input-file", corrections))
+	revision := workflowRevision(t, corrected)
+	if workflowState(t, corrected) != "ready_to_complete" {
+		t.Fatalf("aggregate corrections=%s", corrected)
+	}
+
+	recovered := mustOK(t, runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "aggregate-recovery-handles")))
+	if !strings.Contains(string(recovered), `"unit_revision":2`) || !strings.Contains(string(recovered), `"next_action":"workflow unit-tdd"`) || strings.Contains(string(recovered), "claim_secret") {
+		t.Fatalf("aggregate recovery=%s", recovered)
+	}
+	freshTDD := writeInput(t, root, "aggregate-recovery-tdd.json", `{"red_command":"go test -run TestMissingAggregateBehavior","red_outcome":"exit 1: aggregate recovery behavior missing","green_command":"go test -run TestMissingAggregateBehavior","green_outcome":"exit 0","refactor_summary":"","validation_command":"go test ./internal/cli","validation_outcome":"exit 0","changed_paths":"internal/cli"}`)
+	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", stringField(t, recovered, "handle_path"), "--input-file", freshTDD))
+	if state, evidenceCount := storedUnitEvidence(t, root, wfID, unitID); state != "reviewing" || evidenceCount != 2 {
+		t.Fatalf("fresh aggregate recovery state=%s evidence=%d", state, evidenceCount)
+	}
+}
+
+func TestRecoverAggregateRejectsInvalidSelectionsAndPreservesCorrectionRecord(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, implementationHandle := setupReviewingUnit(t, root, "implementer")
+	completed := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", implementationHandle))
+	revision := workflowRevision(t, completed)
+	args := []string{"workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--revision", itoa(revision), "--actor", "external-recovery"}
+	if noCorrections := runAt(t, root, append(args, "--handle-dir", filepath.Join(root, "no-corrections"))...); noCorrections.code != 3 {
+		t.Fatalf("recovery without corrections=%#v", noCorrections)
+	}
+	corrections := writeInput(t, root, "aggregate-corrections.json", `{"verdict":"corrections","summary":"not aligned","findings":"fix requirement"}`)
+	corrected := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "aggregate-reviewer", "--input-file", corrections))
+	revision = workflowRevision(t, corrected)
+	if stale := runAt(t, root, append(args, "--handle-dir", filepath.Join(root, "stale"))...); stale.code != 4 {
+		t.Fatalf("stale recovery=%#v", stale)
+	}
+	if debug := runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "debug"), "--print-claim-handle-secret-once"); debug.code != 2 {
+		t.Fatalf("recovery accepted one-shot flag=%#v", debug)
+	}
+	if multiple := runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--unit-id", "wu-000000000000000000000002", "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "multiple")); multiple.code != 2 {
+		t.Fatalf("recovery accepted multiple selections=%#v", multiple)
+	}
+	recovered := mustOK(t, runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "recovered")))
+	handlePath := stringField(t, recovered, "handle_path")
+	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC), "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", handlePath, "--input-file", writeInput(t, root, "expired-tdd.json", `{"red_command":"red","red_outcome":"exit 1","green_command":"green","green_outcome":"exit 0","refactor_summary":"","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)); expired.code != 5 {
+		t.Fatalf("aggregate recovery handle did not expire=%#v", expired)
+	}
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidenceCount, correctionsCount int
+	if err = s.DB().QueryRow(`SELECT count(*) FROM evidence WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&evidenceCount); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB().QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=? AND kind='aggregate_review'`, wfID).Scan(&correctionsCount); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if evidenceCount != 1 || correctionsCount != 1 {
+		t.Fatalf("recovery did not preserve evidence=%d corrections=%d", evidenceCount, correctionsCount)
+	}
+	approval := writeInput(t, root, "aggregate-approval.json", `{"verdict":"approved","summary":"aligned","findings":""}`)
+	// The expired recovered handle leaves the unit pending, so complete cannot
+	// bypass the correction cycle; recover a fresh handle, record evidence, and finish.
+	fresh := mustOK(t, runAt(t, root, "workflow", "recover-unit-claim", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "fresh")))
+	freshTDD := writeInput(t, root, "fresh-tdd.json", `{"red_command":"red","red_outcome":"exit 1","green_command":"green","green_outcome":"exit 0","refactor_summary":"","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)
+	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", stringField(t, fresh, "handle_path"), "--input-file", freshTDD))
+	ready := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", stringField(t, fresh, "handle_path")))
+	terminal := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(workflowRevision(t, ready)), "--actor", "aggregate-reviewer", "--input-file", approval))
+	if rejected := runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--revision", itoa(workflowRevision(t, terminal)), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "terminal")); rejected.code != 3 {
+		t.Fatalf("terminal recovery=%#v", rejected)
+	}
+}
+
 func TestAggregateReviewCorrectionsCASActorAndTerminalIntegrity(t *testing.T) {
 	root := t.TempDir()
 	wfID, unitID, handlePath := setupReviewingUnit(t, root, "implementer")
