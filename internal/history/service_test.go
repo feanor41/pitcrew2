@@ -109,6 +109,65 @@ func TestServiceClassifiesCorrectionsDependenciesAndClaimExpiry(t *testing.T) {
 	}
 }
 
+func TestServiceProjectsBoundedCorrectionAuthorityAndContextualActivities(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	unitID := "wu-000000000000000000000088"
+	planBody := `{"summary":"bounded","scope":"internal","work_units":[{"id":"` + unitID + `","description":"unit","scope":"internal/x","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}],"max_parallel_units":1,"aggregate_correction_policy":{"automatic_rounds":1,"on_exhaustion":"require_user_authorization"}}`
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{{`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-active',8,'ready_to_complete','Bounded','goal','now','now')`, nil}, {`INSERT INTO plans(workflow_id,summary,scope,max_parallel_units,body) VALUES('wf-active','bounded','internal',1,?)`, []any{planBody}}, {`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,'wf-active','unit','internal/x','[]','[]',1,1,'done',1)`, []any{unitID}}} {
+		if _, err = s.DB().Exec(statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	facts := []struct {
+		kind, body, action string
+		revision           int
+	}{
+		{"aggregate_review", `{"verdict":"corrections","findings":"first blocker"}`, "aggregate_review_recorded", 5},
+		{"aggregate_correction", `{"aggregate_review_revision":5,"groups":[],"assignments":[],"authority":"automatic"}`, "aggregate_correction_started", 6},
+		{"aggregate_review", `{"verdict":"corrections","findings":"latest blocker"}`, "aggregate_review_recorded", 7},
+		{"correction_authorization", `{"aggregate_review_revision":7,"reason":"user approved","user_direction_confirmed":true}`, "correction_authorized", 8},
+	}
+	for _, fact := range facts {
+		result, err := s.DB().Exec(`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-active',?,?, 'actor',?,'2026-08-29T20:00:00Z')`, fact.kind, fact.body, fact.revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := result.LastInsertId()
+		if _, err = s.DB().Exec(`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES('wf-active',NULL,?,'actor','2026-08-29T20:00:00Z','artifact',?)`, fact.action, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	detail, err := New(s).Detail(ctx, "wf-active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := detail.Synopsis.CorrectionPolicy
+	if c == nil || !c.PolicyAware || c.Used != 1 || c.Allowed != 1 || c.BlockerRevision != 7 || c.Authority != "authorized" || detail.Synopsis.NextAction != "workflow recover-aggregate" {
+		t.Fatalf("correction synopsis = %#v next=%q", c, detail.Synopsis.NextAction)
+	}
+	if detail.Synopsis.Blocker == nil || detail.Synopsis.Blocker.Reason != "latest blocker" {
+		t.Fatalf("latest blocker = %#v", detail.Synopsis.Blocker)
+	}
+	for _, action := range []string{"aggregate_correction_started", "correction_authorized"} {
+		if timelineEntry(detail.Timeline, action).Action != action {
+			t.Fatalf("missing %s", action)
+		}
+	}
+	for _, record := range detail.Records {
+		if strings.Contains(record.Content, "handle_path") || strings.Contains(record.Content, "secret_hash") {
+			t.Fatalf("secret leaked: %#v", record)
+		}
+	}
+}
+
 func TestServiceProjectsLatestValidProgressByInsertionOrder(t *testing.T) {
 	ctx, root := context.Background(), t.TempDir()
 	s, err := store.Open(ctx, root)

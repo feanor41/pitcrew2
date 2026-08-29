@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fmazzalomo/pitcrew/internal/correction"
 	"github.com/fmazzalomo/pitcrew/internal/plan"
 	"github.com/fmazzalomo/pitcrew/internal/workflow"
 )
@@ -35,6 +36,15 @@ type Synopsis struct {
 	Progress                                                                        *Progress
 	Planned                                                                         *PlannedWork
 	PlanNotice                                                                      string
+	CorrectionPolicy                                                                *CorrectionStatus
+}
+type CorrectionStatus struct {
+	PolicyAware     bool   `json:"policy_aware"`
+	Allowed         int    `json:"allowed"`
+	Used            int    `json:"used"`
+	BlockerRevision int64  `json:"blocker_revision,omitempty"`
+	BlockerContent  string `json:"blocker_content,omitempty"`
+	Authority       string `json:"authority"`
 }
 type Occurrence struct {
 	ID, RecordID, At, Phase, Work, Activity, Actor, Outcome, Reason string
@@ -108,15 +118,19 @@ func (s *Service) project(ctx context.Context, detail *Detail) error {
 	if err != nil {
 		return err
 	}
-	if detail.Workflow.State == string(workflow.ReadyToComplete) {
-		var latest recordFact
-		for _, fact := range facts {
-			if fact.authority > latest.authority {
-				latest = fact
+	projected, projectionErr := correction.Project(ctx, s.db, detail.Workflow.ID, detail.Synopsis.NextAction)
+	if projectionErr == nil {
+		detail.Synopsis.NextAction = projected.NextAction
+		detail.Synopsis.CorrectionPolicy = &CorrectionStatus{projected.PolicyAware, projected.Allowed, projected.Used, projected.BlockerRevision, projected.BlockerContent, string(projected.Authority)}
+		if projected.BlockerRevision != 0 && detail.Workflow.State != string(workflow.Completed) && detail.Workflow.State != string(workflow.Abandoned) {
+			reason := projected.BlockerContent
+			var review struct {
+				Findings string `json:"findings"`
 			}
-		}
-		if latest.eventTo == "aggregate_corrections" {
-			choose(&detail.Synopsis, &UnitStatus{Description: "Aggregate review", Status: "Correction", Reason: latest.reason, Derived: true}, true)
+			if json.Unmarshal([]byte(reason), &review) == nil && review.Findings != "" {
+				reason = review.Findings
+			}
+			choose(&detail.Synopsis, &UnitStatus{Description: "Aggregate review", Status: "Correction", Reason: reason, Derived: true}, true)
 		}
 	}
 	if detail.Workflow.State == string(workflow.Completed) || detail.Workflow.State == string(workflow.Abandoned) {
@@ -377,9 +391,15 @@ func coalesce(detail *Detail, units map[string]unitFact, facts map[string]record
 	return out
 }
 func transitionFor(action string) string {
-	return map[string]string{"workflow_created": "draft", "exploration_recorded": "exploring", "specification_recorded": "specifying", "design_recorded": "designing", "plan_submitted": "planning", "plan_approved": "plan_approved", "implementation_started": "implementing", "unit_completed": "ready_to_complete", "workflow_completed": "completed", "workflow_abandoned": "abandoned"}[action]
+	return map[string]string{"workflow_created": "draft", "exploration_recorded": "exploring", "specification_recorded": "specifying", "design_recorded": "designing", "plan_submitted": "planning", "plan_approved": "plan_approved", "implementation_started": "implementing", "unit_completed": "ready_to_complete", "aggregate_correction_started": "implementing", "correction_authorized": "ready_to_complete", "workflow_completed": "completed", "workflow_abandoned": "abandoned"}[action]
 }
 func phase(action string) string {
+	if action == "aggregate_correction_started" {
+		return "Implement"
+	}
+	if action == "correction_authorized" {
+		return "Review"
+	}
 	for prefix, value := range map[string]string{"exploration_": "Explore", "specification_": "Specify", "design_": "Design", "plan_": "Plan", "unit_": "Implement", "aggregate_": "Review"} {
 		if strings.HasPrefix(action, prefix) {
 			return value

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/activity"
+	"github.com/fmazzalomo/pitcrew/internal/correction"
 	"github.com/fmazzalomo/pitcrew/internal/ids"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
@@ -66,8 +67,9 @@ type AggregateReview struct {
 	Actor    string  `json:"-"`
 }
 type AggregateOutcome struct {
-	Revision int64  `json:"revision"`
-	State    string `json:"state"`
+	Revision   int64  `json:"revision"`
+	State      string `json:"state"`
+	NextAction string `json:"next_action"`
 }
 type Service struct {
 	db  *sql.DB
@@ -423,6 +425,13 @@ func (s *Service) CompleteAggregate(ctx context.Context, wfID string, revision i
 	if count != 0 {
 		return AggregateOutcome{}, fmt.Errorf("%w: implementer and aggregate reviewer actors must differ", ErrInvalidState)
 	}
+	projection, err := correction.Project(ctx, tx, wfID, "workflow complete")
+	if err != nil {
+		return AggregateOutcome{}, err
+	}
+	if projection.BlockerRevision != 0 {
+		return AggregateOutcome{}, fmt.Errorf("%w: unresolved aggregate correction blocker at revision %d", ErrInvalidState, projection.BlockerRevision)
+	}
 	now := s.now()
 	at, nextRevision, nextState := ids.FormatTime(now), revision+1, "ready_to_complete"
 	if review.Verdict == Approved {
@@ -457,8 +466,16 @@ func (s *Service) CompleteAggregate(ctx context.Context, wfID string, revision i
 			return AggregateOutcome{}, err
 		}
 	}
+	nextAction := "none"
+	if review.Verdict == Corrections {
+		projection, err = correction.Project(ctx, tx, wfID, "workflow complete")
+		if err != nil {
+			return AggregateOutcome{}, err
+		}
+		nextAction = projection.NextAction
+	}
 	if err = tx.Commit(); err != nil {
 		return AggregateOutcome{}, err
 	}
-	return AggregateOutcome{Revision: nextRevision, State: nextState}, nil
+	return AggregateOutcome{Revision: nextRevision, State: nextState, NextAction: nextAction}, nil
 }

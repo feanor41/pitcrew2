@@ -19,6 +19,8 @@ Define the central-state, read-only terminal experience for inspecting workflow 
 
 The TUI MUST resolve the current checkout's canonical project identity and open its central state database read-only. It MUST NOT initialize central paths or checkout-local state. Main and linked worktrees MUST show the same history. Its workflow grid MUST order by `created_at` descending then id ascending and mark columns for start time, short name, and state. Selection MUST expose workflow metadata and every aggregate, event, artifact, plan, unit, dependency, exception, TDD evidence, review, and activity. Activities MUST be chronological with actor, timestamp, and action. Records MUST remain fully inspectable beyond the visible region.
 
+The synopsis SHALL reuse the shared correction projection to show policy awareness, rounds used/allowed, latest unresolved blocker, authority, and exactly one contextual next action. History SHALL label aggregate correction start and authorization activities and SHALL never display handle paths, hashes, or secrets.
+
 #### Scenario: Historical workflow inspection
 - GIVEN active, completed, and abandoned workflows in one project
 - WHEN history opens

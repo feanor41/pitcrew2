@@ -545,6 +545,20 @@ done
 for review_rule in 'Unit review is selective' 'Final aggregate review is mandatory' 'requirements, specifications, design, tasks, implementation evidence, and tests'; do
   grep -F "$review_rule" "$contract_file" >/dev/null || fail "agent contract review rule omitted $review_rule"
 done
+reviewer_file=$(role_path "$target" pc2-reviewer)
+for correction_rule in 'correction budget' 'group findings by causal invariant' 'user authorization required' 'explicit user direction'; do
+  grep -F "$correction_rule" "$aion_file" >/dev/null || fail "Aion bounded-correction contract omitted $correction_rule"
+  grep -F "$correction_rule" "$contract_file" >/dev/null || fail "agent contract bounded-correction rule omitted $correction_rule"
+done
+for reviewer_rule in 'declared correction policy' 'latest unresolved blocker' 'never implement'; do
+  grep -F "$reviewer_rule" "$reviewer_file" >/dev/null || fail "Reviewer bounded-correction contract omitted $reviewer_rule"
+done
+for item in 4 5 6; do
+  grep -E "^$item\. - \[x\]" "$ROOT/docs/todo.md" >/dev/null || fail "retrospective TODO $item is not verified complete"
+done
+for item in 1 2 3 7 8; do
+  grep -E "^$item\. - \[ \]" "$ROOT/docs/todo.md" >/dev/null || fail "retrospective TODO $item was closed without verification"
+done
 grep -F 'reuse one addressable Aion instance across all phases until terminal completion or a genuine blocker' "$contract_file" >/dev/null || fail 'agent contract omitted Aion delivery continuity'
 assert_file "$contract_file"
 for prohibited in '--claim-token' '--emit-plain-token' '--print-claim-handle-secret-once' 'same identity' 'CAS'; do

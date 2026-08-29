@@ -27,8 +27,10 @@ The CLI SHALL expose only `install`, `project`, `principles`, `tui`, global `--h
 | `list-ready-units` | `--workflow-id <wf-id>` |
 | `begin-implementation` | `--workflow-id <wf-id> --revision <n> --actor <label>` |
 | `complete` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
+| `authorize-correction` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `abandon` | `--workflow-id <wf-id> --revision <n> --actor <label> --reason <text>` |
-| `claim-unit`, `recover-unit-claim`, `recover-aggregate`, `handoff-review`, `recover-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
+| `claim-unit`, `recover-unit-claim`, `handoff-review`, `recover-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
+| `recover-aggregate` | `--workflow-id <wf-id> --revision <n> --actor <label> --handle-dir <dir>` plus exactly one of `--input-file <path>` or historical `--unit-id <wu-id>` |
 | `unit-tdd`, `unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
 
@@ -95,7 +97,7 @@ Each successful workflow command SHALL emit one JSON document:
 {"ok":true,"data":{},"warnings":[],"next_action":"..."}
 ```
 
-Workflow and install-argument failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. After valid install dispatch, the embedded POSIX installer SHALL stream actionable plain diagnostics directly to stderr, preserve its non-zero process status, and emit no success stdout on failure. Successful installation SHALL emit exactly `Installed PitCrew agents for <Runtime> in <registry>` followed by a newline; managed-update warnings MAY precede it on stderr. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.16.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
+Workflow and install-argument failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. After valid install dispatch, the embedded POSIX installer SHALL stream actionable plain diagnostics directly to stderr, preserve its non-zero process status, and emit no success stdout on failure. Successful installation SHALL emit exactly `Installed PitCrew agents for <Runtime> in <registry>` followed by a newline; managed-update warnings MAY precede it on stderr. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.17.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
 
 (Previously: Version output was plain text without a canonical baseline, SemVer policy, or shared CLI/TUI source.)
 
@@ -142,11 +144,13 @@ Workflow and install-argument failures SHALL write one single-line error envelop
 
 ### Requirement: Aggregate recovery command
 
-`recover-aggregate` SHALL require exactly one unit selection and the matrix inputs above. It SHALL reject its secret-print flag. It SHALL return only an opaque handle path, selected unit id, and next unit revision when the current aggregate CAS revision is supplied, workflow state is `ready_to_complete`, the newest aggregate verdict is `corrections`, and the selected unit is done. State/selection/verdict failures SHALL exit `3`, stale aggregate CAS SHALL exit `4`, and handle failures SHALL exit `5`.
+`recover-aggregate` SHALL enforce the policy-aware/historical closed matrix above and reject its secret-print flag. Grouped input SHALL be strict `{aggregate_review_revision,groups:[{causal_invariant,findings,unit_ids}],assignments:[{unit_id,actor}]}`; authority and authorization identifiers are derived. Success returns only actor/unit/revision/opaque-path records. State, projection, selection, and authority failures SHALL exit `3`, stale aggregate CAS SHALL exit `4`, and handle failures SHALL exit `5`.
+
+`authorize-correction` SHALL accept only strict `{aggregate_review_revision,reason,user_direction_confirmed:true}` for the exact exhausted blocker. Malformed, mixed, or unknown input exits `2`; state/authority mismatch exits `3`; stale CAS exits `4`.
 
 #### Scenario: Aggregate recovery keeps authority opaque
 
-- GIVEN a corrections aggregate verdict and exactly one eligible done unit
+- GIVEN a corrections aggregate verdict and eligible grouped done units
 - WHEN `recover-aggregate` succeeds
 - THEN its response SHALL reveal no bearer secret
 - AND duplicate or multiple unit selection SHALL fail without mutation

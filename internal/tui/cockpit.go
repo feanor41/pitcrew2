@@ -206,6 +206,13 @@ func statusRows(detail history.Detail) []panelRow {
 	if s.Blocker != nil {
 		rows = append(rows, panelRow{"blocker", "Blocked", zeroDash(s.Blocker.Reason), stateWarning})
 	}
+	if s.CorrectionPolicy != nil {
+		rows = append(rows, panelRow{"correction_rounds", "Corrections", fmt.Sprintf("%d/%d used", s.CorrectionPolicy.Used, s.CorrectionPolicy.Allowed), stateNeutral})
+		if s.CorrectionPolicy.BlockerRevision != 0 {
+			rows = append(rows, panelRow{"correction_blocker", "Blocker review", fmt.Sprintf("r%d", s.CorrectionPolicy.BlockerRevision), stateWarning})
+		}
+		rows = append(rows, panelRow{"correction_authority", "Authority", zeroDash(s.CorrectionPolicy.Authority), semantic(s.CorrectionPolicy.Authority)})
+	}
 	rows = append(rows, panelRow{"executable", "Executable", zeroDash(s.NextAction), stateReady})
 	if s.Progress != nil {
 		rows = append(rows, panelRow{"acknowledged_status", "Acknowledged", zeroDash(s.Progress.Status), stateNeutral}, panelRow{"acknowledged_summary", "Report", zeroDash(s.Progress.Summary), stateNeutral}, panelRow{"acknowledged_next", "Acknowledged next", zeroDash(s.Progress.NextAction), stateNeutral})

@@ -71,6 +71,26 @@ func TestProjectCockpitKeepsExecutableAndAcknowledgedStatusSeparate(t *testing.T
 	}
 }
 
+func TestProjectCockpitShowsOneCorrectionAuthorityAndExecutableAction(t *testing.T) {
+	detail := history.Detail{Workflow: history.Workflow{State: "ready_to_complete"}, Synopsis: history.Synopsis{
+		NextAction: "workflow recover-aggregate", Blocker: &history.UnitStatus{Reason: "latest blocker"},
+		CorrectionPolicy: &history.CorrectionStatus{PolicyAware: true, Allowed: 1, Used: 1, BlockerRevision: 7, Authority: "authorized"},
+	}}
+	rows := statusRows(detail)
+	want := map[string]string{"correction_rounds": "1/1 used", "correction_blocker": "r7", "correction_authority": "authorized", "executable": "workflow recover-aggregate"}
+	for _, row := range rows {
+		if value, ok := want[row.ID]; ok && row.Value == value {
+			delete(want, row.ID)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing correction rows: %#v from %#v", want, rows)
+	}
+	if actionLabel("aggregate_correction_started") != "Started aggregate correction" || actionLabel("correction_authorized") != "Authorized correction" {
+		t.Fatal("correction activity labels are not contextual")
+	}
+}
+
 func TestFlattenTreeUsesSemanticIdentityAndExpansion(t *testing.T) {
 	root := treeNode{ID: treeNodeID{Kind: nodeWorkflow}, Label: "wf", Children: []treeNode{{
 		ID: treeNodeID{Kind: nodeStage, Stage: stageBuild}, Label: "Build", Children: []treeNode{{

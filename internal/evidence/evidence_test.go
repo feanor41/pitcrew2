@@ -140,10 +140,10 @@ func TestCompletionAllowsSelectiveReviewAndRequiresValidHandle(t *testing.T) {
 
 func TestCompleteAggregateAppendsReviewAndAppliesVerdictAtomically(t *testing.T) {
 	tests := []struct {
-		name, verdict, findings, wantState string
+		name, verdict, findings, wantState, wantNext string
 	}{
-		{"corrections preserve ready state", string(Corrections), "fix integration", "ready_to_complete"},
-		{"approval completes workflow", string(Approved), "", "completed"},
+		{"corrections preserve ready state", string(Corrections), "fix integration", "ready_to_complete", "workflow recover-aggregate"},
+		{"approval completes workflow", string(Approved), "", "completed", "none"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -162,7 +162,7 @@ func TestCompleteAggregateAppendsReviewAndAppliesVerdictAtomically(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if out.Revision != 3 || out.State != tt.wantState {
+			if out.Revision != 3 || out.State != tt.wantState || out.NextAction != tt.wantNext {
 				t.Fatalf("outcome=%#v", out)
 			}
 			var state string
@@ -175,6 +175,37 @@ func TestCompleteAggregateAppendsReviewAndAppliesVerdictAtomically(t *testing.T)
 				t.Fatalf("state=%s revision=%d artifacts=%d events=%d activities=%d", state, revision, artifacts, events, activities)
 			}
 		})
+	}
+}
+
+func TestCompleteAggregateExhaustionAndUnresolvedBlockerRejectWithoutMutation(t *testing.T) {
+	svc, db, wfID, unitID := evidenceService(t)
+	_, _ = db.Exec(`UPDATE workflows SET state='ready_to_complete',revision=2 WHERE id=?`, wfID)
+	_, _ = db.Exec(`UPDATE work_units SET state='done' WHERE id=?`, unitID)
+	zeroBudget := `{"summary":"one","scope":"internal","work_units":[{"id":"` + unitID + `","description":"unit","scope":"internal","areas":[],"depends_on":[],"estimated_changed_lines":10,"estimated_review_minutes":5}],"max_parallel_units":1,"aggregate_correction_policy":{"automatic_rounds":0,"on_exhaustion":"require_user_authorization"}}`
+	if _, err := db.Exec(`UPDATE plans SET body=? WHERE workflow_id=?`, zeroBudget, wfID); err != nil {
+		t.Fatal(err)
+	}
+	out, err := svc.CompleteAggregate(context.Background(), wfID, 2, AggregateReview{Actor: "reviewer", Verdict: Corrections, Summary: "final review", Findings: "new blocker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.NextAction != "user authorization required" || out.Revision != 3 {
+		t.Fatalf("exhausted outcome = %#v", out)
+	}
+	var eventsBefore int
+	_ = db.QueryRow(`SELECT count(*) FROM events WHERE workflow_id=?`, wfID).Scan(&eventsBefore)
+	_, err = svc.CompleteAggregate(context.Background(), wfID, 3, AggregateReview{Actor: "another-reviewer", Verdict: Approved, Summary: "retry"})
+	if !errors.Is(err, ErrInvalidState) || !strings.Contains(err.Error(), "unresolved aggregate correction blocker") {
+		t.Fatalf("repeated completion error = %v", err)
+	}
+	var state string
+	var revision, artifacts, events int
+	_ = db.QueryRow(`SELECT state,revision FROM workflows WHERE id=?`, wfID).Scan(&state, &revision)
+	_ = db.QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=? AND kind='aggregate_review'`, wfID).Scan(&artifacts)
+	_ = db.QueryRow(`SELECT count(*) FROM events WHERE workflow_id=?`, wfID).Scan(&events)
+	if state != "ready_to_complete" || revision != 3 || artifacts != 1 || events != eventsBefore {
+		t.Fatalf("rejected retry mutated state=%s revision=%d artifacts=%d events=%d", state, revision, artifacts, events)
 	}
 }
 
@@ -260,6 +291,10 @@ func evidenceService(t *testing.T) (*Service, DB, string, string) {
 	unitID := "wu-000000000000000000000001"
 	_, err = s.DB().Exec(`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,admission_exception,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, unitID, wf.ID, "unit", "internal", `[]`, `[]`, 10, 5, "pending", nil, 1)
 	if err != nil {
+		t.Fatal(err)
+	}
+	planBody := `{"summary":"one","scope":"internal","work_units":[{"id":"` + unitID + `","description":"unit","scope":"internal","areas":[],"depends_on":[],"estimated_changed_lines":10,"estimated_review_minutes":5}],"max_parallel_units":1,"aggregate_correction_policy":{"automatic_rounds":1,"on_exhaustion":"require_user_authorization"}}`
+	if _, err = s.DB().Exec(`INSERT INTO plans(workflow_id,summary,scope,max_parallel_units,body) VALUES(?,'one','internal',1,?)`, wf.ID, planBody); err != nil {
 		t.Fatal(err)
 	}
 	return New(s, func() time.Time { return now }), s.DB(), wf.ID, unitID

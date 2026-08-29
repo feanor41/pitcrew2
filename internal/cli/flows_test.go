@@ -509,13 +509,13 @@ func TestRecoverAggregateAllowsFreshTDDForDoneUnitAfterCorrections(t *testing.T)
 	if workflowState(t, corrected) != "ready_to_complete" {
 		t.Fatalf("aggregate corrections=%s", corrected)
 	}
-
-	recovered := mustOK(t, runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "aggregate-recovery-handles")))
+	recoveryInput := aggregateRecoveryInput(t, root, "aggregate-recovery.json", revision, unitID, "external-recovery")
+	recovered := mustOK(t, runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--input-file", recoveryInput, "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "aggregate-recovery-handles")))
 	if !strings.Contains(string(recovered), `"unit_revision":2`) || !strings.Contains(string(recovered), `"next_action":"workflow unit-tdd"`) || strings.Contains(string(recovered), "claim_secret") {
 		t.Fatalf("aggregate recovery=%s", recovered)
 	}
 	freshTDD := writeInput(t, root, "aggregate-recovery-tdd.json", `{"red_command":"go test -run TestMissingAggregateBehavior","red_outcome":"exit 1: aggregate recovery behavior missing","green_command":"go test -run TestMissingAggregateBehavior","green_outcome":"exit 0","refactor_summary":"","validation_command":"go test ./internal/cli","validation_outcome":"exit 0","changed_paths":"internal/cli"}`)
-	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", stringField(t, recovered, "handle_path"), "--input-file", freshTDD))
+	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", aggregateHandlePath(t, recovered), "--input-file", freshTDD))
 	if state, evidenceCount := storedUnitEvidence(t, root, wfID, unitID); state != "reviewing" || evidenceCount != 2 {
 		t.Fatalf("fresh aggregate recovery state=%s evidence=%d", state, evidenceCount)
 	}
@@ -526,7 +526,8 @@ func TestRecoverAggregateRejectsInvalidSelectionsAndPreservesCorrectionRecord(t 
 	wfID, unitID, implementationHandle := setupReviewingUnit(t, root, "implementer")
 	completed := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", implementationHandle))
 	revision := workflowRevision(t, completed)
-	args := []string{"workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--revision", itoa(revision), "--actor", "external-recovery"}
+	recoveryInput := aggregateRecoveryInput(t, root, "batch-recovery.json", revision+1, unitID, "external-recovery")
+	args := []string{"workflow", "recover-aggregate", "--workflow-id", wfID, "--input-file", recoveryInput, "--revision", itoa(revision), "--actor", "external-recovery"}
 	if noCorrections := runAt(t, root, append(args, "--handle-dir", filepath.Join(root, "no-corrections"))...); noCorrections.code != 3 {
 		t.Fatalf("recovery without corrections=%#v", noCorrections)
 	}
@@ -542,8 +543,8 @@ func TestRecoverAggregateRejectsInvalidSelectionsAndPreservesCorrectionRecord(t 
 	if multiple := runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--unit-id", "wu-000000000000000000000002", "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "multiple")); multiple.code != 2 {
 		t.Fatalf("recovery accepted multiple selections=%#v", multiple)
 	}
-	recovered := mustOK(t, runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "recovered")))
-	handlePath := stringField(t, recovered, "handle_path")
+	recovered := mustOK(t, runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--input-file", recoveryInput, "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "recovered")))
+	handlePath := aggregateHandlePath(t, recovered)
 	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC), "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", handlePath, "--input-file", writeInput(t, root, "expired-tdd.json", `{"red_command":"red","red_outcome":"exit 1","green_command":"green","green_outcome":"exit 0","refactor_summary":"","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)); expired.code != 5 {
 		t.Fatalf("aggregate recovery handle did not expire=%#v", expired)
 	}
@@ -570,7 +571,7 @@ func TestRecoverAggregateRejectsInvalidSelectionsAndPreservesCorrectionRecord(t 
 	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", stringField(t, fresh, "handle_path"), "--input-file", freshTDD))
 	ready := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", stringField(t, fresh, "handle_path")))
 	terminal := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(workflowRevision(t, ready)), "--actor", "aggregate-reviewer", "--input-file", approval))
-	if rejected := runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--unit-id", unitID, "--revision", itoa(workflowRevision(t, terminal)), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "terminal")); rejected.code != 3 {
+	if rejected := runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--input-file", recoveryInput, "--revision", itoa(workflowRevision(t, terminal)), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "terminal")); rejected.code != 3 {
 		t.Fatalf("terminal recovery=%#v", rejected)
 	}
 }
@@ -582,7 +583,7 @@ func TestAggregateReviewCorrectionsCASActorAndTerminalIntegrity(t *testing.T) {
 	revision := workflowRevision(t, completed)
 	corrections := writeInput(t, root, "aggregate-corrections.json", `{"verdict":"corrections","summary":"not aligned","findings":"fix requirement"}`)
 	corrected := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "aggregate-reviewer", "--input-file", corrections))
-	if workflowState(t, corrected) != "ready_to_complete" || workflowRevision(t, corrected) != revision+1 || !strings.Contains(string(corrected), `"next_action":"aion coordinate aggregate corrections"`) {
+	if workflowState(t, corrected) != "ready_to_complete" || workflowRevision(t, corrected) != revision+1 || !strings.Contains(string(corrected), `"next_action":"workflow recover-aggregate"`) {
 		t.Fatalf("corrections=%s", corrected)
 	}
 	assertRejectedAggregate := func(name, actor string, attemptedRevision int64, wantCode int) {
@@ -600,11 +601,83 @@ func TestAggregateReviewCorrectionsCASActorAndTerminalIntegrity(t *testing.T) {
 	assertRejectedAggregate("stale CAS", "other-reviewer", revision, 4)
 	assertRejectedAggregate("same actor", "implementer", revision+1, 3)
 	approval := writeInput(t, root, "aggregate-approval.json", `{"verdict":"approved","summary":"aligned","findings":""}`)
-	approved := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision+1), "--actor", "other-reviewer", "--input-file", approval))
+	assertRejectedAggregate("unresolved approval", "other-reviewer", revision+1, 3)
+	recoveryInput := aggregateRecoveryInput(t, root, "integrity-recovery.json", revision+1, unitID, "repairer")
+	recovered := mustOK(t, runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--revision", itoa(revision+1), "--actor", "aion", "--handle-dir", filepath.Join(root, "integrity-handles"), "--input-file", recoveryInput))
+	tdd := writeInput(t, root, "integrity-tdd.json", `{"red_command":"red","red_outcome":"exit 1","green_command":"green","green_outcome":"exit 0","refactor_summary":"","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)
+	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "repairer", "--claim-handle", aggregateHandlePath(t, recovered), "--input-file", tdd))
+	ready := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "repairer", "--claim-handle", aggregateHandlePath(t, recovered)))
+	approved := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(workflowRevision(t, ready)), "--actor", "other-reviewer", "--input-file", approval))
 	if workflowState(t, approved) != "completed" {
 		t.Fatalf("approval=%s", approved)
 	}
-	assertRejectedAggregate("terminal", "third-reviewer", revision+2, 3)
+	assertRejectedAggregate("terminal", "third-reviewer", workflowRevision(t, approved), 3)
+}
+
+func TestAuthorizeCorrectionGatesExactExhaustedBlockerAndEnablesBatch(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, handle := setupReviewingUnit(t, root, "implementer")
+	ready := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handle))
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB().Exec(`UPDATE plans SET body=replace(body,'"automatic_rounds":1','"automatic_rounds":0') WHERE workflow_id=?`, wfID); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	corrections := writeInput(t, root, "exhausted-review.json", `{"verdict":"corrections","summary":"final","findings":"new blocker"}`)
+	blocked := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(workflowRevision(t, ready)), "--actor", "reviewer", "--input-file", corrections))
+	if !strings.Contains(string(blocked), `"next_action":"user authorization required"`) {
+		t.Fatalf("blocked=%s", blocked)
+	}
+	blockerRevision := workflowRevision(t, blocked)
+	authorization := writeInput(t, root, "authorization.json", `{"aggregate_review_revision":`+itoa(blockerRevision)+`,"reason":"user approved one transaction","user_direction_confirmed":true}`)
+	authorized := mustOK(t, runAt(t, root, "workflow", "authorize-correction", "--workflow-id", wfID, "--revision", itoa(blockerRevision), "--actor", "aion", "--input-file", authorization))
+	if workflowRevision(t, authorized) != blockerRevision+1 || !strings.Contains(string(authorized), `"next_action":"workflow recover-aggregate"`) {
+		t.Fatalf("authorized=%s", authorized)
+	}
+	if repeated := runAt(t, root, "workflow", "authorize-correction", "--workflow-id", wfID, "--revision", itoa(blockerRevision+1), "--actor", "user", "--input-file", authorization); repeated.code != 3 {
+		t.Fatalf("repeated authorization=%#v", repeated)
+	}
+	recovery := aggregateRecoveryInput(t, root, "authorized-recovery.json", blockerRevision, unitID, "repairer")
+	recovered := mustOK(t, runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--revision", itoa(blockerRevision+1), "--actor", "aion", "--handle-dir", filepath.Join(root, "authorized-handles"), "--input-file", recovery))
+	if aggregateHandlePath(t, recovered) == "" || strings.Contains(string(recovered), "claim_secret") {
+		t.Fatalf("recovered=%s", recovered)
+	}
+}
+
+func TestWorkflowShowUsesProjectedCorrectionSynopsisAndAction(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, handle := setupReviewingUnit(t, root, "implementer")
+	ready := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handle))
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB().Exec(`UPDATE plans SET body=replace(body,'"automatic_rounds":1','"automatic_rounds":0') WHERE workflow_id=?`, wfID); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	corrections := writeInput(t, root, "show-exhausted-review.json", `{"verdict":"corrections","summary":"final","findings":"shared projection missing"}`)
+	blocked := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(workflowRevision(t, ready)), "--actor", "reviewer", "--input-file", corrections))
+	shown := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	var projection struct {
+		Data struct {
+			Synopsis history.Synopsis `json:"synopsis"`
+		} `json:"data"`
+		NextAction string `json:"next_action"`
+	}
+	if err = json.Unmarshal(shown, &projection); err != nil {
+		t.Fatal(err)
+	}
+	policy := projection.Data.Synopsis.CorrectionPolicy
+	if policy == nil || !policy.PolicyAware || policy.Allowed != 0 || policy.Used != 0 || policy.BlockerRevision != workflowRevision(t, blocked) || policy.BlockerContent == "" || policy.Authority != "none" {
+		t.Fatalf("correction synopsis=%#v response=%s", policy, shown)
+	}
+	if projection.NextAction != "user authorization required" || projection.Data.Synopsis.NextAction != projection.NextAction || strings.Contains(string(shown), `"next_action":"workflow complete"`) {
+		t.Fatalf("contextual action=%q synopsis=%q response=%s", projection.NextAction, projection.Data.Synopsis.NextAction, shown)
+	}
 }
 
 func TestRepeatedDesignPersistsAmendment(t *testing.T) {
@@ -1279,5 +1352,24 @@ func optionalStringField(t *testing.T, document []byte, field string) string {
 	}
 	value, _ := v["data"].(map[string]any)[field].(string)
 	return value
+}
+func aggregateRecoveryInput(t *testing.T, root, name string, reviewRevision int64, unitID, actor string) string {
+	t.Helper()
+	body := `{"aggregate_review_revision":` + itoa(reviewRevision) + `,"groups":[{"causal_invariant":"shared","findings":["fix"],"unit_ids":["` + unitID + `"]}],"assignments":[{"unit_id":"` + unitID + `","actor":"` + actor + `"}]}`
+	return writeInput(t, root, name, body)
+}
+func aggregateHandlePath(t *testing.T, document []byte) string {
+	t.Helper()
+	var value struct {
+		Data struct {
+			Handles []struct {
+				HandlePath string `json:"handle_path"`
+			} `json:"handles"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(document, &value); err != nil || len(value.Data.Handles) != 1 {
+		t.Fatalf("aggregate handles: %s error=%v", document, err)
+	}
+	return value.Data.Handles[0].HandlePath
 }
 func itoa(value int64) string { return strconv.FormatInt(value, 10) }

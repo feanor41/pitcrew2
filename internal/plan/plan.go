@@ -53,6 +53,36 @@ const (
 type AdmissionException struct {
 	Justification string `json:"justification"`
 }
+
+const RequireUserAuthorization = "require_user_authorization"
+
+type AggregateCorrectionPolicy struct {
+	AutomaticRounds int    `json:"automatic_rounds"`
+	OnExhaustion    string `json:"on_exhaustion"`
+}
+
+func DefaultAggregateCorrectionPolicy() AggregateCorrectionPolicy {
+	return AggregateCorrectionPolicy{AutomaticRounds: 1, OnExhaustion: RequireUserAuthorization}
+}
+
+func (p *AggregateCorrectionPolicy) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		AutomaticRounds *int    `json:"automatic_rounds"`
+		OnExhaustion    *string `json:"on_exhaustion"`
+	}
+	var value wire
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	if value.AutomaticRounds == nil || value.OnExhaustion == nil {
+		return fmt.Errorf("aggregate_correction_policy requires automatic_rounds and on_exhaustion")
+	}
+	p.AutomaticRounds, p.OnExhaustion = *value.AutomaticRounds, *value.OnExhaustion
+	return nil
+}
+
 type WorkUnit struct {
 	ID                     string              `json:"id"`
 	Description            string              `json:"description"`
@@ -66,12 +96,13 @@ type WorkUnit struct {
 	present                workUnitPresence
 }
 type Plan struct {
-	Summary          string            `json:"summary"`
-	Scope            string            `json:"scope"`
-	Units            []WorkUnit        `json:"work_units"`
-	MaxParallelUnits int               `json:"max_parallel_units"`
-	OverlapApprovals []OverlapApproval `json:"overlap_approvals,omitempty"`
-	present          planPresence
+	Summary                   string                    `json:"summary"`
+	Scope                     string                    `json:"scope"`
+	Units                     []WorkUnit                `json:"work_units"`
+	MaxParallelUnits          int                       `json:"max_parallel_units"`
+	OverlapApprovals          []OverlapApproval         `json:"overlap_approvals,omitempty"`
+	AggregateCorrectionPolicy AggregateCorrectionPolicy `json:"aggregate_correction_policy"`
+	present                   planPresence
 }
 
 type OverlapApproval struct {
@@ -80,7 +111,19 @@ type OverlapApproval struct {
 }
 
 type workUnitPresence struct{ id, description, scope, areas, depends, lines, minutes bool }
-type planPresence struct{ summary, scope, units, parallel bool }
+type planPresence struct{ summary, scope, units, parallel, aggregateCorrectionPolicy bool }
+
+func (p Plan) HasAggregateCorrectionPolicy() bool { return p.present.aggregateCorrectionPolicy }
+
+func NormalizeForSubmission(p Plan) Plan {
+	if !p.present.aggregateCorrectionPolicy {
+		if p.AggregateCorrectionPolicy == (AggregateCorrectionPolicy{}) {
+			p.AggregateCorrectionPolicy = DefaultAggregateCorrectionPolicy()
+		}
+		p.present.aggregateCorrectionPolicy = true
+	}
+	return p
+}
 
 func (u *WorkUnit) UnmarshalJSON(data []byte) error {
 	type wire struct {
@@ -127,11 +170,12 @@ func (u *WorkUnit) UnmarshalJSON(data []byte) error {
 
 func (p *Plan) UnmarshalJSON(data []byte) error {
 	type wire struct {
-		Summary          *string           `json:"summary"`
-		Scope            *string           `json:"scope"`
-		Units            *[]WorkUnit       `json:"work_units"`
-		MaxParallelUnits *int              `json:"max_parallel_units"`
-		OverlapApprovals []OverlapApproval `json:"overlap_approvals"`
+		Summary                   *string           `json:"summary"`
+		Scope                     *string           `json:"scope"`
+		Units                     *[]WorkUnit       `json:"work_units"`
+		MaxParallelUnits          *int              `json:"max_parallel_units"`
+		OverlapApprovals          []OverlapApproval `json:"overlap_approvals"`
+		AggregateCorrectionPolicy json.RawMessage   `json:"aggregate_correction_policy"`
 	}
 	var value wire
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -139,7 +183,8 @@ func (p *Plan) UnmarshalJSON(data []byte) error {
 	if err := decoder.Decode(&value); err != nil {
 		return err
 	}
-	p.present = planPresence{value.Summary != nil, value.Scope != nil, value.Units != nil, value.MaxParallelUnits != nil}
+	p.present = planPresence{value.Summary != nil, value.Scope != nil, value.Units != nil, value.MaxParallelUnits != nil, value.AggregateCorrectionPolicy != nil}
+	p.AggregateCorrectionPolicy = DefaultAggregateCorrectionPolicy()
 	if value.Summary != nil {
 		p.Summary = *value.Summary
 	}
@@ -153,13 +198,34 @@ func (p *Plan) UnmarshalJSON(data []byte) error {
 		p.MaxParallelUnits = *value.MaxParallelUnits
 	}
 	p.OverlapApprovals = value.OverlapApprovals
+	if value.AggregateCorrectionPolicy != nil {
+		if err := json.Unmarshal(value.AggregateCorrectionPolicy, &p.AggregateCorrectionPolicy); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (p Plan) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Summary                   string                     `json:"summary"`
+		Scope                     string                     `json:"scope"`
+		Units                     []WorkUnit                 `json:"work_units"`
+		MaxParallelUnits          int                        `json:"max_parallel_units"`
+		OverlapApprovals          []OverlapApproval          `json:"overlap_approvals,omitempty"`
+		AggregateCorrectionPolicy *AggregateCorrectionPolicy `json:"aggregate_correction_policy,omitempty"`
+	}
+	value := wire{Summary: p.Summary, Scope: p.Scope, Units: p.Units, MaxParallelUnits: p.MaxParallelUnits, OverlapApprovals: p.OverlapApprovals}
+	if p.present.aggregateCorrectionPolicy {
+		value.AggregateCorrectionPolicy = &p.AggregateCorrectionPolicy
+	}
+	return json.Marshal(value)
 }
 
 var unitIDPattern = regexp.MustCompile(`^wu-[0-9a-f]{24}$`)
 
 func Validate(p Plan) error {
-	if p.present != (planPresence{}) && (!p.present.summary || !p.present.scope || !p.present.units || !p.present.parallel) {
+	if (p.present.summary || p.present.scope || p.present.units || p.present.parallel) && (!p.present.summary || !p.present.scope || !p.present.units || !p.present.parallel) {
 		return fmt.Errorf("plan requires summary, scope, work_units, and max_parallel_units")
 	}
 	if strings.TrimSpace(p.Summary) == "" || utf8.RuneCountInString(p.Summary) > 200 {
@@ -167,6 +233,16 @@ func Validate(p Plan) error {
 	}
 	if p.MaxParallelUnits < 1 {
 		return fmt.Errorf("max_parallel_units must be at least 1")
+	}
+	policy := p.AggregateCorrectionPolicy
+	if !p.present.aggregateCorrectionPolicy && policy == (AggregateCorrectionPolicy{}) {
+		policy = DefaultAggregateCorrectionPolicy()
+	}
+	if policy.AutomaticRounds < 0 || policy.AutomaticRounds > 1 {
+		return fmt.Errorf("aggregate_correction_policy automatic_rounds must be 0 or 1")
+	}
+	if policy.OnExhaustion != RequireUserAuthorization {
+		return fmt.Errorf("aggregate_correction_policy on_exhaustion must be %q", RequireUserAuthorization)
 	}
 	if len(p.Units) == 0 {
 		return fmt.Errorf("work_units must not be empty")

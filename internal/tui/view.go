@@ -1053,7 +1053,7 @@ func compactTime(value string) string {
 
 func actionLabel(value string) string {
 	labels := map[string]string{
-		"exploration_recorded": "Recorded exploration", "specification_recorded": "Recorded specification", "design_recorded": "Recorded design", "plan_submitted": "Submitted plan", "plan_approved": "Approved plan", "implementation_started": "Started implementation", "workflow_created": "Created workflow", "workflow_completed": "Completed workflow", "workflow_abandoned": "Abandoned workflow", "unit_claimed": "Claimed work unit", "unit_claim_recovered": "Recovered work unit claim", "unit_completed": "Completed work unit", "unit_tdd_recorded": "Recorded TDD", "unit_review_recorded": "Recorded review", "aggregate_review_recorded": "Recorded aggregate review",
+		"exploration_recorded": "Recorded exploration", "specification_recorded": "Recorded specification", "design_recorded": "Recorded design", "plan_submitted": "Submitted plan", "plan_approved": "Approved plan", "implementation_started": "Started implementation", "workflow_created": "Created workflow", "workflow_completed": "Completed workflow", "workflow_abandoned": "Abandoned workflow", "unit_claimed": "Claimed work unit", "unit_claim_recovered": "Recovered work unit claim", "unit_completed": "Completed work unit", "unit_tdd_recorded": "Recorded TDD", "unit_review_recorded": "Recorded review", "aggregate_review_recorded": "Recorded aggregate review", "aggregate_correction_started": "Started aggregate correction", "correction_authorized": "Authorized correction",
 	}
 	if label := labels[value]; label != "" {
 		return label

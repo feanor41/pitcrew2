@@ -14,6 +14,7 @@ import (
 
 	"github.com/fmazzalomo/pitcrew/internal/activity"
 	"github.com/fmazzalomo/pitcrew/internal/consolidate"
+	"github.com/fmazzalomo/pitcrew/internal/correction"
 	"github.com/fmazzalomo/pitcrew/internal/envelope"
 	"github.com/fmazzalomo/pitcrew/internal/evidence"
 	"github.com/fmazzalomo/pitcrew/internal/handles"
@@ -274,7 +275,7 @@ func runPrinciples(args []string, deps Dependencies) int {
 	return 0
 }
 
-var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "request-capability": true, "explore": true, "spec": true, "design": true, "plan": true, "amend-plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "recover-aggregate": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
+var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "request-capability": true, "explore": true, "spec": true, "design": true, "plan": true, "amend-plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "authorize-correction": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "recover-aggregate": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
 var workflowIDPattern = regexp.MustCompile(`^wf-[0-9a-f]{24}$`)
 
 func runWorkflow(args []string, deps Dependencies) int {
@@ -318,9 +319,13 @@ func runWorkflow(args []string, deps Dependencies) int {
 		return runBeginImplementation(rest, deps)
 	case "complete":
 		return runComplete(rest, deps)
+	case "authorize-correction":
+		return runAuthorizeCorrection(rest, deps)
 	case "abandon":
 		return runAbandon(rest, deps)
-	case "claim-unit", "recover-unit-claim", "recover-review", "recover-aggregate":
+	case "recover-aggregate":
+		return runRecoverAggregate(rest, deps)
+	case "claim-unit", "recover-unit-claim", "recover-review":
 		return runClaim(command, rest, deps)
 	case "handoff-review":
 		return runHandoffReview(rest, deps)
@@ -466,7 +471,7 @@ func runWorkflowShow(args []string, deps Dependencies) int {
 		if err != nil {
 			return err
 		}
-		return writeSuccess(deps, map[string]any{"workflow": current, "artifacts": artifacts, "records": detail.Records, "timeline": detail.Timeline}, nextAction(current.State))
+		return writeSuccess(deps, map[string]any{"workflow": current, "synopsis": detail.Synopsis, "artifacts": artifacts, "records": detail.Records, "timeline": detail.Timeline}, detail.Synopsis.NextAction)
 	})
 }
 func runStage(command string, args []string, deps Dependencies) int {
@@ -613,11 +618,37 @@ func runComplete(args []string, deps Dependencies) int {
 		if err != nil {
 			return err
 		}
-		next := nextAction(current.State)
-		if review.Verdict == evidence.Corrections {
-			next = "aion coordinate aggregate corrections"
-		}
+		next := outcome.NextAction
 		return writeSuccess(deps, map[string]any{"workflow": current, "aggregate_review": outcome}, next)
+	})
+}
+
+func runAuthorizeCorrection(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--revision", "--actor", "--input-file"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	revision, err := values.int64("--revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input, err := decodeInputFile[correction.AuthorizationRequest](values.one("--input-file"))
+	if err != nil || input.Validate() != nil {
+		if err == nil {
+			err = ErrUsage
+		}
+		return fail(deps, err, "authorize-correction requires aggregate_review_revision, reason, and user_direction_confirmed true")
+	}
+	return withStore(deps, func(s *store.Store) error {
+		outcome, err := correction.NewAuthorizationService(s, deps.Now).Authorize(context.Background(), values.one("--workflow-id"), revision, values.one("--actor"), input)
+		if err != nil {
+			return err
+		}
+		current, err := workflow.New(s, deps.Now).Get(context.Background(), values.one("--workflow-id"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"workflow": current, "correction_authorization": outcome}, "workflow recover-aggregate")
 	})
 }
 func runAbandon(args []string, deps Dependencies) int {
@@ -662,8 +693,6 @@ func runClaim(command string, args []string, deps Dependencies) int {
 		var err error
 		if command == "recover-review" {
 			result, err = manager.RecoverReviewAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
-		} else if command == "recover-aggregate" {
-			result, err = manager.RecoverAggregateAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
 		} else if command == "recover-unit-claim" {
 			result, err = manager.RecoverAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
 		} else if values.one("--print-claim-handle-secret-once") != "" {
@@ -684,11 +713,61 @@ func runClaim(command string, args []string, deps Dependencies) int {
 		if command == "recover-review" {
 			next = "workflow unit-review"
 		}
-		if command == "recover-aggregate" {
-			data["unit_id"] = values.one("--unit-id")
-			data["unit_revision"] = result.UnitRevision
-		}
 		return writeSuccess(deps, data, next)
+	})
+}
+
+func runRecoverAggregate(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--revision", "--actor", "--handle-dir"}, optional: []string{"--unit-id", "--input-file"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if (values.one("--unit-id") == "") == (values.one("--input-file") == "") {
+		return fail(deps, ErrUsage, "recover-aggregate requires exactly one of --unit-id or --input-file")
+	}
+	revision, err := values.int64("--revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	var request handles.AggregateRecoveryRequest
+	if values.one("--input-file") != "" {
+		request, err = decodeInputFile[handles.AggregateRecoveryRequest](values.one("--input-file"))
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+	}
+	return withStore(deps, func(s *store.Store) error {
+		manager := handles.New(s, deps.Now, deps.Entropy)
+		type outputHandle struct {
+			UnitID       string `json:"unit_id"`
+			UnitRevision int64  `json:"unit_revision"`
+			Actor        string `json:"actor"`
+			HandlePath   string `json:"handle_path"`
+		}
+		var output []outputHandle
+		if values.one("--unit-id") != "" {
+			issued, issueErr := manager.RecoverAggregateAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
+			if issueErr != nil {
+				return issueErr
+			}
+			output = append(output, outputHandle{values.one("--unit-id"), issued.UnitRevision, values.one("--actor"), issued.Path})
+		} else {
+			batch, issueErr := manager.RecoverAggregateBatchAt(context.Background(), values.one("--workflow-id"), revision, values.one("--actor"), values.one("--handle-dir"), request)
+			if issueErr != nil {
+				return issueErr
+			}
+			actors, units := map[string]string{}, []string{}
+			for _, assignment := range request.Assignments {
+				actors[assignment.UnitID] = assignment.Actor
+			}
+			for _, group := range request.Groups {
+				units = append(units, group.UnitIDs...)
+			}
+			for i, issued := range batch.Handles {
+				output = append(output, outputHandle{units[i], issued.UnitRevision, actors[units[i]], issued.Path})
+			}
+		}
+		return writeSuccess(deps, map[string]any{"handles": output}, "workflow unit-tdd")
 	})
 }
 func unitValues(args []string, withInput bool) (flagValues, int64, error) {
@@ -901,7 +980,7 @@ func classify(err error) envelope.ExitCode {
 		return envelope.CAS
 	case errors.Is(err, handles.ErrInvalid), errors.Is(err, handles.ErrExpired), errors.Is(err, handles.ErrUnsafePath), errors.Is(err, handles.ErrUnsafePermissions), errors.Is(err, evidence.ErrInvalidHandle):
 		return envelope.Handle
-	case errors.Is(err, ErrState), errors.Is(err, tui.ErrUninitialized), errors.Is(err, sql.ErrNoRows), errors.Is(err, project.ErrMigrationRequired), errors.Is(err, consolidate.ErrInvalidManifest), errors.Is(err, consolidate.ErrConflict), errors.Is(err, workflow.ErrInvalidName), errors.Is(err, workflow.ErrInvalidActor), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
+	case errors.Is(err, ErrState), errors.Is(err, correction.ErrAuthorizationForbidden), errors.Is(err, tui.ErrUninitialized), errors.Is(err, sql.ErrNoRows), errors.Is(err, project.ErrMigrationRequired), errors.Is(err, consolidate.ErrInvalidManifest), errors.Is(err, consolidate.ErrConflict), errors.Is(err, workflow.ErrInvalidName), errors.Is(err, workflow.ErrInvalidActor), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
 		return envelope.State
 	default:
 		return envelope.Internal
@@ -942,7 +1021,7 @@ Commands:
   tui
   principles
   workflow new|continue|show|progress|request-capability|explore|spec|design|plan|amend-plan|approve-plan
-  workflow list-ready-units|begin-implementation|complete|abandon
+  workflow list-ready-units|begin-implementation|complete|authorize-correction|abandon
   workflow claim-unit|recover-unit-claim|recover-aggregate|handoff-review|recover-review|unit-tdd|unit-review|unit-complete
 
 Global options:
@@ -952,7 +1031,7 @@ Global options:
 const workflowHelp = `Usage: pitcrew workflow <subcommand> [options]
 
 Commands: new, continue, show, progress, request-capability, explore, spec, design, plan, amend-plan, approve-plan, list-ready-units,
-  begin-implementation, complete, abandon, claim-unit, recover-unit-claim, recover-aggregate, handoff-review, recover-review,
+  begin-implementation, complete, authorize-correction, abandon, claim-unit, recover-unit-claim, recover-aggregate, handoff-review, recover-review,
   unit-tdd, unit-review, unit-complete
 `
 const principlesHelp = `Usage: pitcrew principles [--json]
