@@ -46,8 +46,15 @@ func (m Model) render() string {
 	if m.searchFocused {
 		body = flight.focus.Render("SEARCH › ") + m.search.View() + "\n" + body
 	}
-	body = clipLines(body, max(1, m.height-6))
+	bodyHeight := max(1, m.height-6)
+	if m.wideDetailMode() && !m.searchFocused {
+		bodyHeight = max(1, m.height-5)
+	}
+	body = clipLines(body, bodyHeight)
 	footer := fitText(fmt.Sprintf("%s  ·  %dx%d", m.footerHints(), m.width, m.height), m.width)
+	if m.wideDetailMode() && !m.searchFocused {
+		return trimTrailing(strings.Join([]string{header, body, flight.footer.Render(footer)}, "\n"))
+	}
 	return trimTrailing(strings.Join([]string{header, "", body, flight.footer.Render(footer)}, "\n"))
 }
 
@@ -268,6 +275,9 @@ func (m *Model) detailView() string {
 		return "Select a workflow to inspect its evidence."
 	}
 	m.reconcileDetail()
+	if m.wideDetailMode() {
+		return m.wideDetailView()
+	}
 	lines := m.synopsisLines()
 	if m.width >= 80 {
 		lines = append(lines, "")
@@ -289,6 +299,218 @@ func (m *Model) detailView() string {
 	}
 	available := max(1, m.height-6-len(lines))
 	return strings.Join(append(lines, m.gridLines(available)...), "\n")
+}
+
+func (m Model) wideDetailMode() bool {
+	return m.screen == DetailScreen && m.opened.Record.ID == "" && m.opened.Detail.Workflow.ID != "" && m.width >= 120 && m.height >= 30
+}
+
+func (m Model) wideDetailView() string {
+	panelHeights := resize(m.height-13, 9, 8)
+	panelWidths := resize(m.width+1, 1, 1)
+	identity := fmt.Sprintf("%s  %s  r%d", displayName(m.opened.Detail.Workflow), strings.ToUpper(m.opened.Detail.Workflow.State), m.opened.Detail.Workflow.Revision)
+	lines := []string{fitStyled(flight.title.Render(identity), m.width)}
+	lines = append(lines, wideFill(m.wideSummaryRenderer(), 3, m.width)...)
+	lines = append(lines, wideFill(m.wideGoalRenderer(), 3, m.width)...)
+	lines = append(lines, "")
+	lines = append(lines, horizontal(
+		wideFrame(panelWidths[0], panelHeights[0], m.wideTreeRenderer(panelHeights[0]-2)),
+		wideFrame(panelWidths[1], panelHeights[0], m.wideActivityRenderer(panelHeights[0]-2)),
+	)...)
+	lines = append(lines, horizontal(
+		wideFrame(panelWidths[0], panelHeights[1], m.widePendingRenderer(panelHeights[1]-2)),
+		wideFrame(panelWidths[1], panelHeights[1], m.wideRelatedRenderer(panelHeights[1]-2)),
+	)...)
+	return strings.Join(lines, "\n")
+}
+
+// resize distributes a fixed terminal dimension by relative panel weights.
+func resize(total int, weights ...int) []int {
+	result := make([]int, len(weights))
+	weightTotal := 0
+	for _, weight := range weights {
+		weightTotal += weight
+	}
+	if total <= 0 || weightTotal == 0 {
+		return result
+	}
+	used := 0
+	for i, weight := range weights {
+		result[i] = total * weight / weightTotal
+		used += result[i]
+	}
+	for i := 0; used < total; i, used = (i+1)%len(result), used+1 {
+		result[i]++
+	}
+	return result
+}
+
+func wideFill(lines []string, height, width int) []string {
+	height, width = max(0, height), max(0, width)
+	filled := make([]string, 0, height)
+	for _, line := range lines {
+		if len(filled) == height {
+			break
+		}
+		// Frame contents are logical lines. ansi.Truncate is cell-aware and keeps
+		// semantic styling sequences intact while truncating Unicode safely.
+		line = ansi.Truncate(strings.ReplaceAll(line, "\n", " "), width, "…")
+		filled = append(filled, line+strings.Repeat(" ", max(0, width-lipgloss.Width(line))))
+	}
+	for len(filled) < height {
+		filled = append(filled, strings.Repeat(" ", width))
+	}
+	return filled
+}
+
+// wideFrame fills its content to the requested height before adding its borders.
+func wideFrame(width, height int, content []string) []string {
+	width, height = max(4, width), max(2, height)
+	inner := width - 4
+	lines := []string{"╭" + strings.Repeat("─", width-2) + "╮"}
+	for _, line := range wideFill(content, height-2, inner) {
+		lines = append(lines, "│ "+line+" │")
+	}
+	return append(lines, "╰"+strings.Repeat("─", width-2)+"╯")
+}
+
+// horizontal joins equally tall frames with one shared border column.
+func horizontal(left, right []string) []string {
+	height := min(len(left), len(right))
+	lines := make([]string, 0, height)
+	for i := 0; i < height; i++ {
+		leftLine, rightLine := left[i], right[i]
+		switch i {
+		case 0:
+			leftLine = replaceLastRune(leftLine, '┬')
+		case height - 1:
+			leftLine = replaceLastRune(leftLine, '┴')
+		}
+		lines = append(lines, leftLine+dropFirstRune(rightLine))
+	}
+	return lines
+}
+
+func dropFirstRune(value string) string {
+	runes := []rune(value)
+	if len(runes) < 2 {
+		return ""
+	}
+	return string(runes[1:])
+}
+
+func replaceLastRune(value string, replacement rune) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return ""
+	}
+	runes[len(runes)-1] = replacement
+	return string(runes)
+}
+
+func (m Model) wideSummaryRenderer() []string {
+	s := m.opened.Detail.Synopsis
+	progress := fmt.Sprintf("%d/%d done", s.Done, s.Total)
+	if s.Planned != nil {
+		progress = fmt.Sprintf("%d/%d planned · %d%%", s.Planned.Done, s.Planned.Total, s.Planned.Percent)
+	} else if s.PlanNotice != "" {
+		progress = s.PlanNotice
+	}
+	current := "—"
+	if s.Current != nil {
+		current = fmt.Sprintf("%s · try %d · %s", s.Current.Status, s.Current.Attempt, s.Current.Description)
+	}
+	return []string{
+		flight.title.Render("SUMMARY") + "  " + progress,
+		labeled("Current", current),
+		labeled("Next", zeroDash(s.NextAction)),
+	}
+}
+
+func (m Model) wideGoalRenderer() []string {
+	return []string{
+		flight.title.Render("GOAL"),
+		zeroDash(m.opened.Detail.Workflow.Goal),
+		"",
+	}
+}
+
+func (m Model) wideTreeRenderer(height int) []string {
+	detail := m.opened.Detail
+	current := "—"
+	if detail.Synopsis.Current != nil {
+		current = detail.Synopsis.Current.Description
+	}
+	_ = height
+	return []string{
+		flight.title.Render("WORKFLOW TREE"),
+		labeled("Workflow", displayName(detail.Workflow)),
+		labeled("State", strings.ToUpper(detail.Workflow.State)),
+		labeled("Revision", fmt.Sprintf("r%d", detail.Workflow.Revision)),
+		labeled("Current", current),
+		labeled("Records", fmt.Sprintf("%d", len(detail.Records))),
+	}
+}
+
+func (m Model) wideActivityRenderer(height int) []string {
+	occurrences := m.opened.Detail.Occurrences
+	lines := []string{fmt.Sprintf("%s  %d", flight.title.Render("ACTIVITY / HISTORY"), len(occurrences))}
+	visible := max(0, height-1)
+	selected := 0
+	for i, occurrence := range occurrences {
+		if occurrence.ID == m.detail.occurrenceID {
+			selected = i
+			break
+		}
+	}
+	start := max(0, min(m.detail.occurrenceTop, max(0, len(occurrences)-visible)))
+	if selected < start {
+		start = selected
+	} else if selected >= start+visible {
+		start = selected - visible + 1
+	}
+	for i := start; i < len(occurrences) && len(lines) <= visible; i++ {
+		occurrence := occurrences[i]
+		line := focus(occurrence.ID == m.detail.occurrenceID) + formatTime(occurrence.At) + " · " + zeroDash(occurrence.Phase) + " · " + actionLabel(occurrence.Activity)
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func (m Model) widePendingRenderer(height int) []string {
+	pending := []history.UnitStatus{}
+	if planned := m.opened.Detail.Synopsis.Planned; planned != nil {
+		pending = planned.Pending
+	}
+	lines := []string{fmt.Sprintf("%s  %d", flight.title.Render("PENDING / BLOCKED"), len(pending))}
+	for _, unit := range pending {
+		line := "[" + strings.ToUpper(unit.Status) + "] " + zeroDash(unit.Description)
+		if unit.Attempt > 0 {
+			line += fmt.Sprintf(" · try %d", unit.Attempt)
+		}
+		lines = append(lines, line)
+	}
+	if blocker := m.opened.Detail.Synopsis.Blocker; blocker != nil {
+		lines = append(lines, "Blocked  "+zeroDash(blocker.Reason))
+	} else {
+		lines = append(lines, "Blocked  —")
+	}
+	_ = height
+	return lines
+}
+
+func (m Model) wideRelatedRenderer(height int) []string {
+	records := m.opened.Detail.Records
+	lines := []string{fmt.Sprintf("%s  %d", flight.title.Render("RELATED RECORDS / EVIDENCE"), len(records))}
+	for _, record := range records {
+		line := zeroDash(record.Title)
+		if record.Kind != "" {
+			line += " · " + record.Kind
+		}
+		lines = append(lines, line)
+	}
+	_ = height
+	return lines
 }
 
 func (m Model) synopsisLines() []string {
