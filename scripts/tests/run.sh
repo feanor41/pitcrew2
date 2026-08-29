@@ -110,6 +110,35 @@ assert_pi_registry() {
   grep -F 'tools: read, grep, find, ls, bash, edit, write, subagent' "$registry/aion.md" >/dev/null || fail 'Pi Aion lacks nested delegation eligibility'
   grep -F 'maxSubagentDepth: 3' "$registry/daimon.md" >/dev/null || fail 'Pi Daimon cannot reach Aion and a specialist'
   grep -F 'maxSubagentDepth: 3' "$registry/aion.md" >/dev/null || fail 'Pi Aion cannot reach a specialist through Daimon'
+  for literal in \
+    'official Pi subagent runtime' \
+    'injected contact_supervisor' \
+    'reason: "progress_update"' \
+    'personally observes and accepts one changed meaningful fact' \
+    'exactly once' \
+    'workflow ID and revision' \
+    'next action' \
+    'timer' \
+    'raw specialist result or prose' \
+    'unverified work' \
+    'unchanged or repeated fact' \
+    'routine completion handoff'; do
+    grep -F -- "$literal" "$registry/aion.md" >/dev/null || fail "Pi Aion relay contract omitted $literal"
+  done
+  for literal in \
+    'current official Pi subagent child' \
+    'native progress_update' \
+    'Aion acknowledgement' \
+    'exactly one concise factual user update' \
+    'raw specialist prose' \
+    'direct specialist event' \
+    'raw result-delivery event' \
+    'timer' \
+    'unchanged or repeated fact' \
+    'second translation for the same Aion event' \
+    "live as Aion's live addressable parent"; do
+    grep -F -- "$literal" "$registry/daimon.md" >/dev/null || fail "Pi Daimon relay contract omitted $literal"
+  done
   for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
     grep -F "name: $graph_target" "$registry/$graph_target.md" >/dev/null || fail "$graph_target missing Pi metadata"
     grep '^tools: .*subagent' "$registry/$graph_target.md" >/dev/null && fail "$graph_target can unexpectedly delegate in Pi" || :
@@ -167,6 +196,8 @@ assert_exact_maxims() {
 }
 
 sh -n "$INSTALLER" || fail "installer is not POSIX-shell parseable"
+sh -n "$ROOT/scripts/tests/pi-supervisor-runtime.sh" || fail "Pi supervisor runtime test is not POSIX-shell parseable"
+PITCREW_PI_SUPERVISOR_REGRESSION=1 sh "$ROOT/scripts/tests/pi-supervisor-runtime.sh"
 
 unsupported=$TMP_ROOT/unsupported
 mkdir -p "$unsupported"

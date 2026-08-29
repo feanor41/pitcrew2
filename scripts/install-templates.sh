@@ -414,6 +414,14 @@ render_pi() {
     if [ "$role" = daimon ] || [ "$role" = aion ]; then printf '%s\n' 'maxSubagentDepth: 3'; fi
     printf '%s\n' '---'
     cat "$stage/$role.body"
+    case $role in
+      daimon)
+        printf '%s\n' "Pi native supervisor rule: Treat as reportable only a native progress_update from Aion, the current official Pi subagent child, when it contains Aion acknowledgement of Aion's own accepted changed meaningful fact. Translate that event into exactly one concise factual user update derived only from the Aion event; do not expose raw specialist prose or internal Pi mechanics. Do not report a direct specialist event, raw result-delivery event, timer, unverified work, unchanged or repeated fact, or any other source, and do not issue a second translation for the same Aion event. Daimon does not acknowledge a specialist fact, mutate the workflow, or assume Aion ownership. Native mid-flight delivery exists only while the host keeps Daimon live as Aion's live addressable parent; otherwise do not fabricate concurrent progress or use an alternate transport."
+        ;;
+      aion)
+        printf '%s\n' "Pi native supervisor rule: This applies only when Daimon launched Aion through the official Pi subagent runtime and that runtime injected contact_supervisor; this prompt does not create a channel in another launch mode. After Aion personally observes and accepts one changed meaningful fact, call contact_supervisor exactly once with reason: \"progress_update\". A changed meaningful fact is an accepted workflow transition, completed unit, resolved correction, achieved objective, actual blocker, or clarification request. The concise factual user-safe message includes the workflow ID and revision, the Aion-acknowledged fact, and next action when present. Exactly once is per accepted changed fact: do not call for a timer, raw specialist result or prose, unverified work, unchanged or repeated fact, or routine completion handoff, and do not merge another independent fact into this notification. First convert Aion's own acknowledgement into the event, retain workflow ownership, and do not allow a specialist to bypass it. If Daimon is no longer the retained live native parent, use no relay and never compensate with resultDelivery, polling, IPC, a daemon, or another delivery path."
+        ;;
+    esac
     if [ "$role" = aion ]; then
       printf '\nPi delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer.\n'
     fi
