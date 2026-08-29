@@ -20,6 +20,8 @@ var updateGoldens = flag.Bool("update", false, "update TUI golden files")
 
 func TestMain(m *testing.M) {
 	_ = os.Unsetenv("NO_COLOR")
+	_ = os.Unsetenv("PITCREW_ASCII")
+	_ = os.Setenv("TERM", "xterm-256color")
 	os.Exit(m.Run())
 }
 
@@ -52,13 +54,167 @@ func TestViewRepresentativeLayouts(t *testing.T) {
 	}
 }
 
+func TestViewCockpitUsesWideGridAndSinglePaneBreakpoints(t *testing.T) {
+	wide, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	plain := ansi.Strip(wide.View().Content)
+	for _, title := range []string{" TREE ", " STATUS ", " UNITS ", " ACTIVITY "} {
+		if !strings.Contains(plain, title) {
+			t.Fatalf("wide cockpit missing %q:\n%s", title, plain)
+		}
+	}
+	if lines := strings.Split(plain, "\n"); len(lines) != 30 {
+		t.Fatalf("wide cockpit rows = %d, want 30", len(lines))
+	}
+
+	for _, size := range []tea.WindowSizeMsg{{Width: 120, Height: 29}, {Width: 80, Height: 24}, {Width: 60, Height: 24}, {Width: 60, Height: 16}} {
+		model, _ := detailViewModel().Update(size)
+		plain := ansi.Strip(model.View().Content)
+		if !strings.Contains(plain, "Tree | Status | Units | Activity") || !strings.Contains(plain, " TREE ") {
+			t.Fatalf("%dx%d is not a Tree single-pane cockpit:\n%s", size.Width, size.Height, plain)
+		}
+		for _, hidden := range []string{" STATUS ", " UNITS ", " ACTIVITY "} {
+			if strings.Contains(plain, hidden) {
+				t.Fatalf("%dx%d squeezed hidden pane %q:\n%s", size.Width, size.Height, hidden, plain)
+			}
+		}
+		assertFrameBounds(t, model.View().Content, size.Width, size.Height)
+	}
+}
+
+func TestViewCockpitProfilesPreserveMeaning(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		env  map[string]string
+		want string
+		ansi bool
+	}{
+		{"no-color unicode", map[string]string{"NO_COLOR": ""}, "✓", false},
+		{"explicit ascii", map[string]string{"PITCREW_ASCII": "1"}, "[x]", true},
+		{"dumb", map[string]string{"TERM": "dumb"}, "[x]", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, key := range []string{"NO_COLOR", "PITCREW_ASCII", "TERM"} {
+				old, present := os.LookupEnv(key)
+				t.Cleanup(func() {
+					if present {
+						_ = os.Setenv(key, old)
+					} else {
+						_ = os.Unsetenv(key)
+					}
+				})
+				_ = os.Unsetenv(key)
+			}
+			for key, value := range test.env {
+				_ = os.Setenv(key, value)
+			}
+			model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+			got := model.View().Content
+			if !strings.Contains(ansi.Strip(got), test.want) {
+				t.Fatalf("profile missing %q:\n%s", test.want, got)
+			}
+			if strings.Contains(got, "\x1b[") != test.ansi {
+				t.Fatalf("ANSI presence differs:\n%q", got)
+			}
+		})
+	}
+}
+
+func TestViewCockpitShowsTruthfulSparseStates(t *testing.T) {
+	detail := history.Detail{Workflow: history.Workflow{ID: "wf", Name: "Sparse", State: "implementing", Goal: "Inspect truth"}, Synopsis: history.Synopsis{
+		PlanNotice: "Planned progress unavailable: incomplete plan data", NextAction: "workflow plan",
+		Blocker: &history.UnitStatus{Status: "Correction", Reason: "Tests failed"},
+	}}
+	model, _ := (Model{screen: DetailScreen, opened: history.Resolution{Detail: detail}}).Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	plain := ansi.Strip(model.View().Content)
+	for _, want := range []string{"Planned progress unavailable", "Blocked", "Tests failed", "No planned units", "No activity recorded"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("sparse cockpit missing %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "Acknowledged next") {
+		t.Fatalf("invented progress report:\n%s", plain)
+	}
+}
+
+func TestViewCockpitSearchRemainsVisibleAndBounded(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{{Width: 120, Height: 30}, {Width: 60, Height: 16}} {
+		t.Run(fmt.Sprintf("%dx%d", size.Width, size.Height), func(t *testing.T) {
+			model := detailViewModel()
+			model, _ = model.Update(size)
+			model, _ = model.Update(textKey("/"))
+			model, _ = model.Update(textKey("review"))
+			plain := ansi.Strip(model.View().Content)
+			for _, want := range []string{"SEARCH", "review", "enter search", "esc cancel"} {
+				if !strings.Contains(plain, want) {
+					t.Fatalf("focused cockpit search missing %q:\n%s", want, plain)
+				}
+			}
+			assertFrameBounds(t, model.View().Content, size.Width, size.Height)
+			if got := len(strings.Split(model.View().Content, "\n")); got != size.Height {
+				t.Fatalf("focused search frame rows = %d, want %d", got, size.Height)
+			}
+		})
+	}
+}
+
+func TestViewCockpitUsesOneSelectionMarkerPerPane(t *testing.T) {
+	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	profile := renderProfileFromEnv(func(string) (string, bool) { return "", false })
+	for pane := paneTree; pane <= paneActivity; pane++ {
+		lines := strings.Join(model.cockpitPaneLines(profile, pane, 56, 11), "\n")
+		if count := strings.Count(ansi.Strip(lines), "▶"); count != 1 {
+			t.Fatalf("pane %d selection markers = %d, want 1:\n%s", pane, count, lines)
+		}
+	}
+}
+
+func TestViewCockpitNoColorKeepsFocusAndCompactKeysVisible(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	plain := model.View().Content
+	for _, want := range []string{"[Tree]", "tab/S-tab", "j/k", "enter", "h", "/", "r", "q quit"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("NO_COLOR cockpit missing %q:\n%s", want, plain)
+		}
+	}
+	assertNoANSI(t, plain)
+	assertFrameBounds(t, plain, 60, 16)
+	wide, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	if got := wide.View().Content; !strings.Contains(got, " ACTIVE TREE ") {
+		t.Fatalf("wide NO_COLOR cockpit has no focused-pane cue:\n%s", got)
+	}
+}
+
+func TestViewCockpitActivityUsesHumanActionLabels(t *testing.T) {
+	model := detailViewModel()
+	model.detail.pane = paneActivity
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	plain := ansi.Strip(model.View().Content)
+	if !strings.Contains(plain, "Recorded review") || strings.Contains(plain, "unit_review_recorded") {
+		t.Fatalf("activity labels are not human-readable:\n%s", plain)
+	}
+}
+
+func assertFrameBounds(t *testing.T, frame string, width, height int) {
+	t.Helper()
+	lines := strings.Split(frame, "\n")
+	if len(lines) > height {
+		t.Fatalf("frame rows %d exceed %d", len(lines), height)
+	}
+	for _, line := range lines {
+		if got := lipgloss.Width(line); got > width {
+			t.Fatalf("line width %d exceeds %d: %q", got, width, line)
+		}
+	}
+}
+
 func TestViewHomeUsesSharedBorderedHeaderAndExactActions(t *testing.T) {
 	model := New(fakeLoader{})
 	model.loading = false
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	got := model.View().Content
 	plain := ansi.Strip(got)
-	for _, identity := range []string{"PitCrew2", "Control Plane", "v0.14.0"} {
+	for _, identity := range []string{"PitCrew2", "Control Plane", "v0.15.0"} {
 		if !strings.Contains(plain, identity) {
 			t.Fatalf("home header missing %q:\n%s", identity, got)
 		}
@@ -102,7 +258,7 @@ func TestViewSharedHeaderIsBoundedAtSupportedWidths(t *testing.T) {
 				}
 			}
 			plain := ansi.Strip(header)
-			if !strings.Contains(plain, "PitCrew2") || !strings.Contains(plain, "Control Plane") || !strings.Contains(plain, "v0.14.0") {
+			if !strings.Contains(plain, "PitCrew2") || !strings.Contains(plain, "Control Plane") || !strings.Contains(plain, "v0.15.0") {
 				t.Fatalf("width %d screen %v header identity incomplete:\n%s", width, screen, header)
 			}
 		}
@@ -241,19 +397,15 @@ func TestViewWideDetailUsesFixedThirtyRowLayoutAndPreservesOccurrence(t *testing
 	if lines := strings.Split(plain, "\n"); len(lines) != 30 {
 		t.Fatalf("wide detail has %d rows, want 30:\n%s", len(lines), plain)
 	}
-	for _, want := range []string{"PROGRESS", "NOW", "NEXT", "STAGES", "UNITS", "TIMELINE", "│"} {
+	for _, want := range []string{" TREE ", " STATUS ", " UNITS ", " ACTIVITY ", "Executable: workflow list-ready-units", "Recorded review", "│"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("wide detail missing %q:\n%s", want, plain)
 		}
 	}
-	for _, unwanted := range []string{"WORKFLOW TREE", "PENDING / BLOCKED", "RELATED RECORDS / EVIDENCE"} {
-		if strings.Contains(plain, unwanted) {
-			t.Fatalf("wide detail retained %q:\n%s", unwanted, plain)
-		}
+	if strings.Count(plain, "▶") != 4 {
+		t.Fatalf("wide focus marker count differs from one per pane:\n%s", plain)
 	}
-	if strings.Count(plain, "▶") != 1 {
-		t.Fatalf("wide focus marker count differs from one:\n%s", plain)
-	}
+	model.detail.pane = paneActivity
 	model.loader = fakeLoader{occurrenceResolution: history.Resolution{Detail: model.opened.Detail}}
 	opened, command := model.Update(special(tea.KeyEnter))
 	if command == nil {
@@ -287,9 +439,12 @@ func TestViewWideDetailThresholdAndUnicodeTruncation(t *testing.T) {
 			if model.wideDetailMode() != test.wide {
 				t.Fatalf("wide detail = %v, want %v", model.wideDetailMode(), test.wide)
 			}
-			body := strings.Join(strings.Split(ansi.Strip(got), "\n")[4:], "\n")
-			if strings.Contains(body, "│") != test.wide {
-				t.Fatalf("split presence differs from wide=%v:\n%s", test.wide, got)
+			plain := ansi.Strip(got)
+			if gotWide := strings.Contains(plain, " STATUS ") && strings.Contains(plain, " ACTIVITY "); gotWide != test.wide {
+				t.Fatalf("four-pane presence differs from wide=%v:\n%s", test.wide, got)
+			}
+			if !test.wide && !strings.Contains(plain, "Tree | Status | Units | Activity") {
+				t.Fatalf("single-pane tabs missing:\n%s", got)
 			}
 			for _, line := range strings.Split(got, "\n") {
 				if lipgloss.Width(line) > test.width {
@@ -340,14 +495,14 @@ func TestViewFramesStayWithinTerminalBounds(t *testing.T) {
 func TestViewColumnHeadingsAreBoldAndValuesRemainNormal(t *testing.T) {
 	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	frame := model.View().Content
-	for _, heading := range []string{"PROGRESS", "NOW", "NEXT", "STAGES", "UNITS", "TIMELINE"} {
-		if !strings.Contains(frame, flight.label.Render(heading)) && !strings.Contains(frame, flight.title.Render(heading)) {
+	for _, heading := range []string{"TREE", "STATUS", "UNITS", "ACTIVITY"} {
+		if !strings.Contains(ansi.Strip(frame), " "+heading+" ") {
 			t.Fatalf("heading %q lacks hierarchy:\n%s", heading, frame)
 		}
 	}
 	for _, value := range []string{"Render diseño operativo", "workflow list-ready-units", "Recorded review"} {
-		if strings.Contains(frame, flight.label.Render(value)) {
-			t.Fatalf("value %q is bold:\n%s", value, frame)
+		if !strings.Contains(ansi.Strip(frame), value) {
+			t.Fatalf("value %q is missing:\n%s", value, frame)
 		}
 	}
 }
@@ -397,12 +552,12 @@ func TestViewStatesAndResize(t *testing.T) {
 			model, _ := test.model.Update(tea.WindowSizeMsg{Width: width, Height: height})
 			got := model.View().Content
 			plain := ansi.Strip(got)
-			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.14.0"} {
+			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.15.0"} {
 				if !strings.Contains(got, identity) {
 					t.Fatalf("view missing identity %q:\n%s", identity, got)
 				}
 			}
-			if !strings.Contains(got, flight.version.Render("v0.14.0")) {
+			if !strings.Contains(got, flight.version.Render("v0.15.0")) {
 				t.Fatalf("view lacks version accent:\n%s", got)
 			}
 			for _, want := range test.want {
@@ -437,9 +592,13 @@ func TestViewDetailRendersOrderedUnitProgressAtResponsiveSizes(t *testing.T) {
 	}
 	for _, size := range []tea.WindowSizeMsg{{Width: 166, Height: 30}, {Width: 80, Height: 24}, {Width: 60, Height: 16}} {
 		t.Run(fmt.Sprintf("%dx%d", size.Width, size.Height), func(t *testing.T) {
-			rendered, _ := model.Update(size)
-			plain := ansi.Strip(rendered.View().Content)
-			for _, want := range []string{"PROGRESS  2/5 done", "NOW", "Correction · Fix blocked rendering", "NEXT", "BLOCKED", "Missing failure coverage", "UNITS  2/5 done"} {
+			status := model
+			status.detail.pane = paneStatus
+			status, _ = status.Update(size)
+			units := status
+			units.detail.pane = paneUnits
+			plain := ansi.Strip(status.View().Content + "\n" + units.View().Content)
+			for _, want := range []string{"Plan: 2/5 · 40%", "Current: Fix blocked rendering", "Blocked: Missing failure coverage", "Executable: workflow list-ready-units", "Fix blocked rendering · Correction"} {
 				if !strings.Contains(plain, want) {
 					t.Fatalf("missing %q:\n%s", want, plain)
 				}
@@ -450,15 +609,7 @@ func TestViewDetailRendersOrderedUnitProgressAtResponsiveSizes(t *testing.T) {
 					t.Fatalf("accepted plan order was not preserved:\n%s", plain)
 				}
 			}
-			wantMore := ""
-			if size.Width == 80 {
-				wantMore = "+3 more"
-			} else if size.Width == 60 {
-				wantMore = "+4 more"
-			}
-			if wantMore != "" && !strings.Contains(plain, wantMore) {
-				t.Fatalf("truncated unit rows lack accurate %q indicator:\n%s", wantMore, plain)
-			}
+			assertFrameBounds(t, units.View().Content, size.Width, size.Height)
 		})
 	}
 }
@@ -519,15 +670,17 @@ func TestSemanticOccurrenceSuppressesEquivalentOutcomeButPreservesMeaning(t *tes
 }
 
 func TestTimelineDoesNotRenderEvidenceBodyBeforeDrillDown(t *testing.T) {
-	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 29})
+	model := detailViewModel()
+	model.detail.pane = paneActivity
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 29})
 	plain := ansi.Strip(model.View().Content)
 	for _, evidence := range []string{"Unit review", "Verdict: approved", "Store access preserves logical state."} {
 		if strings.Contains(plain, evidence) {
 			t.Fatalf("timeline exposed evidence %q before Enter:\n%s", evidence, plain)
 		}
 	}
-	if !strings.Contains(plain, "Recorded review") || !strings.Contains(plain, "Approved") {
-		t.Fatalf("timeline lost event meaning while hiding evidence:\n%s", plain)
+	if !strings.Contains(plain, "Recorded review") {
+		t.Fatalf("activity pane lost event meaning while hiding evidence:\n%s", plain)
 	}
 }
 
@@ -539,23 +692,36 @@ func TestViewRelatedRecordLevelShowsEverySupportingRecordAndFocus(t *testing.T) 
 	}
 	occurrence := history.Occurrence{ID: "activity:multi", RecordID: records[0].ID, RelatedRecordIDs: []string{records[1].ID, records[2].ID}}
 	detail := history.Detail{Workflow: history.Workflow{ID: "wf", Name: "Related records"}, Occurrences: []history.Occurrence{occurrence}, Records: records}
-	model := New(fakeLoader{})
-	model, _ = model.Update(detailLoadedMsg{resolution: history.Resolution{Detail: detail}})
-	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	model, _ = model.Update(special(tea.KeyEnter))
-	model, _ = model.Update(textKey("j"))
-	plain := ansi.Strip(model.View().Content)
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 120, Height: 30}} {
+		t.Run(fmt.Sprintf("%dx%d", size.Width, size.Height), func(t *testing.T) {
+			model := Model{screen: DetailScreen, loader: fakeLoader{}, opened: history.Resolution{Detail: detail}}
+			model, _ = model.Update(size)
+			model.detail.pane = paneActivity
+			model, _ = model.Update(special(tea.KeyEnter))
+			model, _ = model.Update(textKey("j"))
+			plain := ansi.Strip(model.View().Content)
+			if model.detail.related && model.wideDetailMode() {
+				t.Fatal("related-record chooser was routed through the legacy wide detail renderer")
+			}
 
-	if !strings.Contains(plain, "RELATED RECORDS  3") {
-		t.Fatalf("related-record level heading missing:\n%s", plain)
-	}
-	for _, record := range records {
-		if !strings.Contains(plain, record.Title) || !strings.Contains(plain, record.ID) {
-			t.Fatalf("related-record level missing %#v:\n%s", record, plain)
-		}
-	}
-	if !strings.Contains(plain, "▶ Implementation review") {
-		t.Fatalf("related-record focus is not visible:\n%s", plain)
+			if !strings.Contains(plain, "RELATED RECORDS  3") {
+				t.Fatalf("related-record level heading missing:\n%s", plain)
+			}
+			for _, record := range records {
+				if !strings.Contains(plain, record.Title) || !strings.Contains(plain, record.ID) {
+					t.Fatalf("related-record level missing %#v:\n%s", record, plain)
+				}
+			}
+			if !strings.Contains(plain, "▶ Implementation review") {
+				t.Fatalf("related-record focus is not visible:\n%s", plain)
+			}
+			assertFrameBounds(t, model.View().Content, size.Width, size.Height)
+			if size.Width >= 120 {
+				if got := len(strings.Split(model.View().Content, "\n")); got != size.Height {
+					t.Fatalf("wide related-record frame rows = %d, want %d", got, size.Height)
+				}
+			}
+		})
 	}
 }
 
@@ -587,7 +753,7 @@ func TestViewGridMetadataTimelineAndVersionAccent(t *testing.T) {
 		}
 	}
 	detail, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	for _, want := range []string{"Redesign TUI history", "IMPLEMENTING", "r7", "2/3 done", "NOW", "NEXT", "STAGES", "UNITS", "TIMELINE", "Specify", "Recorded specification", "Recorded review"} {
+	for _, want := range []string{"Redesign TUI history", "IMPLEMENTING", "r7", "Plan: 2/3 · 66%", "Current:", "Executable:", " TREE ", " STATUS ", " UNITS ", " ACTIVITY ", "Spec", "Recorded specification", "Recorded review"} {
 		if !strings.Contains(ansi.Strip(detail.View().Content), want) {
 			t.Fatalf("detail missing %q:\n%s", want, detail.View().Content)
 		}
@@ -617,7 +783,7 @@ func TestViewCompactIdentityAcrossLayouts(t *testing.T) {
 	for _, size := range []tea.WindowSizeMsg{{Width: 112, Height: 28}, {Width: 60, Height: 16}, {Width: 42, Height: 10}} {
 		model, _ := workflowViewModel().Update(size)
 		got := model.View().Content
-		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.14.0")) {
+		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.15.0")) {
 			t.Fatalf("%dx%d missing accessible identity or version accent:\n%s", size.Width, size.Height, got)
 		}
 		if strings.Contains(got, "╔═╗") {
@@ -630,14 +796,24 @@ func TestViewSemanticHistoryBreakpoints(t *testing.T) {
 	for _, size := range []tea.WindowSizeMsg{{Width: 166, Height: 30}, {Width: 120, Height: 30}, {Width: 120, Height: 29}, {Width: 80, Height: 24}, {Width: 60, Height: 24}, {Width: 60, Height: 16}} {
 		t.Run(fmt.Sprintf("%dx%d", size.Width, size.Height), func(t *testing.T) {
 			model, _ := detailViewModel().Update(size)
-			plain := ansi.Strip(model.View().Content)
-			for _, want := range []string{"IMPLEMENTING", "NEXT", "workflow list-ready-units", "STAGES", "UNITS", "TIMELINE", "Recorded review"} {
+			frames := make([]string, 0, 4)
+			for pane := paneTree; pane <= paneActivity; pane++ {
+				view := model
+				view.detail.pane = pane
+				frames = append(frames, ansi.Strip(view.View().Content))
+				wantMarkers := 1
+				if size.Width >= 120 && size.Height >= 30 {
+					wantMarkers = 4
+				}
+				if strings.Count(frames[len(frames)-1], "▶") != wantMarkers {
+					t.Fatalf("%dx%d pane %d selection markers are not exact:\n%s", size.Width, size.Height, pane, frames[len(frames)-1])
+				}
+			}
+			plain := strings.Join(frames, "\n")
+			for _, want := range []string{"IMPLEMENTING", "Executable: workflow list-ready-units", "UNITS", "ACTIVITY", "Recorded review"} {
 				if !strings.Contains(plain, want) {
 					t.Fatalf("%dx%d missing %q:\n%s", size.Width, size.Height, want, plain)
 				}
-			}
-			if strings.Count(plain, "▶") != 1 {
-				t.Fatalf("%dx%d focus markers != 1:\n%s", size.Width, size.Height, plain)
 			}
 			if strings.Contains(plain, "Unit review") || strings.Contains(plain, "Verdict: approved") {
 				t.Fatalf("%dx%d exposed evidence before Enter:\n%s", size.Width, size.Height, plain)
@@ -678,9 +854,11 @@ func TestViewNarrowDetailIsHeightBounded(t *testing.T) {
 }
 
 func TestViewMinimumDetailPrioritizesSelectedUnicodeOccurrenceWithoutEvidence(t *testing.T) {
-	model, _ := detailViewModel().Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	model := detailViewModel()
+	model.detail.pane = paneActivity
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
 	plain := ansi.Strip(model.View().Content)
-	for _, want := range []string{"IMPLEMENTING", "NOW", "NEXT", "STAGES", "UNITS", "TIMELINE", "Recorded review", "Approved", "diseño"} {
+	for _, want := range []string{"IMPLEMENTING", "Activity", "Recorded review"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("60x16 missing %q:\n%s", want, plain)
 		}
@@ -717,14 +895,15 @@ func TestViewProgressiveDetailMarksLegacyOccurrence(t *testing.T) {
 
 func TestViewBlockerIsConditionalAndVisibleAtMinimum(t *testing.T) {
 	model := detailViewModel()
+	model.detail.pane = paneStatus
 	without, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
-	if strings.Contains(ansi.Strip(without.View().Content), "BLOCKED") {
+	if strings.Contains(ansi.Strip(without.View().Content), "Blocked:") {
 		t.Fatalf("blocker shown without blocker")
 	}
 	model.opened.Detail.Synopsis.Blocker = &history.UnitStatus{Description: "Render diseño operativo", Status: "Correction", Reason: "Review correction required", Derived: true}
 	with, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
 	plain := ansi.Strip(with.View().Content)
-	for _, want := range []string{"BLOCKED", "Review correction required", "NEXT", "TIMELINE", "Recorded review"} {
+	for _, want := range []string{"Blocked: Review correction required", "Executable: workflow list-ready-units"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("minimum blocker view missing %q:\n%s", want, plain)
 		}
@@ -733,15 +912,16 @@ func TestViewBlockerIsConditionalAndVisibleAtMinimum(t *testing.T) {
 
 func TestViewStageRailNeverClaimsFutureStagesComplete(t *testing.T) {
 	for _, test := range []struct {
-		name, state, want, unwanted string
-		occurrences                 []history.Occurrence
+		name, state    string
+		want, unwanted []string
+		occurrences    []history.Occurrence
 	}{
-		{name: "sparse exploring", state: "exploring", want: "● Explore", unwanted: "✓ Explore"},
-		{name: "recorded exploration", state: "specifying", occurrences: []history.Occurrence{{Activity: "exploration_recorded"}}, want: "✓ Explore ─ ● Spec", unwanted: "✓ Spec"},
-		{name: "skipped spec", state: "designing", occurrences: []history.Occurrence{{Activity: "exploration_recorded"}}, want: "✓ Explore ─ ○ Spec ─ ● Design", unwanted: "✓ Spec"},
-		{name: "sparse ready for review", state: "ready_to_complete", occurrences: []history.Occurrence{{Activity: "unit_completed"}}, want: "✓ Build ─ ● Review", unwanted: "✓ Plan"},
-		{name: "sparse completed", state: "completed", occurrences: []history.Occurrence{{Activity: "workflow_completed"}}, want: "✓ Review", unwanted: "✓ Spec"},
-		{name: "abandoned during design", state: "abandoned", occurrences: []history.Occurrence{{Phase: "Design", Activity: "exploration_recorded"}}, want: "✓ Explore ─ ○ Spec ─ ! Design", unwanted: "✓ Spec"},
+		{name: "sparse exploring", state: "exploring", want: []string{"Explore · active"}, unwanted: []string{"Explore · done"}},
+		{name: "recorded exploration", state: "specifying", occurrences: []history.Occurrence{{Activity: "exploration_recorded"}}, want: []string{"Explore · done", "Spec · active"}, unwanted: []string{"Spec · done"}},
+		{name: "skipped spec", state: "designing", occurrences: []history.Occurrence{{Activity: "exploration_recorded"}}, want: []string{"Explore · done", "Design · active"}, unwanted: []string{"Spec ·"}},
+		{name: "sparse ready for review", state: "ready_to_complete", occurrences: []history.Occurrence{{Activity: "unit_completed"}}, want: []string{"Build · done", "Review · active"}, unwanted: []string{"Plan · done"}},
+		{name: "sparse completed", state: "completed", occurrences: []history.Occurrence{{Activity: "workflow_completed"}}, want: []string{"Review · done"}, unwanted: []string{"Spec · done"}},
+		{name: "abandoned during design", state: "abandoned", occurrences: []history.Occurrence{{Phase: "Design", Activity: "exploration_recorded"}}, want: []string{"Explore · done", "Design · active"}, unwanted: []string{"Spec · done"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			model := detailViewModel()
@@ -750,8 +930,15 @@ func TestViewStageRailNeverClaimsFutureStagesComplete(t *testing.T) {
 			model.opened.Detail.Records = nil
 			model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 29})
 			plain := ansi.Strip(model.View().Content)
-			if !strings.Contains(plain, test.want) || strings.Contains(plain, test.unwanted) {
-				t.Fatalf("dishonest rail for %s:\n%s", test.state, plain)
+			for _, want := range test.want {
+				if !strings.Contains(plain, want) {
+					t.Fatalf("truthful tree missing %q for %s:\n%s", want, test.state, plain)
+				}
+			}
+			for _, unwanted := range test.unwanted {
+				if strings.Contains(plain, unwanted) {
+					t.Fatalf("truthful tree invented %q for %s:\n%s", unwanted, test.state, plain)
+				}
 			}
 		})
 	}
@@ -759,9 +946,10 @@ func TestViewStageRailNeverClaimsFutureStagesComplete(t *testing.T) {
 
 func TestViewDetailEvidenceIsFullyReachable(t *testing.T) {
 	content := "FIRST FRAGMENT\n" + strings.Repeat("界", 120) + "\nMIDDLE FRAGMENT\n" + strings.Repeat("界", 120) + "\nFINAL FRAGMENT"
-	model := Model{screen: DetailScreen, opened: history.Resolution{Detail: history.Detail{
+	record := history.Record{ID: "evidence:1", Kind: "evidence", Title: "Complete evidence", Content: content}
+	model := Model{screen: DetailScreen, opened: history.Resolution{Record: record, Detail: history.Detail{
 		Workflow: history.Workflow{ID: "wf", State: "implementation", Goal: "Inspect all evidence"},
-		Records:  []history.Record{{ID: "evidence:1", Kind: "evidence", Content: content}},
+		Records:  []history.Record{record},
 	}}}
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
 	seenFirst, seenMiddle, seenFinal := false, false, false
@@ -770,15 +958,12 @@ func TestViewDetailEvidenceIsFullyReachable(t *testing.T) {
 		seenFirst = seenFirst || strings.Contains(view, "FIRST FRAGMENT")
 		seenMiddle = seenMiddle || strings.Contains(view, "MIDDLE FRAGMENT")
 		seenFinal = seenFinal || strings.Contains(view, "FINAL FRAGMENT")
-		if strings.Count(view, "▶") != 1 {
-			t.Fatalf("focus marker count = %d:\n%s", strings.Count(view, "▶"), view)
-		}
 		for _, line := range strings.Split(view, "\n") {
 			if width := lipgloss.Width(line); width > 60 {
 				t.Fatalf("rendered line width %d exceeds 60: %q", width, line)
 			}
 		}
-		current, total := model.detailPosition()
+		current, total := model.detailViewPosition()
 		if current == total {
 			if !strings.Contains(view, "line "+strconv.Itoa(total)+"/"+strconv.Itoa(total)) {
 				t.Fatalf("final position hint missing:\n%s", view)

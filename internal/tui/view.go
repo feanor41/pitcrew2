@@ -16,12 +16,13 @@ const minWidth, minHeight = 60, 16
 
 func (m Model) View() tea.View {
 	previous := flight
-	noColor := noColorEnabled()
+	profile := currentRenderProfile()
+	noColor := !profile.Color
 	if noColor {
 		flight = newFlightStyles(true)
 	}
 	defer func() { flight = previous }()
-	content := m.render()
+	content := m.renderWithProfile(profile)
 	if noColor {
 		content = ansi.Strip(content)
 	}
@@ -31,15 +32,26 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) render() string {
+	return m.renderWithProfile(currentRenderProfile())
+}
+
+func (m Model) renderWithProfile(profile renderProfile) string {
 	if m.width < minWidth || m.height < minHeight {
+		minimum := "Need at least 60×16; resize to continue."
+		if profile.ASCII {
+			minimum = "Need at least 60x16; resize to continue."
+		}
 		header := m.compactHeader()
 		guidance := strings.Join([]string{
 			header,
 			flight.warn.Render(ellipsize("Terminal too small", m.width)),
-			ellipsize("Need at least 60×16; resize to continue.", m.width),
+			ellipsize(minimum, m.width),
 			flight.footer.Render(ellipsize("q quit", m.width)),
 		}, "\n")
 		return trimTrailing(clipLines(guidance, max(1, m.height)))
+	}
+	if m.cockpitMode() {
+		return m.cockpitView(profile)
 	}
 	header := m.header()
 	body := m.body()
@@ -51,11 +63,18 @@ func (m Model) render() string {
 		bodyHeight = max(1, m.height-5)
 	}
 	body = clipLines(body, bodyHeight)
+	if m.detail.related && m.width >= 120 && m.height >= 30 {
+		body = strings.Join(wideFill(strings.Split(body, "\n"), bodyHeight, m.width), "\n")
+	}
 	footer := fitText(fmt.Sprintf("%s  ·  %dx%d", m.footerHints(), m.width, m.height), m.width)
 	if m.wideDetailMode() && !m.searchFocused {
 		return trimTrailing(strings.Join([]string{header, body, flight.footer.Render(footer)}, "\n"))
 	}
 	return trimTrailing(strings.Join([]string{header, "", body, flight.footer.Render(footer)}, "\n"))
+}
+
+func (m Model) cockpitMode() bool {
+	return m.screen == DetailScreen && !m.detail.related && m.opened.Record.ID == "" && m.opened.Detail.Workflow.ID != ""
 }
 
 func (m Model) header() string {
@@ -304,7 +323,7 @@ func (m *Model) detailView() string {
 }
 
 func (m Model) wideDetailMode() bool {
-	return m.screen == DetailScreen && m.opened.Record.ID == "" && m.opened.Detail.Workflow.ID != "" && m.width >= 120 && m.height >= 30
+	return m.screen == DetailScreen && !m.detail.related && m.opened.Record.ID == "" && m.opened.Detail.Workflow.ID != "" && m.width >= 120 && m.height >= 30
 }
 
 func (m Model) wideDetailView() string {
@@ -321,6 +340,269 @@ func (m Model) wideDetailView() string {
 		lines = append(lines, left[i]+flight.border.Render("│")+right[i])
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) cockpitView(profile renderProfile) string {
+	header := m.cockpitHeader(profile)
+	footerHints := m.cockpitHints()
+	search := ""
+	searchRows := 0
+	if m.searchFocused {
+		search = fitStyled(profile.Label.Render("SEARCH › ")+m.search.View(), m.width)
+		footerHints = m.Hints()
+		searchRows = 1
+	}
+	footer := profile.Footer.Render(fitText(footerHints, m.width))
+	parts := []string{header}
+	if search != "" {
+		parts = append(parts, search)
+	}
+	if m.width >= 120 && m.height >= 30 {
+		gridHeight := m.height - 3 - searchRows
+		columns, rows := resize(m.width, 1, 1), resize(gridHeight, 1, 1)
+		tree := m.cockpitPanel(profile, paneTree, columns[0], rows[0])
+		status := m.cockpitPanel(profile, paneStatus, columns[1], rows[0])
+		units := m.cockpitPanel(profile, paneUnits, columns[0], rows[1])
+		activity := m.cockpitPanel(profile, paneActivity, columns[1], rows[1])
+		grid := lipgloss.JoinVertical(lipgloss.Left,
+			lipgloss.JoinHorizontal(lipgloss.Top, tree, status),
+			lipgloss.JoinHorizontal(lipgloss.Top, units, activity))
+		parts = append(parts, grid, footer)
+		return trimTrailing(strings.Join(parts, "\n"))
+	}
+	tabs := []string{"Tree", "Status", "Units", "Activity"}
+	for i := range tabs {
+		if detailPane(i) == m.detail.pane {
+			if profile.Color {
+				tabs[i] = profile.SelectedRow.Render(tabs[i])
+			} else {
+				tabs[i] = "[" + tabs[i] + "]"
+			}
+		}
+	}
+	strip := fitStyled(strings.Join(tabs, " | "), m.width)
+	panel := m.cockpitPanel(profile, m.detail.pane, m.width, m.height-4-searchRows)
+	parts = append(parts, strip, panel, footer)
+	return trimTrailing(strings.Join(parts, "\n"))
+}
+
+func (m Model) cockpitHeader(profile renderProfile) string {
+	w := m.opened.Detail.Workflow
+	identity := fmt.Sprintf("%s  ·  %s  ·  r%d  ·  v%s", displayName(w), strings.ToUpper(w.State), w.Revision, m.Version())
+	goal := zeroDash(w.Goal)
+	if m.loading {
+		goal += "  ·  REFRESHING"
+	}
+	if m.err != nil {
+		goal += "  ·  REFRESH FAILED: " + m.err.Error()
+	}
+	return profile.Title.Render(graphemeEllipsize(identity, m.width)) + "\n" + profile.Muted.Render(graphemeEllipsize(goal, m.width))
+}
+
+func (m Model) cockpitPanel(profile renderProfile, pane detailPane, width, height int) string {
+	titles := [...]string{"TREE", "STATUS", "UNITS", "ACTIVITY"}
+	active := pane == m.detail.pane
+	if active && !profile.Color && m.width >= 120 && m.height >= 30 {
+		titles[pane] = "ACTIVE " + titles[pane]
+	}
+	lines := m.cockpitPaneLines(profile, pane, max(1, width-4), max(1, height-2))
+	return renderCockpitPanel(profile, titles[pane], lines, width, height, active)
+}
+
+func renderCockpitPanel(profile renderProfile, title string, lines []string, width, height int, active bool) string {
+	width, height = max(4, width), max(3, height)
+	horizontal, vertical, tl, tr, bl, br := "─", "│", "╭", "╮", "╰", "╯"
+	if profile.ASCII {
+		horizontal, vertical, tl, tr, bl, br = "-", "|", "+", "+", "+", "+"
+	}
+	border := profile.InactiveBorder
+	if active {
+		border = profile.ActiveBorder
+	}
+	label := " " + graphemeEllipsize(title, max(1, width-4)) + " "
+	top := tl + label + strings.Repeat(horizontal, max(0, width-2-lipgloss.Width(label))) + tr
+	innerWidth, innerHeight := width-4, height-2
+	rows := []string{border.Render(top)}
+	for i := 0; i < innerHeight; i++ {
+		line := ""
+		if i < len(lines) {
+			line = ansi.Truncate(strings.ReplaceAll(lines[i], "\n", " "), innerWidth, "…")
+		}
+		line += strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(line)))
+		rows = append(rows, border.Render(vertical)+" "+line+" "+border.Render(vertical))
+	}
+	rows = append(rows, border.Render(bl+strings.Repeat(horizontal, width-2)+br))
+	return strings.Join(rows, "\n")
+}
+
+func (m Model) cockpitPaneLines(profile renderProfile, pane detailPane, width, height int) []string {
+	projection := projectCockpit(m.opened.Detail)
+	switch pane {
+	case paneTree:
+		rows := flattenTree(projection.Root, m.detail.expanded)
+		lines, selected := make([]string, len(rows)), selectedTreeRow(rows, m.detail.treeID)
+		for i, row := range rows {
+			connector := ""
+			if row.Depth > 0 {
+				connector = strings.Repeat("  ", row.Depth-1)
+				if row.Last {
+					connector += profile.Glyphs.Last + " "
+				} else {
+					connector += profile.Glyphs.Branch + " "
+				}
+			}
+			branch := ""
+			if len(row.Node.Children) > 0 {
+				branch = profile.Glyphs.Collapsed + " "
+				if m.detail.expanded[row.Node.ID] {
+					branch = profile.Glyphs.Expanded + " "
+				}
+			}
+			lines[i] = cockpitSemanticLine(profile, row.Node.State, connector+branch+row.Node.Label+" · "+semanticLabel(row.Node.State), i == selected, width)
+		}
+		return cockpitWindow(profile, lines, selected, height)
+	case paneStatus:
+		lines, selected := make([]string, len(projection.StatusRows)), selectedPanelRow(projection.StatusRows, m.detail.statusID)
+		for i, row := range projection.StatusRows {
+			lines[i] = cockpitSemanticLine(profile, row.State, row.Label+": "+row.Value, i == selected, width)
+		}
+		return cockpitWindow(profile, lines, selected, height)
+	case paneUnits:
+		if len(projection.UnitRows) == 0 {
+			return []string{profile.Muted.Render("No planned units.")}
+		}
+		lines, selected := make([]string, len(projection.UnitRows)), selectedUnitRow(projection.UnitRows, m.detail.unitID)
+		for i, row := range projection.UnitRows {
+			text := row.Label + " · " + row.Status
+			if row.Reason != "" {
+				text += " · " + row.Reason
+			}
+			lines[i] = cockpitSemanticLine(profile, row.State, text, i == selected, width)
+		}
+		return cockpitWindow(profile, lines, selected, height)
+	default:
+		if len(projection.ActivityRows) == 0 {
+			return []string{profile.Muted.Render("No activity recorded.")}
+		}
+		lines, selected := make([]string, len(projection.ActivityRows)), selectedActivityRow(projection.ActivityRows, m.detail.occurrenceID)
+		for i, row := range projection.ActivityRows {
+			text := formatTime(row.At) + " · " + row.Label
+			if row.Actor != "" {
+				text += " · " + row.Actor
+			}
+			lines[i] = cockpitSemanticLine(profile, row.State, text, i == selected, width)
+		}
+		return cockpitWindow(profile, lines, selected, height)
+	}
+}
+
+func selectedTreeRow(rows []treeRow, id treeNodeID) int {
+	for i, row := range rows {
+		if row.Node.ID == id {
+			return i
+		}
+	}
+	return 0
+}
+
+func selectedPanelRow(rows []panelRow, id string) int {
+	for i, row := range rows {
+		if row.ID == id {
+			return i
+		}
+	}
+	return 0
+}
+
+func selectedUnitRow(rows []unitRow, id string) int {
+	for i, row := range rows {
+		if row.ID == id {
+			return i
+		}
+	}
+	return 0
+}
+
+func selectedActivityRow(rows []activityRow, id string) int {
+	for i, row := range rows {
+		if row.ID == id {
+			return i
+		}
+	}
+	return 0
+}
+
+func cockpitSemanticLine(profile renderProfile, state semanticState, text string, selected bool, width int) string {
+	marker := strings.Repeat(" ", lipgloss.Width(profile.Glyphs.Selection))
+	if selected {
+		marker = profile.Glyphs.Selection
+	}
+	raw := marker + " " + semanticGlyph(profile, state) + " " + text
+	raw = graphemeEllipsize(raw, width)
+	if selected {
+		return profile.SelectedRow.Render(raw)
+	}
+	return profile.style(state).Render(raw)
+}
+
+func semanticGlyph(profile renderProfile, state semanticState) string {
+	switch state {
+	case stateDone:
+		return profile.Glyphs.Done
+	case stateActive:
+		return profile.Glyphs.Active
+	case stateReady:
+		return profile.Glyphs.Ready
+	case stateWarning, stateFailed:
+		return profile.Glyphs.Warning
+	default:
+		return profile.Glyphs.Waiting
+	}
+}
+
+func semanticLabel(state semanticState) string {
+	switch state {
+	case stateDone:
+		return "done"
+	case stateActive:
+		return "active"
+	case stateReady:
+		return "ready"
+	case stateWaiting:
+		return "waiting"
+	case stateWarning:
+		return "attention"
+	case stateFailed:
+		return "failed"
+	default:
+		return "recorded"
+	}
+}
+
+func cockpitWindow(profile renderProfile, lines []string, selected, height int) []string {
+	if len(lines) <= height {
+		return lines
+	}
+	capacity := max(1, height-1)
+	start := max(0, min(selected-capacity/2, len(lines)-capacity))
+	visible := append([]string{}, lines[start:start+capacity]...)
+	return append(visible, profile.Muted.Render(fmt.Sprintf("%d/%d · +%d outside view", selected+1, len(lines), len(lines)-capacity)))
+}
+
+func (m Model) cockpitHints() string {
+	if m.width < 80 {
+		return "tab/S-tab pane · j/k · enter · h · / · r · q quit"
+	}
+	switch m.detail.pane {
+	case paneTree:
+		return "tab/shift+tab pane · j/k move · h/l tree · enter open · / search · r refresh · q quit"
+	case paneStatus:
+		return "tab/shift+tab pane · j/k move · h back · / search · r refresh · q quit"
+	case paneUnits:
+		return "tab/shift+tab pane · j/k move · h back · / search · r refresh · q quit"
+	default:
+		return "tab/shift+tab pane · j/k move · pg/home/end · enter evidence · h back · r refresh · q quit"
+	}
 }
 
 func (m Model) operationalHeaderLines() []string {
@@ -837,35 +1119,10 @@ func fitStyled(value string, width int) string {
 	return ellipsize(value, width)
 }
 func ellipsize(value string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if lipgloss.Width(value) <= width {
-		return value
-	}
-	if width == 1 {
-		return "…"
-	}
-	result := ""
-	for _, r := range value {
-		if lipgloss.Width(result+string(r)+"…") > width {
-			break
-		}
-		result += string(r)
-	}
-	return result + "…"
+	return graphemeEllipsize(value, width)
 }
 func wrapDisplay(text string, width int) []string {
-	lines, line, used := []string{}, "", 0
-	for _, r := range text {
-		cell := lipgloss.Width(string(r))
-		if used+cell > width && line != "" {
-			lines, line, used = append(lines, line), "", 0
-		}
-		line += string(r)
-		used += cell
-	}
-	return append(lines, line)
+	return graphemeWrap(text, width)
 }
 func clipLines(value string, height int) string {
 	lines := strings.Split(value, "\n")

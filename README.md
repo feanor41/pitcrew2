@@ -112,9 +112,13 @@ For a visual, read-only overview, open:
 pitcrew tui
 ```
 
-The TUI summarizes current state, planned progress when it can be computed
-truthfully, pending work, and chronological evidence. Press `/` to search,
-`Enter` to inspect selected evidence, and `q` to exit.
+Workflow detail is an operations cockpit with four keyboard-reachable panes:
+Tree, Status, Units, and Activity. At `120x30` or larger all four panes form a
+2x2 grid; smaller supported terminals show one focused pane with tabs. Use
+`Tab` / `Shift+Tab` to change panes, arrow or Vim keys to move, `Enter` to
+expand or inspect exact evidence, `/` to search, `r` to refresh, and `q` to
+exit. Meaning remains visible with `NO_COLOR`; set `PITCREW_ASCII=1` for ASCII
+glyphs (`TERM=dumb` enables both monochrome and ASCII fallbacks).
 
 ## Rigor that matches the work
 

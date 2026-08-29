@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"os"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -42,8 +41,7 @@ func newFlightStyles(noColor bool) flightStyles {
 }
 
 func noColorEnabled() bool {
-	_, present := os.LookupEnv("NO_COLOR")
-	return present
+	return !currentRenderProfile().Color
 }
 
 func statusLabel(state string) string {
