@@ -1,6 +1,6 @@
 # PitCrew CLI reference
 
-PitCrew exposes `install`, `tui`, `principles`, two global flags, and exactly 21 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `install`, `tui`, `principles`, two global flags, and exactly 23 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
 The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon interviews, clarifies intent, preserves conversational continuity, and reports only Aion-acknowledged facts or questions. Aion alone owns routing and workflow coordination. For each accepted delivery, Daimon and the addressable-agent host reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and authority throughout. Mid-flight input remains requested, not applied, until Aion admits it against current state; concurrent Daimon availability depends on host support for addressable agents, not a PitCrew daemon, service, IPC, polling, or inbox.
 
@@ -91,6 +91,7 @@ install the extension, access the network, or modify Pi configuration.
 | `workflow spec` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow design` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow plan` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
+| `workflow amend-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow approve-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> [--approve-exception <wu-id> ...]` |
 | `workflow list-ready-units` | `--workflow-id <wf-id>` |
 | `workflow begin-implementation` | `--workflow-id <wf-id> --revision <n> --actor <label>` |
@@ -98,6 +99,7 @@ install the extension, access the network, or modify Pi configuration.
 | `workflow abandon` | `--workflow-id <wf-id> --revision <n> --actor <label> --reason <text>` |
 | `workflow claim-unit` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
 | `workflow recover-unit-claim` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
+| `workflow recover-aggregate` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
 | `workflow handoff-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <reviewer-label> --handle-dir <dir>` |
 | `workflow recover-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <reviewer-label> --handle-dir <dir>` |
 | `workflow unit-tdd` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
@@ -178,6 +180,10 @@ Every field is required, trimmed, and stored canonically. The command observes a
 
 Units over 400 changed lines or 60 review minutes require a non-empty `admission_exception.justification` and a matching repeatable `--approve-exception` during approval. Explicit `overlap_approvals` may name one exact unit pair with justification.
 
+### Amend plan
+
+`workflow amend-plan` requires `--workflow-id`, syntactically valid `--revision`, non-empty declarative `--actor`, and the same strictly validated plan JSON file as `plan`. This control-plane revision has no opaque structural plan-amendment authority, so it always exits `3` with `amend-plan requires structural plan amendment authority; no such authority exists`. Neither `--actor aion` nor any other flag value can authorize, bypass, or change that outcome. The command does not inspect or mutate planning state, plan rows, work units, artifacts, events, or CAS; the revision is parsed only because the closed input matrix requires it. Submit corrected scope through the applicable new or continued workflow. A future authorized amendment must use non-forgeable authority, preserve the replaced plan as durable history, atomically replace pending units, and use CAS.
+
 ### TDD evidence
 
 ```json
@@ -215,6 +221,8 @@ Unit review is optional: current TDD evidence plus the active implementation han
 
 `workflow complete` uses the approved review shape above, or a corrections payload without `plan_impact`. The independent reviewer compares the repository result and tests with requirements, every specification/design amendment, the approved plan and tasks, current implementation evidence, and unit reviews. Approval records the review and completes atomically. Corrections record the review, advance workflow CAS, remain `ready_to_complete`, return `aion coordinate aggregate corrections`, and require Aion to run a fresh correction/review cycle.
 
+`workflow recover-aggregate` requires exactly one `--unit-id`, `--workflow-id`, `--revision`, declarative `--actor`, and `--handle-dir`. It succeeds only in `ready_to_complete`, when that exact workflow CAS revision is current, the newest `aggregate_review` verdict is `corrections`, and the selected unit is `done`. It atomically preserves all aggregate-review and unit-evidence records, returns the workflow to `implementing` at its next aggregate revision, reopens the selected unit at its next unit revision, records recovery, and returns only `data.handle_path`, `data.unit_id`, and `data.unit_revision` with `next_action: "workflow unit-tdd"`. Missing/no-longer-current corrections, a non-done selection, terminal state, duplicate/multiple selection, or repeated recovery exit `3`; stale workflow CAS exits `4`; unsafe, expired, revoked, or purpose-mismatched returned handles exit `5`. The command rejects the hidden secret-print flag and never emits a raw secret. Its opaque implementation handle is a `0600` file in caller `0700` storage, expires after five minutes, is activated by successful TDD, refreshed by successful unit commands, and is revoked by completion; eligible replacement is through `recover-unit-claim`. The caller label is metadata only, not recovery authority.
+
 ## Envelopes and exit codes
 
 Successful workflow commands write one JSON document to stdout:
@@ -236,10 +244,10 @@ as workflow JSON and never emit the success line.
 - `4 — CAS`
 - `5 — handle`
 
-Workflow mutations compare `--revision` with the aggregate revision. Unit commands compare it with the unit revision. On exit `3` or `4`, inspect current state once. If the attempted work is legitimate but the harness blocks it, surface the obstruction; never repeat an identical command.
+Workflow mutations compare `--revision` with the aggregate revision. Unit commands compare it with the unit revision. `amend-plan` is the explicit no-authority exception: it parses but never uses its revision because it always rejects before a mutation. On exit `3` or `4`, inspect current state once. If the attempted work is legitimate but the harness blocks it, surface the obstruction; never repeat an identical command.
 
 ## Opaque claims
 
-Production claim and recovery return only `data.handle_path`. Handle files are caller-owned `0600` JSON inside a `0700` directory; they contain a secret hash, never the plaintext secret. The first successful unit command activates the handle, successful commands refresh its five-minute expiry, and completion revokes it.
+Production claim and recovery (`claim-unit`, `recover-unit-claim`, `recover-review`, and `recover-aggregate`) return only `data.handle_path`. Handle files are caller-owned `0600` JSON inside a `0700` directory; they contain a secret hash, never the plaintext secret. The first successful unit command activates the handle, successful commands refresh its five-minute expiry, and completion revokes it. They are bound to their workflow, selected unit, revision, purpose, and declarative collision metadata; they cannot select another unit or survive expiry/revocation.
 
 The hidden `--print-claim-handle-secret-once` flag is for operators only. It never appears in help or agent templates. It commits revocation before returning the secret exactly once at `data.claim_secret`.

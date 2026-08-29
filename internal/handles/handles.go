@@ -63,10 +63,11 @@ type Handle struct {
 }
 
 type IssueResult struct {
-	Path       string
-	ClaimID    string
-	Generation int
-	Secret     string
+	Path         string
+	ClaimID      string
+	Generation   int
+	UnitRevision int64
+	Secret       string
 }
 
 type Manager struct {
@@ -127,6 +128,13 @@ func (m *Manager) RecoverReviewAt(ctx context.Context, workflowID, unitID string
 	return m.issue(ctx, workflowID, unitID, revision, reviewer, dir, PurposeReview, true, false, activity.UnitReviewRecovered)
 }
 
+// RecoverAggregateAt reopens one explicitly selected completed unit after the
+// latest aggregate review requested corrections. It creates fresh implementation
+// authority; callers must use the returned handle for new TDD evidence.
+func (m *Manager) RecoverAggregateAt(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string) (IssueResult, error) {
+	return m.issue(ctx, workflowID, unitID, revision, actor, dir, PurposeImplementation, true, false, activity.UnitAggregateRecovered)
+}
+
 func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expectedRevision int64, actor, dir string, purpose Purpose, recovery, debug bool, action activity.Action) (IssueResult, error) {
 	if strings.TrimSpace(actor) == "" {
 		return IssueResult{}, ErrIdentityCollision
@@ -140,10 +148,29 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	}
 	defer tx.Rollback()
 	var workflowState string
-	if err = tx.QueryRowContext(ctx, `SELECT state FROM workflows WHERE id=?`, workflowID).Scan(&workflowState); err != nil {
+	var workflowRevision int64
+	if err = tx.QueryRowContext(ctx, `SELECT state,revision FROM workflows WHERE id=?`, workflowID).Scan(&workflowState, &workflowRevision); err != nil {
 		return IssueResult{}, err
 	}
-	if workflowState != "plan_approved" && workflowState != "implementing" {
+	aggregateRecovery := action == activity.UnitAggregateRecovered
+	if aggregateRecovery {
+		if workflowState != "ready_to_complete" {
+			return IssueResult{}, fmt.Errorf("%w: current state %s; expected ready_to_complete", ErrInvalidState, workflowState)
+		}
+		if workflowRevision != expectedRevision {
+			return IssueResult{}, store.ErrCASMismatch
+		}
+		var aggregateBody string
+		if err = tx.QueryRowContext(ctx, `SELECT content FROM artifacts WHERE workflow_id=? AND kind='aggregate_review' ORDER BY id DESC LIMIT 1`, workflowID).Scan(&aggregateBody); err != nil {
+			return IssueResult{}, ErrRecoveryForbidden
+		}
+		var aggregate struct {
+			Verdict string `json:"verdict"`
+		}
+		if err = json.Unmarshal([]byte(aggregateBody), &aggregate); err != nil || aggregate.Verdict != "corrections" {
+			return IssueResult{}, ErrRecoveryForbidden
+		}
+	} else if workflowState != "plan_approved" && workflowState != "implementing" {
 		return IssueResult{}, fmt.Errorf("%w: current state %s; expected plan_approved or implementing", ErrInvalidState, workflowState)
 	}
 	if (action == activity.UnitReviewHandedOff || action == activity.UnitReviewRecovered) && workflowState != "implementing" {
@@ -154,7 +181,41 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	if err = tx.QueryRowContext(ctx, `SELECT state,revision FROM work_units WHERE workflow_id=? AND id=?`, workflowID, unitID).Scan(&unitState, &unitRevision); err != nil {
 		return IssueResult{}, err
 	}
-	if expectedRevision > 0 && unitRevision != expectedRevision {
+	if aggregateRecovery {
+		if unitState != "done" {
+			return IssueResult{}, fmt.Errorf("%w: current state %s; expected done", ErrInvalidState, unitState)
+		}
+		// Aggregate corrections plus the matching workflow and unit revisions are
+		// the recovery authority. actor remains declarative metadata for the new
+		// handle and cannot authorize this transition.
+		result, updateErr := tx.ExecContext(ctx, `UPDATE work_units SET state='pending',revision=revision+1 WHERE workflow_id=? AND id=? AND state='done' AND revision=?`, workflowID, unitID, unitRevision)
+		if updateErr != nil {
+			return IssueResult{}, updateErr
+		}
+		if changed, changeErr := result.RowsAffected(); changeErr != nil || changed != 1 {
+			if changeErr != nil {
+				return IssueResult{}, changeErr
+			}
+			return IssueResult{}, store.ErrCASMismatch
+		}
+		at := ids.FormatTime(m.now())
+		result, updateErr = tx.ExecContext(ctx, `UPDATE workflows SET state='implementing',revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state='ready_to_complete'`, at, workflowID, workflowRevision)
+		if updateErr != nil {
+			return IssueResult{}, updateErr
+		}
+		if changed, changeErr := result.RowsAffected(); changeErr != nil || changed != 1 {
+			if changeErr != nil {
+				return IssueResult{}, changeErr
+			}
+			return IssueResult{}, store.ErrCASMismatch
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,?,?,?,?,?,?)`, workflowID, "ready_to_complete", "implementing", actor, "aggregate_corrections", workflowRevision+1, at); err != nil {
+			return IssueResult{}, err
+		}
+		unitRevision++
+		workflowState, unitState, expectedRevision = "implementing", "pending", unitRevision
+	}
+	if expectedRevision > 0 && unitRevision != expectedRevision && !aggregateRecovery {
 		return IssueResult{}, store.ErrCASMismatch
 	}
 	wantUnitState := "pending"
@@ -282,7 +343,7 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	if err = writeAtomic(path, h); err != nil {
 		return IssueResult{}, err
 	}
-	result := IssueResult{Path: path, ClaimID: claimID, Generation: generation}
+	result := IssueResult{Path: path, ClaimID: claimID, Generation: generation, UnitRevision: unitRevision}
 	if debug {
 		if err = os.Remove(path); err != nil {
 			return IssueResult{}, err

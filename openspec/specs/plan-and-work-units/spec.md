@@ -17,6 +17,32 @@ Define plan submission, validation, admission, approval, and executable-unit dis
 - WHEN workflow plan succeeds
 - THEN every submitted unit field and order SHALL persist
 
+### Requirement: Plan amendment authority is unavailable
+
+`amend-plan` SHALL accept the same validated plan input only to enforce the closed CLI contract. This revision has no opaque, non-forgeable plan-amendment authority, so it SHALL reject every amendment with exit `3` before reading or replacing the current plan. Workflow state and CAS are not authorization, and declarative `--actor` labels SHALL not become a substitute authority.
+
+#### Scenario: Planning record cannot be overwritten by a label
+
+- GIVEN a workflow in `planning` with a valid submitted plan
+- WHEN `amend-plan` is invoked by `aion` or any other actor with any revision
+- THEN the plan and its work units SHALL remain unchanged
+
+### Requirement: Plan amendment
+
+`workflow amend-plan` SHALL validate the same strict plan input and require `--workflow-id`, `--revision`, and `--actor`. The current control plane has no opaque plan-amendment authority, so it SHALL reject amendment mutation rather than treat a caller label, workflow state, or CAS as authorization. `--actor` SHALL remain declarative metadata and SHALL NOT grant or deny authorization. Any future authorized amendment SHALL preserve the replaced plan body as an immutable `plan_superseded` artifact, atomically replace pending work-unit rows, remain in `planning`, and advance the workflow revision.
+
+#### Scenario: Declarative actor cannot authorize amendment
+
+- GIVEN any non-empty actor label, including `aion`, and otherwise valid planning input
+- WHEN `amend-plan` is invoked without a structural amendment authority
+- THEN it SHALL fail without replacing the plan or adding an artifact
+
+#### Scenario: Amendment CAS and terminal protection
+
+- GIVEN a stale revision or a workflow outside `planning`
+- WHEN `amend-plan` is invoked
+- THEN it SHALL fail without replacing the plan or adding an artifact
+
 ### Requirement: Prefixes and dependencies
 
 Plan/unit scope and areas SHALL be normalized repository-relative file or directory prefixes without globs. Unit ids SHALL be unique. Every dependency SHALL name a submitted unit, and the graph SHALL be acyclic. Any overlap among two units' scope/areas SHALL return exit code `3` unless one `overlap_approvals` entry names that exact pair; the approval SHALL become effective only when Aion approves the plan.

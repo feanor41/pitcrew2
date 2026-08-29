@@ -67,6 +67,16 @@ An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL requi
 - WHEN workflow complete succeeds
 - THEN the review SHALL persist, workflow CAS SHALL advance, state SHALL remain ready_to_complete, and the response SHALL return an executable correction path
 
+### Requirement: Aggregate recovery starts fresh evidence
+
+`recover-aggregate` after corrections SHALL return fresh opaque implementation authority only for the selected reopened done unit. A subsequent `unit-tdd` SHALL use its incremented unit revision and preserve prior evidence; expired, revoked, one-shot, or mismatched authority SHALL fail with exit `5`. Recovery SHALL not expose a secret or substitute an actor label for authority.
+
+#### Scenario: Recovered unit requires fresh TDD
+
+- GIVEN a successful aggregate recovery
+- WHEN its returned handle is used for `unit-tdd`
+- THEN new evidence SHALL be recorded at the new revision while prior evidence remains inspectable
+
 ### Requirement: Proportional external routing
 
 Aion SHALL directly implement and verify well-understood low-risk work affecting at most three files without claiming independent approval. Simple work affecting four or more files SHALL use direct delegation to pc2-implementer followed by one independent complete-change review. Complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty SHALL require the full workflow regardless of size. The CLI SHALL NOT classify routes. Aion SHALL coordinate corrections and fresh aggregate review without blindly retrying unchanged state or CAS failures.
