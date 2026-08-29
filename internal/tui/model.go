@@ -889,17 +889,14 @@ func (m Model) occurrenceFits(start, selected int) bool {
 }
 
 func (m Model) occurrenceAvailableLines() int {
-	lines := m.synopsisLines()
-	if m.width >= 80 {
-		lines = append(lines, "")
+	if m.wideDetailMode() {
+		return max(1, m.height-5-len(m.operationalHeaderLines())-1)
 	}
-	pending := m.pendingWorkLines()
-	if m.height <= minHeight && len(pending) > 2 {
-		pending = pending[:2]
+	unitRows := 2
+	if m.height >= 24 {
+		unitRows = 4
 	}
-	lines = append(lines, pending...)
-	lines = append(lines, "history")
-	return max(1, m.height-6-len(lines))
+	return max(1, m.height-6-len(m.operationalHeaderLines())-min(unitRows, len(m.unitProgressLines(unitRows)))-1)
 }
 
 func (m Model) operationalOccurrenceIndex() int {

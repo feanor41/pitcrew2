@@ -278,26 +278,28 @@ func (m *Model) detailView() string {
 	if m.wideDetailMode() {
 		return m.wideDetailView()
 	}
-	lines := m.synopsisLines()
-	if m.width >= 80 {
-		lines = append(lines, "")
-	}
 	if m.opened.Record.ID != "" {
-		return strings.Join(append(lines, m.recordLines()...), "\n")
+		return strings.Join(m.recordLines(), "\n")
 	}
 	if len(detail.Occurrences) == 0 && len(detail.Records) > 0 {
-		return strings.Join(append(lines, m.recordLines()...), "\n")
+		return strings.Join(m.recordLines(), "\n")
 	}
-	pending := m.pendingWorkLines()
-	if m.height <= minHeight && len(pending) > 2 {
-		pending = pending[:2]
+	lines := m.operationalHeaderLines()
+	available := max(1, m.height-6-len(lines))
+	unitRows := 2
+	if m.height >= 24 {
+		unitRows = 4
 	}
-	lines = append(lines, pending...)
-	lines = append(lines, fmt.Sprintf("%s  %d occurrences", flight.title.Render("HISTORY"), len(detail.Occurrences)))
+	units := m.unitProgressLines(unitRows)
+	if len(units) > available-2 {
+		units = units[:max(0, available-2)]
+	}
+	lines = append(lines, units...)
+	lines = append(lines, fmt.Sprintf("%s  %d events", flight.title.Render("TIMELINE"), len(detail.Occurrences)))
 	if len(detail.Occurrences) == 0 {
 		return strings.Join(append(lines, flight.muted.Render("No operational history recorded.")), "\n")
 	}
-	available := max(1, m.height-6-len(lines))
+	available = max(1, m.height-6-len(lines))
 	return strings.Join(append(lines, m.gridLines(available)...), "\n")
 }
 
@@ -306,22 +308,178 @@ func (m Model) wideDetailMode() bool {
 }
 
 func (m Model) wideDetailView() string {
-	panelHeights := resize(m.height-13, 9, 8)
-	panelWidths := resize(m.width+1, 1, 1)
-	identity := fmt.Sprintf("%s  %s  r%d", displayName(m.opened.Detail.Workflow), strings.ToUpper(m.opened.Detail.Workflow.State), m.opened.Detail.Workflow.Revision)
-	lines := []string{fitStyled(flight.title.Render(identity), m.width)}
-	lines = append(lines, wideFill(m.wideSummaryRenderer(), 3, m.width)...)
-	lines = append(lines, wideFill(m.wideGoalRenderer(), 3, m.width)...)
-	lines = append(lines, "")
-	lines = append(lines, horizontal(
-		wideFrame(panelWidths[0], panelHeights[0], m.wideTreeRenderer(panelHeights[0]-2)),
-		wideFrame(panelWidths[1], panelHeights[0], m.wideActivityRenderer(panelHeights[0]-2)),
-	)...)
-	lines = append(lines, horizontal(
-		wideFrame(panelWidths[0], panelHeights[1], m.widePendingRenderer(panelHeights[1]-2)),
-		wideFrame(panelWidths[1], panelHeights[1], m.wideRelatedRenderer(panelHeights[1]-2)),
-	)...)
+	lines := m.operationalHeaderLines()
+	available := max(3, m.height-5-len(lines))
+	widths := resize(m.width-1, 2, 3)
+	unitModel, timelineModel := m, m
+	unitModel.width, timelineModel.width = widths[0], widths[1]
+	left := unitModel.unitProgressLines(available)
+	right := append([]string{fmt.Sprintf("%s  %d events", flight.title.Render("TIMELINE"), len(m.opened.Detail.Occurrences))}, timelineModel.gridLines(max(1, available-1))...)
+	left = wideFill(left, available, widths[0])
+	right = wideFill(right, available, widths[1])
+	for i := range available {
+		lines = append(lines, left[i]+flight.border.Render("│")+right[i])
+	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) operationalHeaderLines() []string {
+	w, s := m.opened.Detail.Workflow, m.opened.Detail.Synopsis
+	identity := fmt.Sprintf("%s  ·  %s  ·  r%d", displayName(w), strings.ToUpper(w.State), w.Revision)
+	done, total, percent := s.Done, s.Total, 0
+	if s.Planned != nil {
+		done, total, percent = s.Planned.Done, s.Planned.Total, s.Planned.Percent
+	} else if total > 0 {
+		percent = done * 100 / total
+	}
+	current := "No active unit"
+	if s.Current != nil {
+		current = fmt.Sprintf("%s · %s", s.Current.Status, zeroDash(s.Current.Description))
+	}
+	lines := []string{
+		fitStyled(flight.title.Render(identity), m.width),
+		labeledFit("PROGRESS", fmt.Sprintf("%d/%d done · %d%%", done, total, percent), m.width),
+		labeledFit("NOW", current, m.width),
+		labeledFit("NEXT", zeroDash(s.NextAction), m.width),
+	}
+	if s.Blocker != nil {
+		lines = append(lines, flight.bad.Render(labeledFit("BLOCKED", zeroDash(s.Blocker.Reason), m.width)))
+	}
+	lines = append(lines, fitStyled(flight.label.Render("STAGES")+"  "+m.stageRail(), m.width))
+	if m.height >= 24 {
+		lines = append(lines, labeledFit("GOAL", zeroDash(w.Goal), m.width))
+	}
+	return lines
+}
+
+func (m Model) stageRail() string {
+	stages := []string{"Explore", "Spec", "Design", "Plan", "Build", "Review"}
+	short := []string{"Ex", "Sp", "De", "Pl", "Bu", "Re"}
+	active := lifecyclePosition(m.opened.Detail.Workflow.State, m.opened.Detail.Occurrences)
+	completed := completedLifecycleStages(m.opened.Detail.Workflow.State, m.opened.Detail.Occurrences)
+	parts := make([]string, len(stages))
+	for i, stage := range stages {
+		symbol := "○"
+		if completed[i] {
+			symbol = "✓"
+		} else if i == active {
+			symbol = "●"
+		}
+		if m.opened.Detail.Workflow.State == "abandoned" && i == active {
+			symbol = "!"
+		}
+		label := stage
+		if m.width < 80 {
+			label = short[i]
+		}
+		parts[i] = symbol + " " + label
+	}
+	separator := "  "
+	if m.width >= 80 {
+		separator = " ─ "
+	}
+	return strings.Join(parts, separator)
+}
+
+func lifecyclePosition(state string, occurrences []history.Occurrence) int {
+	positions := map[string]int{"draft": 0, "exploring": 0, "specifying": 1, "designing": 2, "planning": 3, "plan_approved": 4, "implementing": 4, "ready_to_complete": 5}
+	if state == "completed" {
+		return -1
+	}
+	if position, ok := positions[state]; ok {
+		return position
+	}
+	phasePositions := map[string]int{"explore": 0, "specify": 1, "spec": 1, "design": 2, "plan": 3, "implement": 4, "build": 4, "review": 5}
+	active := 0
+	for _, occurrence := range occurrences {
+		if position, ok := phasePositions[strings.ToLower(occurrence.Phase)]; ok && position > active {
+			active = position
+		}
+	}
+	return active
+}
+
+func completedLifecycleStages(state string, occurrences []history.Occurrence) [6]bool {
+	var completed [6]bool
+	completionActions := map[string]int{
+		"exploration_recorded":   0,
+		"specification_recorded": 1,
+		"design_recorded":        2,
+		"plan_approved":          3,
+		"workflow_completed":     5,
+	}
+	for _, occurrence := range occurrences {
+		if stage, ok := completionActions[occurrence.Activity]; ok {
+			completed[stage] = true
+		}
+		if occurrence.Activity == "unit_completed" && (state == "ready_to_complete" || state == "completed") {
+			completed[4] = true
+		}
+		if occurrence.Activity == "aggregate_review_recorded" && occurrence.Outcome == "Approved" {
+			completed[5] = true
+		}
+	}
+	return completed
+}
+
+func (m Model) unitProgressLines(limit int) []string {
+	s := m.opened.Detail.Synopsis
+	done, total := s.Done, s.Total
+	units := []history.UnitStatus{}
+	if s.Planned != nil {
+		done, total = s.Planned.Done, s.Planned.Total
+		units = append(units, s.Planned.Units...)
+		if len(units) == 0 {
+			units = append(units, s.Planned.Pending...)
+		}
+	}
+	if len(units) == 0 && s.Current != nil {
+		units = append(units, *s.Current)
+	}
+	lines := []string{fmt.Sprintf("%s  %d/%d done", flight.title.Render("UNITS"), done, total)}
+	capacity := max(0, limit-1)
+	visible := min(len(units), capacity)
+	showIndicator := len(units) > capacity
+	if showIndicator && capacity > 1 {
+		visible--
+	} else if showIndicator && capacity == 1 {
+		visible = 0
+	}
+	for _, unit := range units[:visible] {
+		line := unitSymbol(unit.Status) + " " + zeroDash(unit.Description) + " · " + unit.Status
+		if unit.Reason != "" {
+			line += " · " + unit.Reason
+		}
+		lines = append(lines, fitStyled(line, max(1, m.width)))
+	}
+	if showIndicator && capacity > 0 {
+		more := len(units) - visible
+		indicator := fmt.Sprintf("+%d more", more)
+		if capacity == 1 && len(units) > 0 {
+			more = len(units) - 1
+			indicator = unitSymbol(units[0].Status) + " " + zeroDash(units[0].Description)
+			if more > 0 {
+				indicator += fmt.Sprintf(" · +%d more", more)
+			}
+		}
+		lines = append(lines, fitStyled(indicator, max(1, m.width)))
+	}
+	return lines
+}
+
+func unitSymbol(status string) string {
+	switch status {
+	case "Done":
+		return "✓"
+	case "Correction", "Recovery", "Dependency waiting":
+		return "!"
+	case "Claimed", "Reviewing":
+		return "●"
+	case "Ready":
+		return "›"
+	default:
+		return "○"
+	}
 }
 
 // resize distributes a fixed terminal dimension by relative panel weights.
@@ -363,206 +521,6 @@ func wideFill(lines []string, height, width int) []string {
 	return filled
 }
 
-// wideFrame fills its content to the requested height before adding its borders.
-func wideFrame(width, height int, content []string) []string {
-	width, height = max(4, width), max(2, height)
-	inner := width - 4
-	lines := []string{"╭" + strings.Repeat("─", width-2) + "╮"}
-	for _, line := range wideFill(content, height-2, inner) {
-		lines = append(lines, "│ "+line+" │")
-	}
-	return append(lines, "╰"+strings.Repeat("─", width-2)+"╯")
-}
-
-// horizontal joins equally tall frames with one shared border column.
-func horizontal(left, right []string) []string {
-	height := min(len(left), len(right))
-	lines := make([]string, 0, height)
-	for i := 0; i < height; i++ {
-		leftLine, rightLine := left[i], right[i]
-		switch i {
-		case 0:
-			leftLine = replaceLastRune(leftLine, '┬')
-		case height - 1:
-			leftLine = replaceLastRune(leftLine, '┴')
-		}
-		lines = append(lines, leftLine+dropFirstRune(rightLine))
-	}
-	return lines
-}
-
-func dropFirstRune(value string) string {
-	runes := []rune(value)
-	if len(runes) < 2 {
-		return ""
-	}
-	return string(runes[1:])
-}
-
-func replaceLastRune(value string, replacement rune) string {
-	runes := []rune(value)
-	if len(runes) == 0 {
-		return ""
-	}
-	runes[len(runes)-1] = replacement
-	return string(runes)
-}
-
-func (m Model) wideSummaryRenderer() []string {
-	s := m.opened.Detail.Synopsis
-	progress := fmt.Sprintf("%d/%d done", s.Done, s.Total)
-	if s.Planned != nil {
-		progress = fmt.Sprintf("%d/%d planned · %d%%", s.Planned.Done, s.Planned.Total, s.Planned.Percent)
-	} else if s.PlanNotice != "" {
-		progress = s.PlanNotice
-	}
-	current := "—"
-	if s.Current != nil {
-		current = fmt.Sprintf("%s · try %d · %s", s.Current.Status, s.Current.Attempt, s.Current.Description)
-	}
-	return []string{
-		flight.title.Render("SUMMARY") + "  " + progress,
-		labeled("Current", current),
-		labeled("Next", zeroDash(s.NextAction)),
-	}
-}
-
-func (m Model) wideGoalRenderer() []string {
-	return []string{
-		flight.title.Render("GOAL"),
-		zeroDash(m.opened.Detail.Workflow.Goal),
-		"",
-	}
-}
-
-func (m Model) wideTreeRenderer(height int) []string {
-	detail := m.opened.Detail
-	current := "—"
-	if detail.Synopsis.Current != nil {
-		current = detail.Synopsis.Current.Description
-	}
-	_ = height
-	return []string{
-		flight.title.Render("WORKFLOW TREE"),
-		labeled("Workflow", displayName(detail.Workflow)),
-		labeled("State", strings.ToUpper(detail.Workflow.State)),
-		labeled("Revision", fmt.Sprintf("r%d", detail.Workflow.Revision)),
-		labeled("Current", current),
-		labeled("Records", fmt.Sprintf("%d", len(detail.Records))),
-	}
-}
-
-func (m Model) wideActivityRenderer(height int) []string {
-	occurrences := m.opened.Detail.Occurrences
-	lines := []string{fmt.Sprintf("%s  %d", flight.title.Render("ACTIVITY / HISTORY"), len(occurrences))}
-	visible := max(0, height-1)
-	selected := 0
-	for i, occurrence := range occurrences {
-		if occurrence.ID == m.detail.occurrenceID {
-			selected = i
-			break
-		}
-	}
-	start := max(0, min(m.detail.occurrenceTop, max(0, len(occurrences)-visible)))
-	if selected < start {
-		start = selected
-	} else if selected >= start+visible {
-		start = selected - visible + 1
-	}
-	for i := start; i < len(occurrences) && len(lines) <= visible; i++ {
-		occurrence := occurrences[i]
-		line := focus(occurrence.ID == m.detail.occurrenceID) + formatTime(occurrence.At) + " · " + zeroDash(occurrence.Phase) + " · " + actionLabel(occurrence.Activity)
-		lines = append(lines, line)
-	}
-	return lines
-}
-
-func (m Model) widePendingRenderer(height int) []string {
-	pending := []history.UnitStatus{}
-	if planned := m.opened.Detail.Synopsis.Planned; planned != nil {
-		pending = planned.Pending
-	}
-	lines := []string{fmt.Sprintf("%s  %d", flight.title.Render("PENDING / BLOCKED"), len(pending))}
-	for _, unit := range pending {
-		line := "[" + strings.ToUpper(unit.Status) + "] " + zeroDash(unit.Description)
-		if unit.Attempt > 0 {
-			line += fmt.Sprintf(" · try %d", unit.Attempt)
-		}
-		lines = append(lines, line)
-	}
-	if blocker := m.opened.Detail.Synopsis.Blocker; blocker != nil {
-		lines = append(lines, "Blocked  "+zeroDash(blocker.Reason))
-	} else {
-		lines = append(lines, "Blocked  —")
-	}
-	_ = height
-	return lines
-}
-
-func (m Model) wideRelatedRenderer(height int) []string {
-	records := m.opened.Detail.Records
-	lines := []string{fmt.Sprintf("%s  %d", flight.title.Render("RELATED RECORDS / EVIDENCE"), len(records))}
-	for _, record := range records {
-		line := zeroDash(record.Title)
-		if record.Kind != "" {
-			line += " · " + record.Kind
-		}
-		lines = append(lines, line)
-	}
-	_ = height
-	return lines
-}
-
-func (m Model) synopsisLines() []string {
-	d := m.opened.Detail
-	w, s := d.Workflow, d.Synopsis
-	identity := fmt.Sprintf("%s  %s  r%d", displayName(w), strings.ToUpper(w.State), w.Revision)
-	lines := []string{flight.title.Render(ellipsize(identity, m.width)), labeledFit("Goal", w.Goal, m.width)}
-	progress := ""
-	if s.Planned != nil {
-		progress = fmt.Sprintf("%d/%d planned · %d%%", s.Planned.Done, s.Planned.Total, s.Planned.Percent)
-	} else if s.PlanNotice != "" {
-		progress = s.PlanNotice
-	} else {
-		progress = fmt.Sprintf("%d/%d done", s.Done, s.Total)
-		for _, part := range []struct {
-			count int
-			label string
-		}{{s.Ready, "ready"}, {s.Claimed, "claimed"}, {s.Reviewing, "reviewing"}, {s.Correction, "correction"}, {s.DependencyWaiting, "waiting"}, {s.Recovery, "recovery"}} {
-			if part.count > 0 {
-				progress += fmt.Sprintf(" · %d %s", part.count, part.label)
-			}
-		}
-	}
-	if s.Current != nil && s.Planned == nil {
-		label := derivedLabel("Current", s.Current.Derived)
-		current := fmt.Sprintf("%s  %s · try %d · %s", label, s.Current.Status, s.Current.Attempt, s.Current.Description)
-		if m.width < 80 {
-			progress += "  |  " + current
-		} else {
-			lines = append(lines, labeledFit("Progress", strings.TrimPrefix(progress, "Progress  "), m.width), labeledFit(label, strings.TrimPrefix(current, label+"  "), m.width))
-		}
-	}
-	if s.Current == nil || s.Planned != nil || m.width < 80 {
-		lines = append(lines, labeledFit("Progress", progress, m.width))
-	}
-	if s.Blocker != nil {
-		label := derivedLabel("Blocked", s.Blocker.Derived)
-		lines = append(lines, flight.bad.Render(labeledFit(label, s.Blocker.Reason, m.width)))
-	}
-	if s.Progress != nil {
-		marker, style := "[ADVANCED]", flight.good
-		if s.Progress.Status == "blocked" {
-			marker, style = "[BLOCKED]", flight.bad
-		}
-		prefix := "Report " + marker + " "
-		lines = append(lines, flight.label.Render("Report")+" "+style.Render(marker)+" "+ellipsize(s.Progress.Summary, max(1, m.width-lipgloss.Width(prefix))))
-		lines = append(lines, labeledFit("Report next", s.Progress.NextAction, m.width))
-	}
-	lines = append(lines, labeledFit("Next", zeroDash(s.NextAction), m.width))
-	return lines
-}
-
 func (m Model) gridLines(available int) []string {
 	occurrences := m.opened.Detail.Occurrences
 	start := max(0, min(m.detail.occurrenceTop, len(occurrences)-1))
@@ -573,16 +531,10 @@ func (m Model) gridLines(available int) []string {
 			break
 		}
 	}
-	if selectedIndex >= start {
-		used := len(m.semanticOccurrenceLines(occurrences[selectedIndex], true))
-		start = selectedIndex
-		for i := selectedIndex - 1; i >= m.detail.occurrenceTop; i-- {
-			height := len(m.semanticOccurrenceLines(occurrences[i], false))
-			if used+height > available {
-				break
-			}
-			used += height
-			start = i
+	if selectedIndex >= 0 {
+		start = min(start, selectedIndex)
+		for selectedIndex-start+2 > available && start < selectedIndex {
+			start++
 		}
 	}
 	lines := []string{}
@@ -600,59 +552,41 @@ func (m Model) gridLines(available int) []string {
 	return lines
 }
 
-func (m Model) pendingWorkLines() []string {
-	planned := m.opened.Detail.Synopsis.Planned
-	if planned == nil || len(planned.Pending) == 0 {
-		return nil
-	}
-	lines := []string{fmt.Sprintf("%s  %d", flight.title.Render("PENDING WORK"), len(planned.Pending))}
-	for _, unit := range planned.Pending {
-		status := "[" + strings.ToUpper(unit.Status) + "]"
-		line := status + " " + zeroDash(unit.Description)
-		if unit.Attempt > 0 {
-			line += fmt.Sprintf(" · try %d", unit.Attempt)
-		}
-		if unit.Reason != "" {
-			line += " · " + unit.Reason
-		}
-		lines = append(lines, fitText(line, m.width))
-	}
-	return lines
-}
-
 func (m Model) semanticOccurrenceLines(occurrence history.Occurrence, selected bool) []string {
 	when := formatTime(occurrence.At)
 	if m.width < 80 {
 		when = compactTime(occurrence.At)
 	}
 	occurrenceFocused := selected && !(m.relatedRecordMode() && occurrence.ID == m.detail.occurrenceID)
-	primary := focus(occurrenceFocused) + when + " · " + zeroDash(occurrence.Phase) + " · " + actionLabel(occurrence.Activity)
-	context := zeroDash(occurrence.Work)
-	if occurrence.Attempt != nil {
-		context += fmt.Sprintf(" · try %d", *occurrence.Attempt)
-	}
-	if m.width >= 80 && occurrence.Actor != "" {
-		context += " · " + occurrence.Actor
-	}
+	meaning := zeroDash(occurrence.Work)
 	outcome := outcomeText(occurrence)
-	lines := []string{fitStyled(primary, m.width)}
-	if m.width < 80 {
-		if outcome != "" {
-			context += " · " + outcome
-		}
-		lines = append(lines, fitText("  "+context, m.width))
-	} else {
-		lines = append(lines, fitText("  "+context, m.width))
-		if outcome != "" {
-			lines = append(lines, fitText("  "+outcome, m.width))
+	if outcome != "" {
+		if m.width < 80 {
+			meaning = outcome + " · " + meaning
+		} else {
+			meaning += " · " + outcome
 		}
 	}
+	primary := focus(occurrenceFocused) + when + "  " + zeroDash(occurrence.Phase) + " · " + actionLabel(occurrence.Activity) + " — " + meaning
+	lines := []string{fitStyled(primary, m.width)}
 	if selected {
 		if m.relatedRecordMode() && occurrence.ID == m.detail.occurrenceID {
 			available := max(1, m.occurrenceAvailableLines()-len(lines))
 			lines = append(lines, m.relatedRecordLines(occurrence, available)...)
 		} else {
-			lines = append(lines, m.inlinePreviewLines(occurrence)...)
+			context := ""
+			if occurrence.Actor != "" {
+				context = "actor " + occurrence.Actor
+			}
+			if occurrence.Attempt != nil {
+				context += fmt.Sprintf(" · try %d", *occurrence.Attempt)
+			}
+			if occurrence.Reason != "" {
+				context += " · " + occurrence.Reason
+			}
+			if context != "" {
+				lines = append(lines, fitText("    "+context, m.width))
+			}
 		}
 	}
 	return lines
@@ -704,59 +638,6 @@ func (m Model) relatedRecordLines(occurrence history.Occurrence, available int) 
 		lines = append(lines, row(i))
 	}
 	return lines
-}
-
-func (m Model) inlinePreviewLines(occurrence history.Occurrence) []string {
-	record, ok := m.recordForOccurrence(occurrence)
-	if !ok || strings.TrimSpace(record.Content) == "" || m.recordIntroducedBefore(occurrence, record.ID) {
-		return nil
-	}
-	body, _ := renderEvidence(record.Content, max(1, m.width-4))
-	var lines []string
-	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
-		line = strings.TrimRight(ansi.Strip(line), " ")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		lines = append(lines, fitText("    "+line, m.width))
-		if len(lines) == 3 {
-			break
-		}
-	}
-	return lines
-}
-
-func (m Model) recordIntroducedBefore(occurrence history.Occurrence, recordID string) bool {
-	current := -1
-	for i, candidate := range m.opened.Detail.Occurrences {
-		if candidate.ID == occurrence.ID {
-			current = i
-			break
-		}
-	}
-	if current < 0 {
-		return false
-	}
-	for _, candidate := range m.opened.Detail.Occurrences[:current] {
-		for _, candidateID := range append([]string{candidate.RecordID}, candidate.RelatedRecordIDs...) {
-			if recordID != "" && candidateID == recordID {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (m Model) recordForOccurrence(occurrence history.Occurrence) (history.Record, bool) {
-	ids := append([]string{occurrence.RecordID}, occurrence.RelatedRecordIDs...)
-	for _, id := range ids {
-		for _, record := range m.opened.Detail.Records {
-			if id != "" && record.ID == id {
-				return record, true
-			}
-		}
-	}
-	return history.Record{}, false
 }
 
 func (m Model) recordLines() []string {
@@ -828,11 +709,7 @@ func (m Model) evidenceLines() []evidenceLine {
 }
 func (m Model) evidenceWidth() int { return max(1, m.width) }
 func (m Model) evidenceHeight() int {
-	blank := 0
-	if m.width >= 80 {
-		blank = 1
-	}
-	return max(1, m.height-len(m.synopsisLines())-len(m.typedMetadataLines())-7-blank)
+	return max(1, m.height-len(m.typedMetadataLines())-7)
 }
 
 func labeled(label, value string) string { return flight.label.Render(label) + "  " + value }
@@ -947,12 +824,6 @@ func zeroDash(value string) string {
 		return "—"
 	}
 	return value
-}
-func derivedLabel(label string, derived bool) string {
-	if derived {
-		return label + " [derived]"
-	}
-	return label
 }
 
 func fitText(value string, width int) string {

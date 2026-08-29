@@ -1,16 +1,16 @@
 ╭──────────────────────────────────────────────────────────╮
-│ PitCrew2                                         v0.12.0 │
+│ PitCrew2                                         v0.14.0 │
 │ Control Plane                                            │
 ╰──────────────────────────────────────────────────────────╯
 
-Redesign TUI history  IMPLEMENTING  r7
-Goal  Ship read-only terminal inspection
-Progress  2/3 planned · 66%
-Next  workflow list-ready-units
-PENDING WORK  1
-[REVIEWING] Render diseño operativo · try 1
-HISTORY  4 occurrences
-▶ 03:20 · Review · Recorded review
-  Render diseño operativo · try 1 · Approved
-     Unit review
+Redesign TUI history  ·  IMPLEMENTING  ·  r7
+PROGRESS  2/3 done · 66%
+NOW  Reviewing · Render diseño operativo
+NEXT  workflow list-ready-units
+STAGES  ○ Ex  ✓ Sp  ○ De  ○ Pl  ● Bu  ○ Re
+UNITS  2/3 done
+✓ Map history signals · +2 more
+TIMELINE  4 events
+▶ 03:20  Review · Recorded review — Approved · Render diseñ…
+    actor pc2-reviewer · try 1
 j/k • enter • r refresh • q quit • row 4/4  ·  60x16
