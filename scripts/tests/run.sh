@@ -191,12 +191,14 @@ assert_authority_contract() {
   done
   grep -F 'record exactly one unchanged workflow request-capability' "$aion" >/dev/null || fail "Aion concurrency capability deduplication rule omitted in $destination"
   for terminal_rule in \
-    'run `workflow complete` and observe its terminal revision before acknowledging full-workflow completion' \
-    'call it a delivery outcome, not a completed workflow'; do
+    'Reviewer alone runs `workflow complete` and returns the terminal result' \
+    'relays it before the first publication action' \
+    'broader delivery continues, and gives the actual next action' \
+    'final delivery-only report omits that terminal key'; do
     grep -F "$terminal_rule" "$aion" >/dev/null || fail "Aion terminal-report ordering omitted $terminal_rule in $destination"
   done
   for silence_rule in \
-    'Terminal facts require the terminal mutation and revision first' \
+    'Terminal facts require the Reviewer terminal result and Aion relay first' \
     'If there is no new accepted fact, emit nothing' \
     'Without a live Aion relay, do not synthesize an update'; do
     grep -F "$silence_rule" "$daimon" >/dev/null || fail "Daimon terminal-report silence omitted $silence_rule in $destination"
@@ -302,14 +304,14 @@ assert_role_prompt_budget() {
 	words=$(cat $files | wc -w | tr -d ' ')
   aion=$(role_path "$destination" aion)
   case $aion in
-    *.toml) baseline_bytes=46132 baseline_words=6373 ;;
+    *.toml) baseline_bytes=46073 baseline_words=6372 ;;
     *)
       if grep -F 'Pi native supervisor rule' "$aion" >/dev/null; then
-        baseline_bytes=48612 baseline_words=6752
+        baseline_bytes=48553 baseline_words=6751
       elif grep -F 'mode: all' "$aion" >/dev/null; then
-        baseline_bytes=46175 baseline_words=6379
+        baseline_bytes=46116 baseline_words=6378
       else
-        baseline_bytes=46028 baseline_words=6353
+        baseline_bytes=45969 baseline_words=6352
       fi
       ;;
   esac
