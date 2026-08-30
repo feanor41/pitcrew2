@@ -9,8 +9,8 @@ Define the closed CLI, command inputs, envelopes, errors, and caller identity se
 
 ### Requirement: Closed command and input contract
 
-The CLI SHALL expose only `install`, `project`, `delivery`, `principles`, `tui`,
-global `--help`/`--version`, and the 23 `workflow` commands below. Flags SHALL be
+The CLI SHALL expose only `install`, `project`, `context`, `delivery`, `principles`, `tui`,
+global `--help`/`--version`, and the 24 `workflow` commands below. Flags SHALL be
 long-form. Each listed flag is required unless bracketed; `--input-file` SHALL
 name a readable regular file containing one JSON document and SHALL be the only
 transport for delivery mutations, artifacts, operational reports, plans,
@@ -21,6 +21,9 @@ evidence, reviews, and consolidation bodies.
 | `install` | exactly one of `codex`, `opencode`, `claude`, or `pi` |
 | `project inspect` | none |
 | `project consolidate` | `--input-file <path>` |
+| `context inspect` | none |
+| `context initialize` | none |
+| `context record` | `--actor <nonblank-bounded-label> --input-file <path>` |
 | `delivery start` | `--actor <label> --input-file <path>` |
 | `delivery update` | `--delivery-id <dl-id> --revision <n> --actor <label> --input-file <path>` |
 | `delivery show` | `--delivery-id <dl-id|wf-id>` |
@@ -54,7 +57,7 @@ Runtimes: codex, opencode, claude, pi
 Read the four maxims of the harness: pitcrew principles.
 ```
 
-Root help SHALL list `install codex|opencode|claude|pi` and `project inspect|consolidate`. Unknown flags, missing flags, unreadable/non-regular input files, malformed JSON, or an invalid install runtime SHALL fail with exit code `2` before mutation. `--name` SHALL be explicit, non-empty after trimming, and bounded by the workflow name limit; it SHALL NOT be derived for new workflows. A well-formed payload that violates its domain contract SHALL fail with exit code `3` without mutation. `--handle-dir` is the only production handle-output selector. The hidden claim debug flag is defined by `claim-handles`. No install, install-help, install-usage, project-inspect, TUI, help, version, or principles path SHALL initialize project state.
+Root help SHALL list `install codex|opencode|claude|pi`, `project inspect|consolidate`, and `context inspect|initialize|record`. Unknown flags, missing flags, unreadable/non-regular input files, malformed JSON, or an invalid install runtime SHALL fail with exit code `2` before mutation. `--name` SHALL be explicit, non-empty after trimming, and bounded by the workflow name limit; it SHALL NOT be derived for new workflows. A well-formed payload that violates its domain contract SHALL fail with exit code `3` without mutation. `--handle-dir` is the only production handle-output selector. The hidden claim debug flag is defined by `claim-handles`. No install, install-help, install-usage, project-inspect, context-inspect, TUI, help, version, or principles path SHALL initialize project state.
 
 #### Scenario: Every command enforces its row
 
@@ -80,6 +83,23 @@ Root help SHALL list `install codex|opencode|claude|pi` and `project inspect|con
 - WHEN `pitcrew install` validates its arguments
 - THEN only an exact supported runtime SHALL invoke installation once with the original caller working directory
 - AND every rejected invocation SHALL leave runtime targets and `.pitcrew` unchanged
+
+### Requirement: Closed project-context commands
+
+`context inspect` and `context initialize` SHALL accept no flags. `context
+record` SHALL accept only `--actor` and `--input-file`; its input SHALL be one
+strict schema-v1 snapshot in a readable regular non-symlink file. Inspect SHALL
+be non-creating and return the truthful inspection with `next_action:"context
+initialize"` unless complete. Initialize SHALL return `inspection` and
+`persisted`; record SHALL return the resulting inspection. Transport or JSON
+failures SHALL exit 2, while project, domain, consolidation, and store failures
+SHALL exit 3. Existing commands and representations SHALL remain unchanged.
+
+#### Scenario: Context transport is strict and read-only inspection is inert
+
+- GIVEN an absent project context and record inputs containing an unknown field, malformed JSON, a symlink, or an extra argument
+- WHEN the context commands run
+- THEN inspection SHALL create no state and only the exact record invocation SHALL reach domain behavior
 
 ### Requirement: Direct delivery command contract
 

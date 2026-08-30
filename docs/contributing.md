@@ -16,6 +16,10 @@ gofmt -w $(find cmd internal -name '*.go' -type f) maxims_embed.go
 git diff --check
 ```
 
+For project-context changes also run `go test ./internal/projectcontext ./internal/sddinitializer ./internal/cli` and prove no-create inspection,
+linked-worktree sharing, evidence confinement, legacy gating, and V4-to-V5
+preservation.
+
 The shell suite uses temporary homes and must not modify your real runtime configuration.
 
 ## Development loop
@@ -44,6 +48,10 @@ Applying an already-decided approach creates no new gate, justification, or arti
 - Resolve project identity from the canonical Git common directory. Use only
   `<data-home>/pitcrew/projects/<project-id>/state.db`; linked worktrees share
   it, while clones and moved common directories remain separate.
+- Project context uses the same central identity. Keep inspection read-only,
+  schema-v1 records bounded, evidence confined to the active checkout, V5
+  writes atomic with changed-category audits, and initialization shallow and
+  one-shot.
 - One SQLite connection; no daemon, IPC, network, shared cache, or remote API.
 - `MAXIMS.md` is canonical. Change it only through its own OpenSpec change.
 - The command surface is closed. Adding a command or flag requires an OpenSpec change.

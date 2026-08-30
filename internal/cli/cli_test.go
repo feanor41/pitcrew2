@@ -116,7 +116,7 @@ func runCentral(t *testing.T, root, dataHome string, args ...string) result {
 }
 
 func TestHelpEndsWithEpilogueAndHidesForbiddenSurfaces(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"workflow", "--help"}, {"workflow", "new", "--help"}, {"workflow", "show", "--help"}, {"principles", "--help"}} {
+	for _, args := range [][]string{{"--help"}, {"context", "--help"}, {"context", "inspect", "--help"}, {"workflow", "--help"}, {"workflow", "new", "--help"}, {"workflow", "show", "--help"}, {"principles", "--help"}} {
 		result := runCLI(t, args...)
 		if result.code != 0 || result.stderr != "" {
 			t.Fatalf("help %v = %#v", args, result)

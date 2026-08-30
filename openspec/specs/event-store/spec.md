@@ -79,6 +79,7 @@ The schema SHALL preserve:
 | evidence | workflow/unit ids, unit revision, actor, TDD fields, time |
 | reviews | workflow/unit ids, unit revision, actor, verdict fields, time |
 | handles | claim/workflow/unit ids, state, secret hash, times, generation, actor identity |
+| project context | one schema-v1 bounded snapshot with actor/update metadata, plus append-only changed-category audits |
 
 Artifacts, events, activities, evidence, and reviews SHALL be append-only. Aggregate reviews SHALL use artifacts of kind `aggregate_review` rather than a new table or fake unit. Actor values SHALL be declarative collision/audit metadata, not credentials. Activities SHALL contain only navigation-safe identifiers: no claim secret, secret hash, handle contents, or handle path. Plain claim secrets SHALL never be stored.
 
@@ -98,6 +99,22 @@ Bounded correction facts SHALL be append-only artifacts: `aggregate_correction` 
 - WHEN the ordered migration runs
 - THEN existing rows SHALL remain unchanged and queryable
 - AND no historical activity SHALL be fabricated
+
+### Requirement: Additive V5 project context
+
+Ordered migration V5 SHALL add only the project-context singleton and its
+append-only audit table after complete V4. It SHALL preserve every V1-V4 row,
+field, index, identity marker, and consolidation acknowledgement. Snapshot
+replacement and one audit naming only changed categories SHALL commit in one
+transaction; the first write names all six categories. A semantic no-op SHALL
+preserve metadata and append nothing, while invalid or corrupt content SHALL
+fail without repair or mutation.
+
+#### Scenario: Populated V4 upgrade and changed-only write
+
+- GIVEN representative V4 workflow, handle, correction, consolidation, and direct-delivery data
+- WHEN V5 migrates and project context is recorded
+- THEN prior data SHALL remain field-equivalent and the snapshot plus exact changed-category audit SHALL commit atomically
 
 ### Requirement: Revision compare-and-swap
 
