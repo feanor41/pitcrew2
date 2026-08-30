@@ -9,7 +9,7 @@ Define plan submission, validation, admission, approval, and executable-unit dis
 
 ### Requirement: Plan input
 
-`workflow plan --input-file` SHALL read one JSON object with required `summary` (1–200 characters), `scope` (comma-separated repository-relative prefixes), `max_parallel_units` (integer ≥1), and non-empty `work_units` array. Each unit SHALL contain `id` (`wu-<24hex>`), `description` (1–200 characters), `scope`, `areas` (array), `depends_on` (unit-id array), `estimated_changed_lines` (non-negative integer), and `estimated_review_minutes` (non-negative integer); it MAY contain `admission_exception: {"justification":"non-empty"}`. The plan MAY contain `overlap_approvals`, an array of objects with exactly two distinct `unit_ids` and non-empty `justification`. It SHALL contain normalized `aggregate_correction_policy: {"automatic_rounds":0|1,"on_exhaustion":"require_user_authorization"}`; omission on a new submission normalizes to one automatic round, while historical stored bodies missing it project that default without row rewriting and remain distinguishable as historical. Malformed, unknown, negative, or over-budget policy values SHALL reject before mutation. No other payload transport SHALL exist.
+`workflow plan --input-file` SHALL read one JSON object with required `summary` (1–200 characters), `scope` (comma-separated repository-relative prefixes), `max_parallel_units` (integer ≥1), and non-empty `work_units` array. Each unit SHALL contain `id` (`wu-<24hex>`), `description` (1–200 characters), `scope`, `areas` (array), `depends_on` (unit-id array), `estimated_changed_lines` (non-negative integer), and `estimated_review_minutes` (non-negative integer); it MAY contain `admission_exception: {"justification":"non-empty"}`. A unit for a schema-v1 structured specification SHALL also contain non-empty `coverage: [{"requirement_id":"REQ-*","scenario_ids":["SCN-*", ...]}]`. The plan MAY contain `overlap_approvals`, an array of objects with exactly two distinct `unit_ids` and non-empty `justification`. It SHALL contain normalized `aggregate_correction_policy: {"automatic_rounds":0|1,"on_exhaustion":"require_user_authorization"}`; omission on a new submission normalizes to one automatic round, while historical stored bodies missing it project that default without row rewriting and remain distinguishable as historical. Malformed, unknown, negative, or over-budget policy values SHALL reject before mutation. No other payload transport SHALL exist.
 
 #### Scenario: Valid plan is preserved
 
@@ -52,6 +52,24 @@ Plan/unit scope and areas SHALL be normalized repository-relative file or direct
 - GIVEN an unknown dependency, cycle, or unapproved overlap
 - WHEN the plan is submitted
 - THEN exit code 3 SHALL result without persisted plan data
+
+### Requirement: Stable specification coverage
+
+Structured specifications SHALL use stable uppercase technical identifiers matching `REQ-<segment>[-<segment>...]` and `SCN-<segment>[-<segment>...]`, where each segment contains only uppercase ASCII letters or digits. Every work unit in a structured workflow SHALL declare at least one coverage pair, each scenario SHALL exist under the named requirement, and every declared specification scenario SHALL be covered by at least one unit. Duplicate, malformed, unknown, missing, or parent-mismatched coverage SHALL reject atomically before plan or work-unit persistence. Accepted pairs SHALL persist in `unit_coverage` without changing their submitted order in the plan body.
+
+Legacy opaque specifications and historical plan bodies SHALL remain coverage-free and load without rewriting. PitCrew SHALL NOT infer or invent identifiers from their prose. A new plan that declares coverage against an opaque specification SHALL reject rather than silently upgrade the workflow.
+
+#### Scenario: Missing structured scenario is rejected
+
+- GIVEN a structured specification containing `REQ-COV-001` with `SCN-COV-001` and `SCN-COV-002`
+- WHEN submitted units cover only `SCN-COV-001`
+- THEN plan submission SHALL fail naming `SCN-COV-002` and persist no plan, unit, or coverage row
+
+#### Scenario: Legacy plan remains opaque
+
+- GIVEN an opaque specification or historical plan body without coverage
+- WHEN the plan is loaded or submitted without coverage
+- THEN its body SHALL remain compatible and no requirement or scenario identifier SHALL be synthesized
 
 ### Requirement: Admission and approval
 

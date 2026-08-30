@@ -22,6 +22,74 @@ func TestPlanJSONUsesTheSubmissionContract(t *testing.T) {
 	}
 }
 
+func TestCoverageJSONUsesStableStructuredIdentifiers(t *testing.T) {
+	p := validPlan()
+	p.Units[0].Coverage = []Coverage{{RequirementID: "REQ-COV-001", ScenarioIDs: []string{"SCN-COV-001", "SCN-COV-002"}}}
+	p.Units[1].Coverage = []Coverage{{RequirementID: "REQ-COV-002", ScenarioIDs: []string{"SCN-COV-003"}}}
+	p.Units[0].present.coverage = true
+	p.Units[1].present.coverage = true
+	if err := Validate(p); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"coverage":[{"requirement_id":"REQ-COV-001","scenario_ids":["SCN-COV-001","SCN-COV-002"]}]`) {
+		t.Fatalf("coverage JSON = %s", encoded)
+	}
+	var decoded Plan
+	if err = json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Units[0].HasCoverage() || len(decoded.Units[0].Coverage) != 1 {
+		t.Fatalf("decoded coverage = %#v", decoded.Units[0])
+	}
+}
+
+func TestValidateCoverageRejectsMalformedOrDuplicateIdentifiers(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*Plan)
+		want string
+	}{
+		{"empty coverage", func(p *Plan) { p.Units[0].present.coverage = true }, "coverage must not be empty"},
+		{"invalid requirement", func(p *Plan) {
+			p.Units[0].Coverage = []Coverage{{RequirementID: "requirement one", ScenarioIDs: []string{"SCN-ONE"}}}
+		}, "invalid requirement id"},
+		{"no scenarios", func(p *Plan) { p.Units[0].Coverage = []Coverage{{RequirementID: "REQ-ONE"}} }, "scenario_ids must not be empty"},
+		{"invalid scenario", func(p *Plan) {
+			p.Units[0].Coverage = []Coverage{{RequirementID: "REQ-ONE", ScenarioIDs: []string{"scenario one"}}}
+		}, "invalid scenario id"},
+		{"duplicate scenario", func(p *Plan) {
+			p.Units[0].Coverage = []Coverage{{RequirementID: "REQ-ONE", ScenarioIDs: []string{"SCN-ONE", "SCN-ONE"}}}
+		}, "duplicate coverage"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := validPlan()
+			p.Units[0].present.coverage = true
+			tt.edit(&p)
+			if err := Validate(p); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate() error = %v; want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestCoverageJSONRejectsMissingOrUnknownFields(t *testing.T) {
+	for _, input := range []string{
+		`{"requirement_id":"REQ-ONE"}`,
+		`{"scenario_ids":["SCN-ONE"]}`,
+		`{"requirement_id":"REQ-ONE","scenario_ids":["SCN-ONE"],"extra":true}`,
+	} {
+		var coverage Coverage
+		if err := json.Unmarshal([]byte(input), &coverage); err == nil {
+			t.Fatalf("malformed coverage accepted: %s", input)
+		}
+	}
+}
+
 func TestAggregateCorrectionPolicyJSONNormalizesAndValidatesCanonicalContract(t *testing.T) {
 	base := `{"summary":"one","scope":"internal","work_units":[{"id":"wu-000000000000000000000001","description":"unit","scope":"internal/plan","areas":["internal/plan"],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}],"max_parallel_units":1`
 	for _, rounds := range []int{0, 1} {
