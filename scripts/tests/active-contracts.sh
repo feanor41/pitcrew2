@@ -71,7 +71,14 @@ done
 
 for required in \
   'existing project-context deployment facts as the release map' \
-  'canonical repository, binary destination, owned backup, exact managed runtime set, and publication choice' \
+  'before any repository, binary, backup, runtime, or publication mutation' \
+  'canonical repository and version source' \
+  'exact validation commands' \
+  'binary build command and install target' \
+  'persistent rollback procedure' \
+  'supported runtime set' \
+  'detected runtime subset selected for refresh' \
+  'each selected runtime exact installer-managed file set and deterministic expected digest evidence' \
   'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
   'Mechanical release execution remains direct inline regardless of mapped file count' \
   'same-version digest mismatch is not convergence' \

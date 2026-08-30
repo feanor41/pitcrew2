@@ -24,13 +24,22 @@ The shell suite uses temporary homes and must not modify your real runtime confi
 
 ## Recoverable release operations
 
-Project-context deployment facts are the release map only when they name the
-canonical repository, binary destination, PitCrew-owned backup location, exact
-managed runtime targets, and whether GitHub publication was selected. Repair an
-inadequate map with one bounded `context record` replacement while preserving
-unrelated facts. An already-decided bump-and-install is mechanical direct work
-regardless of how many mapped files it touches; use a stronger route only for a
-new decision, uncertainty, or material risk.
+Project-context deployment facts are the release map only when, before any
+release-target mutation, they record every reusable fact:
+
+- canonical repository and version source;
+- exact validation commands;
+- binary build command and install target;
+- persistent rollback procedure and PitCrew-owned backup location;
+- supported runtime set;
+- detected runtime subset selected for refresh;
+- each selected runtime exact installer-managed file set and deterministic expected digest evidence;
+- whether GitHub publication was selected.
+
+Repair an inadequate map with one bounded `context record` replacement while
+preserving unrelated facts. An already-decided bump-and-install is mechanical
+direct work regardless of how many mapped files it touches; use a stronger route
+only for a new decision, uncertainty, or material risk.
 
 Admit the operation before mutation, then reconcile from physical evidence:
 
