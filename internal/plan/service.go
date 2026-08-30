@@ -50,6 +50,13 @@ func (s *Service) Submit(ctx context.Context, workflowID string, expected int64,
 	if current.State != workflow.Designing {
 		return workflow.Workflow{}, fmt.Errorf("%w: current state %s; expected designing", workflow.ErrInvalidTransition, current.State)
 	}
+	coverage, err := structuredSpecificationCoverage(ctx, tx, workflowID)
+	if err != nil {
+		return workflow.Workflow{}, err
+	}
+	if err = validatePlanCoverage(p, coverage); err != nil {
+		return workflow.Workflow{}, err
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO plans(workflow_id,summary,scope,max_parallel_units,body) VALUES(?,?,?,?,?)`, workflowID, p.Summary, p.Scope, p.MaxParallelUnits, string(body)); err != nil {
 		return workflow.Workflow{}, err
 	}
@@ -65,8 +72,79 @@ func (s *Service) Submit(ctx context.Context, workflowID string, expected int64,
 		if err != nil {
 			return workflow.Workflow{}, err
 		}
+		for _, coverage := range unit.Coverage {
+			for _, scenarioID := range coverage.ScenarioIDs {
+				if _, err = tx.ExecContext(ctx, `INSERT INTO unit_coverage(workflow_id,unit_id,requirement_id,scenario_id) VALUES(?,?,?,?)`, workflowID, unit.ID, coverage.RequirementID, scenarioID); err != nil {
+					return workflow.Workflow{}, err
+				}
+			}
+		}
 	}
 	return commitWorkflowTransition(ctx, tx, current, workflow.Planning, actor, s.now(), activity.PlanSubmitted)
+}
+
+// specificationCoverage is nil for a legacy opaque specification. A non-nil
+// map binds each structured scenario to its declared parent requirement.
+type specificationCoverage map[string]string
+
+func structuredSpecificationCoverage(ctx context.Context, tx *sql.Tx, workflowID string) (specificationCoverage, error) {
+	resolved, err := workflow.ResolveNormativeInTransaction(ctx, tx, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	if !resolved.Structured {
+		return nil, nil
+	}
+	scenarios := specificationCoverage{}
+	foundSpecification := false
+	for _, entry := range resolved.Entries {
+		if entry.Phase != "specification" {
+			continue
+		}
+		foundSpecification = true
+		if entry.Kind == "scenario" {
+			scenarios[entry.ID] = entry.ParentID
+		}
+	}
+	if !foundSpecification {
+		return nil, nil
+	}
+	return scenarios, nil
+}
+
+func validatePlanCoverage(p Plan, specification specificationCoverage) error {
+	if specification == nil {
+		for _, unit := range p.Units {
+			if unit.HasCoverage() {
+				return fmt.Errorf("unit %s cannot declare coverage for a legacy opaque specification", unit.ID)
+			}
+		}
+		return nil
+	}
+	covered := map[string]bool{}
+	for _, unit := range p.Units {
+		if !unit.HasCoverage() || len(unit.Coverage) == 0 {
+			return fmt.Errorf("unit %s requires coverage for a structured specification", unit.ID)
+		}
+		for _, coverage := range unit.Coverage {
+			for _, scenarioID := range coverage.ScenarioIDs {
+				requirementID, ok := specification[scenarioID]
+				if !ok {
+					return fmt.Errorf("unit %s coverage names unknown scenario %s", unit.ID, scenarioID)
+				}
+				if requirementID != coverage.RequirementID {
+					return fmt.Errorf("scenario %s belongs to requirement %s, not %s", scenarioID, requirementID, coverage.RequirementID)
+				}
+				covered[scenarioID] = true
+			}
+		}
+	}
+	for scenarioID := range specification {
+		if !covered[scenarioID] {
+			return fmt.Errorf("structured specification scenario %s is not covered by any unit", scenarioID)
+		}
+	}
+	return nil
 }
 
 func (s *Service) Approve(ctx context.Context, workflowID string, expected int64, actor string, approved []string) (workflow.Workflow, error) {
