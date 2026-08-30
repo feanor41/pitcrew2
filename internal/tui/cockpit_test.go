@@ -54,7 +54,7 @@ func TestProjectCockpitKeepsExecutableAndAcknowledgedStatusSeparate(t *testing.T
 		Progress: &history.Progress{Status: "blocked", Summary: "waiting for reviewer", NextAction: "ask reviewer"},
 	}}
 	rows := projectCockpit(detail).StatusRows
-	want := map[string]string{"executable": "workflow list-ready-units", "plan_notice": "Planned progress unavailable", "acknowledged_next": "ask reviewer"}
+	want := map[string]string{"route": history.FullWorkflow, "executable": "workflow list-ready-units", "plan_notice": "Planned progress unavailable", "acknowledged_next": "ask reviewer"}
 	for _, row := range rows {
 		if expected, ok := want[row.ID]; ok {
 			if row.Value != expected {

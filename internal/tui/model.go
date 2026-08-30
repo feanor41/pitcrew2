@@ -20,6 +20,12 @@ type Loader interface {
 	ResolveActivity(context.Context, history.Activity) (history.Resolution, error)
 }
 
+type deliveryLoader interface {
+	ListDeliveries(context.Context) ([]history.Delivery, error)
+	GetDelivery(context.Context, string) (history.DeliveryDetail, error)
+	SearchDeliveries(context.Context, string) ([]history.DeliverySearchResult, error)
+}
+
 type occurrenceResolver interface {
 	ResolveOccurrence(context.Context, string, string, string) (history.Resolution, error)
 }
@@ -45,7 +51,7 @@ const (
 var homeActions = [...]string{
 	"Install in Runtime",
 	"Configure Runtime Models",
-	"Workflows",
+	"Deliveries",
 	"Exit",
 }
 
@@ -55,9 +61,12 @@ type Model struct {
 	homeSelected    int
 	homeNotice      string
 	workflows       []history.Workflow
+	deliveries      []history.Delivery
 	workflowTop     int
 	results         []history.SearchResult
+	deliveryResults []history.DeliverySearchResult
 	opened          history.Resolution
+	openedDelivery  history.DeliveryDetail
 	selected        int
 	query           string
 	searchFocused   bool
@@ -118,13 +127,25 @@ type workflowsLoadedMsg struct {
 	loadMeta
 	workflows []history.Workflow
 }
+type deliveriesLoadedMsg struct {
+	loadMeta
+	deliveries []history.Delivery
+}
 type resultsLoadedMsg struct {
 	loadMeta
 	results []history.SearchResult
 }
+type deliveryResultsLoadedMsg struct {
+	loadMeta
+	results []history.DeliverySearchResult
+}
 type detailLoadedMsg struct {
 	loadMeta
 	resolution history.Resolution
+}
+type deliveryDetailLoadedMsg struct {
+	loadMeta
+	detail history.DeliveryDetail
 }
 type loadFailedMsg struct {
 	loadMeta
@@ -140,6 +161,15 @@ func New(loader Loader) Model {
 func (Model) Version() string { return version.Current }
 
 func (m Model) Init() tea.Cmd {
+	if loader, ok := m.loader.(deliveryLoader); ok {
+		return func() tea.Msg {
+			deliveries, err := loader.ListDeliveries(context.Background())
+			if err != nil {
+				return loadFailedMsg{loadMeta: loadMeta{kind: loadWorkflows, generation: m.generation}, err: err}
+			}
+			return deliveriesLoadedMsg{loadMeta: loadMeta{kind: loadWorkflows, generation: m.generation}, deliveries: deliveries}
+		}
+	}
 	return func() tea.Msg {
 		workflows, err := m.loader.List(context.Background())
 		if err != nil {
@@ -152,6 +182,15 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 	m.ensureComponents()
 	switch msg := message.(type) {
+	case deliveriesLoadedMsg:
+		if !m.acceptLoad(msg.loadMeta) {
+			return m, nil
+		}
+		selectedID := m.selectedDeliveryID()
+		m.deliveries, m.loading, m.err = msg.deliveries, false, nil
+		m.selected = reconcileIndex(len(m.deliveries), m.selected, func(i int) bool { return m.deliveries[i].ID == selectedID })
+		m.reconcileWorkflowWindow()
+		m.commitLoad(msg.generation)
 	case workflowsLoadedMsg:
 		if !m.acceptLoad(msg.loadMeta) {
 			return m, nil
@@ -183,6 +222,17 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 			m.selected = 0
 		}
 		m.commitLoad(msg.generation)
+	case deliveryResultsLoadedMsg:
+		if !m.acceptLoad(msg.loadMeta) {
+			return m, nil
+		}
+		selectedID := ""
+		if msg.preserve && m.selected < len(m.deliveryResults) {
+			selectedID = m.deliveryResults[m.selected].DeliveryID
+		}
+		m.deliveryResults, m.loading, m.err, m.screen = msg.results, false, nil, ResultsScreen
+		m.selected = reconcileIndex(len(msg.results), m.selected, func(i int) bool { return msg.results[i].DeliveryID == selectedID })
+		m.commitLoad(msg.generation)
 	case detailLoadedMsg:
 		if !m.acceptLoad(msg.loadMeta) {
 			return m, nil
@@ -210,6 +260,24 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 		}
 		m.reconcileDetail()
 		m.prepareEvidence()
+		m.commitLoad(msg.generation)
+	case deliveryDetailLoadedMsg:
+		if !m.acceptLoad(msg.loadMeta) {
+			return m, nil
+		}
+		m.openedDelivery, m.loading, m.err = msg.detail, false, nil
+		m.opened = history.Resolution{}
+		if msg.detail.Workflow != nil {
+			m.opened.Detail = *msg.detail.Workflow
+		}
+		if !msg.preserve {
+			m.detailParent = WorkflowsScreen
+			if m.screen == ResultsScreen {
+				m.detailParent = ResultsScreen
+			}
+		}
+		m.screen = DetailScreen
+		m.reconcileDetail()
 		m.commitLoad(msg.generation)
 	case loadFailedMsg:
 		if !m.acceptLoad(msg.loadMeta) {
@@ -250,6 +318,15 @@ func (m Model) updateKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.searchFocused = false
 			query := m.query
 			meta := m.startLoad(loadResults, false)
+			if loader, ok := m.loader.(deliveryLoader); ok {
+				return m, func() tea.Msg {
+					results, err := loader.SearchDeliveries(context.Background(), query)
+					if err != nil {
+						return loadFailedMsg{loadMeta: meta, err: err}
+					}
+					return deliveryResultsLoadedMsg{loadMeta: meta, results: results}
+				}
+			}
 			return m, func() tea.Msg {
 				results, err := m.loader.Search(context.Background(), query)
 				if err != nil {
@@ -407,23 +484,27 @@ func (m Model) updateHomeKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 func (m *Model) reconcileWorkflowWindow() {
-	if len(m.workflows) == 0 {
+	count := len(m.workflows)
+	if _, ok := m.loader.(deliveryLoader); ok {
+		count = len(m.deliveries)
+	}
+	if count == 0 {
 		m.selected, m.workflowTop = 0, 0
 		return
 	}
-	m.selected = max(0, min(m.selected, len(m.workflows)-1))
+	m.selected = max(0, min(m.selected, count-1))
 	visible := m.workflowVisibleRows()
 	if m.selected < m.workflowTop {
 		m.workflowTop = m.selected
 	} else if m.selected >= m.workflowTop+visible {
 		m.workflowTop = m.selected - visible + 1
 	}
-	m.workflowTop = max(0, min(m.workflowTop, max(0, len(m.workflows)-visible)))
+	m.workflowTop = max(0, min(m.workflowTop, max(0, count-visible)))
 }
 
 func (m Model) workflowVisibleRows() int {
 	noticeRows := 0
-	if m.loadPreserves && (m.loading || m.err != nil) && len(m.workflows) > 0 {
+	if m.loadPreserves && (m.loading || m.err != nil) && m.itemCount() > 0 {
 		noticeRows = 1
 	}
 	gridHeight := m.height - 6 - 1 - noticeRows
@@ -526,6 +607,18 @@ func (m Model) openSelected() (Model, tea.Cmd) {
 			}
 		}
 	}
+	if loader, ok := m.loader.(deliveryLoader); ok && m.screen == WorkflowsScreen && m.selected < len(m.deliveries) {
+		deliveryID := m.deliveries[m.selected].ID
+		m.detail = detailCursor{}
+		meta := m.startLoad(loadDetail, false)
+		return m, func() tea.Msg {
+			detail, err := loader.GetDelivery(context.Background(), deliveryID)
+			if err != nil {
+				return loadFailedMsg{loadMeta: meta, err: err}
+			}
+			return deliveryDetailLoadedMsg{loadMeta: meta, detail: detail}
+		}
+	}
 	if m.screen == WorkflowsScreen && m.selected < len(m.workflows) {
 		workflowID := m.workflows[m.selected].ID
 		m.detail = detailCursor{}
@@ -550,6 +643,17 @@ func (m Model) openSelected() (Model, tea.Cmd) {
 			return detailLoadedMsg{loadMeta: meta, resolution: resolution}
 		}
 	}
+	if loader, ok := m.loader.(deliveryLoader); ok && m.screen == ResultsScreen && m.selected < len(m.deliveryResults) {
+		deliveryID := m.deliveryResults[m.selected].DeliveryID
+		meta := m.startLoad(loadDetail, false)
+		return m, func() tea.Msg {
+			detail, err := loader.GetDelivery(context.Background(), deliveryID)
+			if err != nil {
+				return loadFailedMsg{loadMeta: meta, err: err}
+			}
+			return deliveryDetailLoadedMsg{loadMeta: meta, detail: detail}
+		}
+	}
 	return m, nil
 }
 
@@ -561,6 +665,15 @@ func (m Model) refreshActive() (Model, tea.Cmd) {
 	case ResultsScreen:
 		query := m.query
 		meta := m.startLoad(loadResults, true)
+		if loader, ok := m.loader.(deliveryLoader); ok {
+			return m, func() tea.Msg {
+				results, err := loader.SearchDeliveries(context.Background(), query)
+				if err != nil {
+					return loadFailedMsg{loadMeta: meta, err: err}
+				}
+				return deliveryResultsLoadedMsg{loadMeta: meta, results: results}
+			}
+		}
 		return m, func() tea.Msg {
 			results, err := m.loader.Search(context.Background(), query)
 			if err != nil {
@@ -569,6 +682,17 @@ func (m Model) refreshActive() (Model, tea.Cmd) {
 			return resultsLoadedMsg{loadMeta: meta, results: results}
 		}
 	case DetailScreen:
+		if loader, ok := m.loader.(deliveryLoader); ok && m.openedDelivery.Delivery.ID != "" {
+			id := m.openedDelivery.Delivery.ID
+			meta := m.startLoad(loadDetail, true)
+			return m, func() tea.Msg {
+				detail, err := loader.GetDelivery(context.Background(), id)
+				if err != nil {
+					return loadFailedMsg{loadMeta: meta, err: err}
+				}
+				return deliveryDetailLoadedMsg{loadMeta: meta, detail: detail}
+			}
+		}
 		workflowID := m.opened.Detail.Workflow.ID
 		if workflowID == "" {
 			return m, nil
@@ -584,6 +708,15 @@ func (m Model) refreshActive() (Model, tea.Cmd) {
 	default:
 		meta := m.startLoad(loadWorkflows, true)
 		m.reconcileWorkflowWindow()
+		if loader, ok := m.loader.(deliveryLoader); ok {
+			return m, func() tea.Msg {
+				deliveries, err := loader.ListDeliveries(context.Background())
+				if err != nil {
+					return loadFailedMsg{loadMeta: meta, err: err}
+				}
+				return deliveriesLoadedMsg{loadMeta: meta, deliveries: deliveries}
+			}
+		}
 		return m, func() tea.Msg {
 			workflows, err := m.loader.List(context.Background())
 			if err != nil {
@@ -655,9 +788,22 @@ func (m Model) itemCount() int {
 		return len(homeActions)
 	}
 	if m.screen == ResultsScreen {
+		if _, ok := m.loader.(deliveryLoader); ok {
+			return len(m.deliveryResults)
+		}
 		return len(m.results)
 	}
+	if _, ok := m.loader.(deliveryLoader); ok {
+		return len(m.deliveries)
+	}
 	return len(m.workflows)
+}
+
+func (m Model) selectedDeliveryID() string {
+	if m.selected >= 0 && m.selected < len(m.deliveries) {
+		return m.deliveries[m.selected].ID
+	}
+	return ""
 }
 
 func (m *Model) reconcileDetail() {

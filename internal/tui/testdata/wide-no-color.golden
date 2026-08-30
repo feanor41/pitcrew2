@@ -1,11 +1,11 @@
 Redesign TUI history  ·  IMPLEMENTING  ·  r7  ·  v0.17.1
 Ship read-only terminal inspection
 ╭ ACTIVE TREE ────────────────────────────────────────────────────────────────────╮╭ STATUS ─────────────────────────────────────────────────────────────────────────╮
-│   ● ▾ Redesign TUI history · active                                             ││ ▶ ● State: implementing                                                         │
-│   ✓ ├─ ▸ Spec · done                                                            ││   ○ Plan: 2/3 · 66%                                                             │
-│   ● └─ ▾ Build · active                                                         ││   ● Current: Render diseño operativo                                            │
-│   ○   ├─ approved · recorded                                                    ││   › Executable: workflow list-ready-units                                       │
-│   ✓   ├─ Map history signals · done                                             ││                                                                                 │
+│   ● ▾ Redesign TUI history · active                                             ││ ▶ ○ Route: full_workflow                                                        │
+│   ✓ ├─ ▸ Spec · done                                                            ││   ● State: implementing                                                         │
+│   ● └─ ▾ Build · active                                                         ││   ○ Plan: 2/3 · 66%                                                             │
+│   ○   ├─ approved · recorded                                                    ││   ● Current: Render diseño operativo                                            │
+│   ✓   ├─ Map history signals · done                                             ││   › Executable: workflow list-ready-units                                       │
 │   ✓   ├─ Define responsive hierarchy · done                                     ││                                                                                 │
 │ ▶ ●   └─ Render diseño operativo · active                                       ││                                                                                 │
 │                                                                                 ││                                                                                 │

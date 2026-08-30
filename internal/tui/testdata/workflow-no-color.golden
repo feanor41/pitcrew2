@@ -3,9 +3,9 @@
 │ Control Plane                                            │
 ╰──────────────────────────────────────────────────────────╯
 
-WORKFLOWS
+DELIVERIES
 ╭─────────────────────┬──────────────────────┬─────────────╮
-│ Started             │ Workflow             │ Status      │
+│ Started             │ Delivery             │ Status      │
 ├─────────────────────┼──────────────────────┼─────────────┤
 │   2026-08-28 01:02  │ Unicode 界 goal Uni… │ [ABANDONED] │
 │   2026-08-28 01:03  │ Unicode 界 goal      │ [READY TO … │
