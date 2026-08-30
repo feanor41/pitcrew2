@@ -6,7 +6,7 @@ Let's store all the TO-DO in a single place
 
 - [x] **Delivered — Daimon feedback relay.** Desde que aparecio Aion, la comunicacion de Daimon desaparecio. Todo funciona, pero Daimon "esta mudo". Delivered by PR #62; the named Pi supervisor-flow verifier is `scripts/tests/pi-supervisor-runtime.sh`.
 - [ ] **P3 — User-channel role identity.** Cuando habla Daimon quiero que su dialogo hacia el usuario siempre este marcado porque inicia con un Emoji que lo distingue, lo mismo con Aion. Clarify how Aion attribution remains compatible with the `user ↔ Daimon ↔ Aion` boundary before implementation.
-- [ ] **In flight — Durable project context and SDD initialization.** Pitcrew tiene que tener en la herramienta disponible toda la informacion del proyecto, la especifica que nos sirve para trabajar y que workflow a workflow estamos yendo a leer de nuevo.  Quiero que la cli sea capaz de guardar y retornar esa informacion para que cualquier agente que la necesite la pueda solicitar directamente al control plane.  Quiero que cuando PitCrew detecta que esta trabajando en un nuevo repo o proyecto, analiza el repositorio en busca de:
+- [x] **Delivered — Durable project context and SDD initialization.** Pitcrew tiene que tener en la herramienta disponible toda la informacion del proyecto, la especifica que nos sirve para trabajar y que workflow a workflow estamos yendo a leer de nuevo.  Quiero que la cli sea capaz de guardar y retornar esa informacion para que cualquier agente que la necesite la pueda solicitar directamente al control plane.  Quiero que cuando PitCrew detecta que esta trabajando en un nuevo repo o proyecto, analiza el repositorio en busca de:
   - Stack tecnico
   - Runtime
   - Despliegue

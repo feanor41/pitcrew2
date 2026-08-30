@@ -104,6 +104,37 @@ for required in \
   }
 done
 
+for required in \
+  'inspects project context once on demand' \
+  'exactly one `pc2-sdd-initializer` attempt' \
+  'bypasses it for `complete`' \
+  'never schedules recurring scans' \
+  'exactly the seven specialists' \
+  'Daimon targets only Aion' \
+  'specialists never delegate' \
+  '`context inspect`, `context initialize`, `context record`'; do
+  grep -Fq "$required" "$repo_root/AGENTS.md" || {
+    printf 'active project-context routing contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for required in \
+  'exactly all nine native definitions' \
+  'target exactly the seven specialists' \
+  'inspect project context once on demand' \
+  'exactly one `pc2-sdd-initializer` attempt' \
+  'bypass initialization when context is `complete`' \
+  'never schedule recurring context scans' \
+  'pitcrew context inspect' \
+  'pitcrew context initialize' \
+  'pitcrew context record'; do
+  grep -Fq "$required" "$runtime_contract" || {
+    printf 'runtime project-context routing contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
 archive_snapshot "$archive_after"
 if ! cmp -s "$archive_before" "$archive_after"; then
   echo "archived OpenSpec content changed during active-contract validation" >&2

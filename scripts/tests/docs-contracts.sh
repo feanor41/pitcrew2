@@ -28,6 +28,10 @@ require openspec/specs/tui-inspection/spec.md 'central state database read-only'
 require openspec/specs/cli-surface/spec.md '`project inspect`'
 require openspec/specs/cli-surface/spec.md '`project consolidate`'
 require openspec/specs/claim-handles/spec.md '<data-home>/pitcrew/projects/<project-id>/handles/'
+require openspec/specs/runtime-install/spec.md 'exactly all nine native definitions'
+require openspec/specs/runtime-install/spec.md 'pc2-sdd-initializer'
+require AGENTS.md 'Aion targets exactly the seven specialists'
+require docs/todo.md '**Delivered — Durable project context and SDD initialization.**'
 
 if grep -Fq 'current project owns `.pitcrew/state.db`' README.md; then
   echo 'README still claims checkout-local workflow ownership' >&2

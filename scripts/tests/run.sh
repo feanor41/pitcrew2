@@ -12,7 +12,7 @@ assert_file() { [ -f "$1" ] || fail "missing file $1"; }
 assert_absent() { [ ! -e "$1" ] && [ ! -L "$1" ] || fail "unexpected path $1"; }
 snapshot() { find "$1" -type f -exec cksum {} \; | sort > "$2"; }
 assert_no_temps() { find "$1" -name '.pitcrew-install.*' -o -name '.*.md.new.*' | grep . >/dev/null && fail "installer temporary remains in $1" || :; }
-roles='daimon aion pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer'
+roles='daimon aion pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer'
 legacy_roles='explorer specifier designer task-planner implementer reviewer archivist pc2-archivist'
 role_path() {
   directory=$1 role=$2
@@ -31,10 +31,10 @@ assert_role_set() {
   for role in $roles; do assert_file "$1/$role.md"; done
   if [ -f "$1/../pitcrew/agent-contract.md" ]; then
     assert_absent "$1/agent-contract.md"
-    [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 8 ] || fail "unexpected agent set in $1"
+    [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 9 ] || fail "unexpected agent set in $1"
   else
     assert_file "$1/agent-contract.md"
-    [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 9 ] || fail "unexpected prompt set in $1"
+    [ "$(find "$1" -type f -name '*.md' | wc -l | tr -d ' ')" -eq 10 ] || fail "unexpected prompt set in $1"
   fi
   assert_absent "$1/master.md"
   for role in $legacy_roles; do assert_absent "$1/$role.md"; done
@@ -42,7 +42,7 @@ assert_role_set() {
 
 assert_codex_registry() {
   registry=$1/agents
-  expected='aion daimon pc2_designer pc2_explorer pc2_implementer pc2_reviewer pc2_specifier pc2_task_planner'
+  expected='aion daimon pc2_designer pc2_explorer pc2_implementer pc2_reviewer pc2_sdd_initializer pc2_specifier pc2_task_planner'
   actual=$(find "$registry" -maxdepth 1 -type f -name '*.toml' -exec basename {} .toml \; | sort | tr '\n' ' ' | sed 's/ $//')
   [ "$actual" = "$expected" ] || fail "unexpected Codex registry: $actual"
   assert_file "$1/pitcrew/agent-contract.md"
@@ -53,14 +53,14 @@ assert_codex_registry() {
     grep -F 'description = "' "$file" >/dev/null || fail "$role missing Codex description"
     grep -F "developer_instructions = '''" "$file" >/dev/null || fail "$role missing Codex instructions"
   done
-  for graph_target in pc2_explorer pc2_specifier pc2_designer pc2_task_planner pc2_implementer pc2_reviewer; do
+  for graph_target in pc2_explorer pc2_specifier pc2_designer pc2_task_planner pc2_implementer pc2_reviewer pc2_sdd_initializer; do
     grep -F "$graph_target" "$registry/aion.toml" >/dev/null || fail "Codex Aion cannot resolve $graph_target"
   done
 }
 
 assert_opencode_registry() {
   registry=$1/agents
-  expected='aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-specifier pc2-task-planner'
+  expected='aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-sdd-initializer pc2-specifier pc2-task-planner'
   actual=$(find "$registry" -maxdepth 1 -type f -name '*.md' -exec basename {} .md \; | sort | tr '\n' ' ' | sed 's/ $//')
   [ "$actual" = "$expected" ] || fail "unexpected OpenCode registry: $actual"
   assert_file "$1/pitcrew/agent-contract.md"
@@ -68,14 +68,14 @@ assert_opencode_registry() {
   grep -F 'mode: primary' "$registry/daimon.md" >/dev/null || fail 'OpenCode Daimon is not primary'
   grep -F '    aion: allow' "$registry/daimon.md" >/dev/null || fail 'OpenCode Daimon cannot hand off to Aion'
   grep -F 'mode: all' "$registry/aion.md" >/dev/null || fail 'OpenCode Aion is not dispatch-capable'
-  for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+  for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer; do
     grep -F "    $graph_target: allow" "$registry/aion.md" >/dev/null || fail "OpenCode Aion cannot resolve $graph_target"
     grep -F 'mode: subagent' "$registry/$graph_target.md" >/dev/null || fail "$graph_target is not an OpenCode subagent"
   done
 }
 assert_claude_registry() {
   registry=$1/agents
-  expected='aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-specifier pc2-task-planner'
+  expected='aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-sdd-initializer pc2-specifier pc2-task-planner'
   actual=$(find "$registry" -maxdepth 1 -type f -name '*.md' -exec basename {} .md \; | sort | tr '\n' ' ' | sed 's/ $//')
   [ "$actual" = "$expected" ] || fail "unexpected Claude registry: $actual"
   assert_file "$1/pitcrew/agent-contract.md"
@@ -83,8 +83,8 @@ assert_claude_registry() {
   grep -F 'name: daimon' "$registry/daimon.md" >/dev/null || fail 'Claude Daimon metadata is invalid'
   grep -F 'tools: Agent' "$registry/daimon.md" >/dev/null || fail 'Claude Daimon cannot hand off to Aion'
   grep -F 'name: aion' "$registry/aion.md" >/dev/null || fail 'Claude Aion metadata is invalid'
-  grep -F 'Claude delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer.' "$registry/aion.md" >/dev/null || fail 'Claude Aion cannot resolve specialist targets'
-  for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+  grep -F 'Claude delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer, pc2-sdd-initializer.' "$registry/aion.md" >/dev/null || fail 'Claude Aion cannot resolve specialist targets'
+  for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer; do
     grep -F "name: $graph_target" "$registry/$graph_target.md" >/dev/null || fail "$graph_target missing Claude metadata"
     grep -F 'disallowedTools: Agent' "$registry/$graph_target.md" >/dev/null || fail "$graph_target can unexpectedly delegate in Claude"
   done
@@ -102,7 +102,7 @@ seed_pi_subagents() {
 }
 assert_pi_registry() {
   registry=$1/agents
-  expected='aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-specifier pc2-task-planner'
+  expected='aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-sdd-initializer pc2-specifier pc2-task-planner'
   actual=$(find "$registry" -maxdepth 1 -type f -name '*.md' -exec basename {} .md \; | sort | tr '\n' ' ' | sed 's/ $//')
   [ "$actual" = "$expected" ] || fail "unexpected Pi registry: $actual"
   assert_file "$1/pitcrew/agent-contract.md"
@@ -139,7 +139,7 @@ assert_pi_registry() {
     "live as Aion's live addressable parent"; do
     grep -F -- "$literal" "$registry/daimon.md" >/dev/null || fail "Pi Daimon relay contract omitted $literal"
   done
-  for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+  for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer; do
     grep -F "name: $graph_target" "$registry/$graph_target.md" >/dev/null || fail "$graph_target missing Pi metadata"
     grep '^tools: .*subagent' "$registry/$graph_target.md" >/dev/null && fail "$graph_target can unexpectedly delegate in Pi" || :
   done
@@ -194,6 +194,27 @@ assert_authority_contract() {
     file=$(role_path "$destination" "$specialist")
     grep -F 'Return only a one-line revision-bearing completion status to Aion.' "$file" >/dev/null || fail "$specialist hand-off drift in $destination"
   done
+}
+
+assert_context_initializer_contract() {
+  destination=$1
+  aion=$(role_path "$destination" aion)
+  initializer=$(role_path "$destination" pc2-sdd-initializer)
+  contract=$(contract_path "$destination")
+  for rule in \
+    'inspect project context once on demand' \
+    'exactly one pc2-sdd-initializer attempt when context is missing or incomplete' \
+    'bypass initialization when context is complete' \
+    'never schedule recurring context scans'; do
+    grep -F "$rule" "$aion" >/dev/null || fail "Aion context routing omitted $rule in $destination"
+    grep -F "$rule" "$contract" >/dev/null || fail "shared context routing omitted $rule in $destination"
+  done
+  grep -F 'pitcrew context inspect' "$initializer" >/dev/null || fail "initializer cannot inspect context in $destination"
+  grep -F 'pitcrew context initialize' "$initializer" >/dev/null || fail "initializer initialize command was not rendered literally in $destination"
+  grep -F 'pitcrew context record' "$initializer" >/dev/null || fail "initializer cannot record context in $destination"
+  grep -F 'Allowed workflow commands: none.' "$initializer" >/dev/null || fail "initializer unexpectedly owns workflow commands in $destination"
+  grep -F 'Never delegate.' "$initializer" >/dev/null || fail "initializer delegation prohibition omitted in $destination"
+  grep -F 'Return only a one-line context-bearing completion status to Aion.' "$initializer" >/dev/null || fail "initializer hand-off drift in $destination"
 }
 
 assert_delivery_trace_contract() {
@@ -503,6 +524,7 @@ assert_role_set "$target"
 assert_proportional_contract "$target"
 assert_authority_contract "$target"
 assert_delivery_trace_contract "$target"
+assert_context_initializer_contract "$target"
 for role in $roles; do
   file=$(role_path "$target" "$role")
   assert_file "$file"
@@ -811,14 +833,15 @@ for runtime in opencode claude pi; do
   assert_proportional_contract "$installed"
   assert_authority_contract "$installed"
   assert_delivery_trace_contract "$installed"
+  assert_context_initializer_contract "$installed"
   if [ "$runtime" = opencode ]; then
     assert_opencode_registry "$home"
     if command -v opencode >/dev/null 2>&1; then
       mkdir -p "$home/xdg-data" "$home/xdg-state" "$home/xdg-cache" "$home/runtime-home"
       HOME="$home/runtime-home" XDG_DATA_HOME="$home/xdg-data" XDG_STATE_HOME="$home/xdg-state" XDG_CACHE_HOME="$home/xdg-cache" OPENCODE_CONFIG_DIR="$home" \
         opencode --pure agent list > "$home/native-agent-list"
-      grep -E '^(daimon|aion|pc2-(explorer|specifier|designer|task-planner|implementer|reviewer)) \(' "$home/native-agent-list" | sed 's/ (.*$//' | sort > "$home/native-agent-names"
-      printf '%s\n' aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-specifier pc2-task-planner > "$home/expected-agent-names"
+      grep -E '^(daimon|aion|pc2-(explorer|specifier|designer|task-planner|implementer|reviewer|sdd-initializer)) \(' "$home/native-agent-list" | sed 's/ (.*$//' | sort > "$home/native-agent-names"
+      printf '%s\n' aion daimon pc2-designer pc2-explorer pc2-implementer pc2-reviewer pc2-sdd-initializer pc2-specifier pc2-task-planner > "$home/expected-agent-names"
       cmp "$home/expected-agent-names" "$home/native-agent-names" || fail 'OpenCode native discovery omitted or duplicated PitCrew agents'
     fi
   elif [ "$runtime" = claude ]; then

@@ -92,7 +92,7 @@ func merge(existing map[string][]projectcontext.Fact, observed projectcontext.Re
 	}
 	for _, category := range projectcontext.Categories() {
 		for _, candidate := range observed.Facts[category] {
-			if !contains(merged.Facts[category], candidate) {
+			if len(merged.Facts[category]) < projectcontext.MaxFactsPerCategory && !contains(merged.Facts[category], candidate) {
 				merged.Facts[category] = append(merged.Facts[category], candidate)
 			}
 		}

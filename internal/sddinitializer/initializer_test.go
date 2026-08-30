@@ -129,9 +129,9 @@ func TestInitializePreservesOrderAndDeduplicatesAssertionWithEvidence(t *testing
 	}
 }
 
-func TestInitializeRejectsBoundOverflowWithoutRecording(t *testing.T) {
+func TestInitializeMergesOnlyFactsThatFitCategoryCapacity(t *testing.T) {
 	existing := emptyRecord()
-	for i := 0; i < projectcontext.MaxFactsPerCategory; i++ {
+	for i := 0; i < projectcontext.MaxFactsPerCategory-1; i++ {
 		existing.Facts["stack"] = append(existing.Facts["stack"], projectcontext.Fact{
 			Assertion:  "retained-" + string(rune('a'+i)),
 			ObservedAt: "2026-08-30T00:00:00Z",
@@ -139,15 +139,26 @@ func TestInitializeRejectsBoundOverflowWithoutRecording(t *testing.T) {
 		})
 	}
 	observed := emptyRecord()
-	observed.Facts["stack"] = []projectcontext.Fact{{Assertion: "overflow", ObservedAt: "2026-08-30T01:00:00Z", Evidence: projectcontext.Evidence{Path: "package.json"}}}
+	observed.Facts["stack"] = []projectcontext.Fact{
+		{Assertion: "fits", ObservedAt: "2026-08-30T01:00:00Z", Evidence: projectcontext.Evidence{Path: "package.json"}},
+		{Assertion: "excess", ObservedAt: "2026-08-30T01:00:00Z", Evidence: projectcontext.Evidence{Path: "pyproject.toml"}},
+	}
+	inspector := &fakeInspector{inspection: projectcontext.Inspection{Status: projectcontext.Incomplete, Facts: existing.Facts, CheckoutRoot: t.TempDir()}}
 	recorder := &fakeRecorder{}
-	_, err := Initialize(context.Background(), Dependencies{
-		Inspector: &fakeInspector{inspection: projectcontext.Inspection{Status: projectcontext.Incomplete, Facts: existing.Facts, CheckoutRoot: t.TempDir()}},
-		Recorder:  recorder,
-		Collect:   func(string, time.Time) (projectcontext.Record, error) { return observed, nil },
-	})
-	if !errors.Is(err, projectcontext.ErrInvalidRecord) || recorder.calls != 0 || len(existing.Facts["stack"]) != projectcontext.MaxFactsPerCategory {
-		t.Fatalf("err=%v calls=%d retained=%d", err, recorder.calls, len(existing.Facts["stack"]))
+	deps := Dependencies{Inspector: inspector, Recorder: recorder, Collect: func(string, time.Time) (projectcontext.Record, error) { return observed, nil }}
+	result, err := Initialize(context.Background(), deps)
+	if err != nil || !result.Persisted || recorder.calls != 1 || projectcontext.Validate(recorder.record) != nil {
+		t.Fatalf("err=%v result=%#v calls=%d record=%#v", err, result, recorder.calls, recorder.record)
+	}
+	got := recorder.record.Facts["stack"]
+	if len(got) != projectcontext.MaxFactsPerCategory || !reflect.DeepEqual(got[:len(existing.Facts["stack"])], existing.Facts["stack"]) || got[len(got)-1].Assertion != "fits" {
+		t.Fatalf("merged facts=%#v", got)
+	}
+
+	inspector.inspection.Facts, recorder.calls = recorder.record.Facts, 0
+	result, err = Initialize(context.Background(), deps)
+	if err != nil || result.Persisted || recorder.calls != 0 {
+		t.Fatalf("repeat err=%v result=%#v calls=%d", err, result, recorder.calls)
 	}
 }
 
