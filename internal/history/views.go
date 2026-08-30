@@ -25,7 +25,7 @@ func (s *Service) Project(ctx context.Context, workflowID string, view View, uni
 		}
 		return Projection{View: view, Workflow: identity(detail.Workflow), Audit: &detail}, nil
 	}
-	if view != ViewCoordination && view != ViewPhase {
+	if view != ViewCoordination && view != ViewPhase && view != ViewUnit && view != ViewAggregate {
 		return Projection{}, fmt.Errorf("unsupported workflow view %q", view)
 	}
 	wf, err := s.workflowIdentity(ctx, workflowID)
@@ -47,6 +47,18 @@ func (s *Service) Project(ctx context.Context, workflowID string, view View, uni
 			return Projection{}, err
 		}
 		result.Phase = &PhaseProjection{Normative: normative}
+	case ViewUnit:
+		unit, err := s.unitProjection(ctx, workflowID, unitID)
+		if err != nil {
+			return Projection{}, err
+		}
+		result.Unit = &unit
+	case ViewAggregate:
+		aggregate, err := s.aggregateProjection(ctx, wf)
+		if err != nil {
+			return Projection{}, err
+		}
+		result.Aggregate = &aggregate
 	}
 	return result, nil
 }
