@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/activity"
+	"github.com/fmazzalomo/pitcrew/internal/checkpoint"
 	"github.com/fmazzalomo/pitcrew/internal/correction"
 	"github.com/fmazzalomo/pitcrew/internal/ids"
+	"github.com/fmazzalomo/pitcrew/internal/project"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
 
@@ -97,10 +99,12 @@ type ReviewOutcome struct {
 	PlanRevisionRequired bool
 }
 type AggregateReview struct {
-	Verdict  Verdict `json:"verdict"`
-	Summary  string  `json:"summary"`
-	Findings string  `json:"findings"`
-	Actor    string  `json:"-"`
+	Verdict          Verdict             `json:"verdict"`
+	Summary          string              `json:"summary"`
+	Findings         string              `json:"findings"`
+	VerificationRuns []VerificationRun   `json:"verification_runs,omitempty"`
+	Checkpoint       *ReviewedCheckpoint `json:"checkpoint,omitempty"`
+	Actor            string              `json:"-"`
 }
 type AggregateOutcome struct {
 	Revision   int64  `json:"revision"`
@@ -663,6 +667,15 @@ func (s *Service) CompleteAggregate(ctx context.Context, wfID string, revision i
 	if count != 0 {
 		return AggregateOutcome{}, fmt.Errorf("%w: implementer and aggregate reviewer actors must differ", ErrInvalidState)
 	}
+	var structuredUnits int
+	if err = tx.QueryRowContext(ctx, `SELECT count(DISTINCT unit_id) FROM unit_coverage WHERE workflow_id=?`, wfID).Scan(&structuredUnits); err != nil {
+		return AggregateOutcome{}, err
+	}
+	if review.Verdict == Approved && structuredUnits > 0 {
+		if err = validateAggregateBundle(ctx, tx, wfID, review); err != nil {
+			return AggregateOutcome{}, err
+		}
+	}
 	projection, err := correction.Project(ctx, tx, wfID, "workflow complete")
 	if err != nil {
 		return AggregateOutcome{}, err
@@ -674,6 +687,18 @@ func (s *Service) CompleteAggregate(ctx context.Context, wfID string, revision i
 	at, nextRevision, nextState := ids.FormatTime(now), revision+1, "ready_to_complete"
 	if review.Verdict == Approved {
 		nextState = "completed"
+		if structuredUnits > 0 {
+			if err = persistVerificationRuns(ctx, tx, wfID, nil, nil, review.Actor, at, review.VerificationRuns); err != nil {
+				return AggregateOutcome{}, err
+			}
+			reviewed, checkpointErr := review.Checkpoint.reviewed(wfID, nextRevision, now)
+			if checkpointErr != nil {
+				return AggregateOutcome{}, checkpointErr
+			}
+			if err = checkpoint.Persist(ctx, tx, reviewed); err != nil {
+				return AggregateOutcome{}, err
+			}
+		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE workflows SET state=?,revision=?,updated_at=? WHERE id=? AND revision=?`, nextState, nextRevision, at, wfID, revision)
 	if err != nil {
@@ -716,4 +741,70 @@ func (s *Service) CompleteAggregate(ctx context.Context, wfID string, revision i
 		return AggregateOutcome{}, err
 	}
 	return AggregateOutcome{Revision: nextRevision, State: nextState, NextAction: nextAction}, nil
+}
+
+func validateAggregateBundle(ctx context.Context, tx *sql.Tx, wfID string, review AggregateReview) error {
+	if review.Checkpoint == nil {
+		return fmt.Errorf("reviewed checkpoint is required")
+	}
+	aggregateSuccess := false
+	for _, run := range review.VerificationRuns {
+		if err := run.Validate(); err != nil {
+			return err
+		}
+		exit, _ := outcomeExitCode(run.Outcome)
+		if run.Tier == AggregateFull && exit == 0 {
+			aggregateSuccess = true
+		}
+	}
+	if !aggregateSuccess {
+		return fmt.Errorf("current aggregate_full verification is required")
+	}
+	rows, err := tx.QueryContext(ctx, `
+SELECT u.id,u.revision
+FROM work_units u
+WHERE u.workflow_id=? AND EXISTS(
+    SELECT 1 FROM unit_coverage c WHERE c.workflow_id=u.workflow_id AND c.unit_id=u.id
+)`, wfID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var unitID string
+		var revision int64
+		if err := rows.Scan(&unitID, &revision); err != nil {
+			return err
+		}
+		for _, tier := range []VerificationTier{Focused, AffectedPackage} {
+			var count int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM verification_records WHERE workflow_id=? AND unit_id=? AND unit_revision=? AND tier=? AND outcome LIKE 'exit 0%'`, wfID, unitID, revision, tier).Scan(&count); err != nil {
+				return err
+			}
+			if count == 0 {
+				return fmt.Errorf("aggregate bundle lacks current %s verification for unit %s", tier, unitID)
+			}
+		}
+	}
+	return rows.Err()
+}
+
+func (value *ReviewedCheckpoint) reviewed(wfID string, aggregateRevision int64, now time.Time) (checkpoint.Reviewed, error) {
+	if value == nil {
+		return checkpoint.Reviewed{}, fmt.Errorf("reviewed checkpoint is required")
+	}
+	fingerprint := project.RepositoryFingerprint{
+		ProjectID:    value.ProjectID,
+		CheckoutRoot: value.CheckoutRoot,
+		BaseRevision: value.BaseRevision,
+		HeadRevision: value.HeadRevision,
+		ResultDigest: value.ResultDigest,
+		Dirty:        value.Dirty,
+		Unstaged:     value.Dirty,
+	}
+	reviewed, err := checkpoint.NewReviewed(wfID, aggregateRevision, fingerprint, value.CommitRef, value.DeliveryID, now)
+	if err != nil {
+		return checkpoint.Reviewed{}, fmt.Errorf("reviewed checkpoint: %w", err)
+	}
+	return reviewed, nil
 }
