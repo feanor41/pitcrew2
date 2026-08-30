@@ -23,6 +23,14 @@ printf '%s\n' \
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'inspects project context once on demand' \
+  'exactly one `pc2-sdd-initializer` attempt' \
+  'bypasses it for `complete`' \
+  'never schedules recurring scans' \
+  'exactly the seven specialists' \
+  'Daimon targets only Aion' \
+  'specialists never delegate' \
+  '`context inspect`, `context initialize`, `context record`' \
   >"$fixture_root/AGENTS.md"
 mkdir -p "$fixture_root/openspec"
 printf '%s\n' 'Daimon preserves conversational continuity.' >"$fixture_root/openspec/AGENTS.md"
@@ -42,6 +50,15 @@ printf '%s\n' 'active user-visible turn' 'host-native dual wait/select' 'request
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'exactly all nine native definitions' \
+  'target exactly the seven specialists' \
+  'inspect project context once on demand' \
+  'exactly one `pc2-sdd-initializer` attempt' \
+  'bypass initialization when context is `complete`' \
+  'never schedule recurring context scans' \
+  'pitcrew context inspect' \
+  'pitcrew context initialize' \
+  'pitcrew context record' \
   >"$fixture_root/openspec/specs/runtime-install/spec.md"
 printf '%s\n' 'immutable archive' \
   >"$fixture_root/openspec/changes/archive/spec.md"
@@ -50,6 +67,14 @@ if ! sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
   echo "clean active contracts were rejected" >&2
   exit 1
 fi
+
+grep -Fv 'pitcrew context initialize' "$fixture_root/openspec/specs/runtime-install/spec.md" >"$fixture_root/runtime.tmp"
+mv "$fixture_root/runtime.tmp" "$fixture_root/openspec/specs/runtime-install/spec.md"
+if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
+  echo "missing initializer command contract escaped validation" >&2
+  exit 1
+fi
+printf '%s\n' 'pitcrew context initialize' >>"$fixture_root/openspec/specs/runtime-install/spec.md"
 
 grep -Fv 'host-native dual wait/select' "$fixture_root/openspec/specs/runtime-install/spec.md" >"$fixture_root/runtime.tmp"
 mv "$fixture_root/runtime.tmp" "$fixture_root/openspec/specs/runtime-install/spec.md"
@@ -82,6 +107,14 @@ printf '%s\n' \
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'inspects project context once on demand' \
+  'exactly one `pc2-sdd-initializer` attempt' \
+  'bypasses it for `complete`' \
+  'never schedules recurring scans' \
+  'exactly the seven specialists' \
+  'Daimon targets only Aion' \
+  'specialists never delegate' \
+  '`context inspect`, `context initialize`, `context record`' \
   >"$fixture_root/AGENTS.md"
 
 printf '%s\n' 'Forbidden Master documentation' >"$fixture_root/docs/guide.md"

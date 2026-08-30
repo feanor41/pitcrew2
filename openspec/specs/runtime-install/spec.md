@@ -49,6 +49,7 @@ The selected runtime SHALL receive native definitions for:
 - `pc2-task-planner`
 - `pc2-implementer`
 - `pc2-reviewer`
+- `pc2-sdd-initializer`
 
 Codex SHALL use `agents/*.toml` with underscore native identities. OpenCode,
 Claude Code, and Pi SHALL use `agents/*.md` with hyphenated identities. Each
@@ -60,7 +61,7 @@ unprefixed roles and `pc2-archivist` SHALL be absent.
 
 - GIVEN a selected runtime whose prerequisites pass
 - WHEN installation succeeds
-- THEN exactly all eight native definitions SHALL exist and validate
+- THEN exactly all nine native definitions SHALL exist and validate
 - AND obsolete PitCrew definitions SHALL be absent
 
 ### Requirement: Separated agent contract and bounded graph
@@ -70,13 +71,30 @@ agent discovery. It SHALL record opaque-handle boundaries, distinct
 Implementer/Reviewer actors, CAS inspection, and the prohibitions on
 `--claim-token`, `--emit-plain-token`, and
 `--print-claim-handle-secret-once`. Daimon SHALL target only Aion, Aion SHALL
-target exactly the six specialists, and specialists SHALL NOT delegate.
+target exactly the seven specialists, and specialists SHALL NOT delegate.
 
 #### Scenario: Contract and graph validate before mutation
 
 - GIVEN staged runtime definitions
 - WHEN the installer validates their declared targets
 - THEN every bounded edge and common prohibition SHALL match the role contract
+
+### Requirement: Bounded project-context initialization routing
+
+Before SDD routing, Aion SHALL inspect project context once on demand. It SHALL
+dispatch exactly one `pc2-sdd-initializer` attempt when inspection reports
+`missing` or `incomplete`, bypass initialization when context is `complete`,
+and never schedule recurring context scans. The initializer SHALL use only
+literal `pitcrew context inspect`, `pitcrew context initialize`, and
+`pitcrew context record` commands, own no workflow lifecycle command, and never
+delegate. Its command literals SHALL survive native rendering unchanged.
+
+#### Scenario: Complete context bypasses initialization
+
+- GIVEN project context inspection reports `complete`
+- WHEN Aion selects SDD routing
+- THEN no initializer attempt SHALL be dispatched
+- AND no recurring scan SHALL be scheduled
 
 ### Requirement: Live user turn and addressable Aion
 

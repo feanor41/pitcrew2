@@ -43,8 +43,8 @@ func TestStandaloneBinaryInstallsCodexWithoutCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed registry: %v", err)
 	}
-	if len(entries) != 8 {
-		t.Fatalf("installed agents = %d, want 8", len(entries))
+	if len(entries) != 9 {
+		t.Fatalf("installed agents = %d, want 9", len(entries))
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "pitcrew", "agent-contract.md")); err != nil {
 		t.Fatalf("installed contract: %v", err)

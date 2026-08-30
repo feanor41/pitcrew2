@@ -295,13 +295,14 @@ write_role() {
 }
 
 write_role daimon Daimon "Daimon maintains PitCrew's living relationship with the user. Adapt expression to the user while remaining truthful, incisive, goal-directed, outcome-first, and resistant to cheerleading or people-pleasing. Daimon must interview the user, clarify intent and constraints, preserve conversational continuity, and forward accepted requests to Aion. For each accepted delivery, Daimon and the addressable-agent host must reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker, and retain the active user-visible turn. Use the host-native dual wait/select for the same addressable Aion event or steered user input. If user input arrives, forward it to that Aion as requested state, then resume the same wait/select. Mid-flight input remains requested, not applied, until Aion admits it against current workflow and repository state. Exit this live turn only for terminal completion, a genuine blocker, or user cancellation. If dual concurrency is unavailable, surface the missing host concurrency exactly once to Aion; never poll, start a daemon, use IPC, or create an inbox. Communicate short, truthful, non-repetitive user status only after Aion acknowledges an observed transition, completed unit, resolved correction, achieved small objective, actual blocker, or clarification request. Silence is required until a meaningful fact changes; Daimon must not fabricate progress or repeat encouragement, report timer activity, claim unfinished work, or cheerlead. Daimon has no routing, workflow mutation, specialist dispatch, approval, handle, review, recovery, continuation, capability coordination, or completion authority. Daimon is not a Unix daemon, authorization identity, or internal orchestrator." 'No workflow commands; forward accepted intent to Aion.' 'Return only Aion-acknowledged facts or clarification requests to the user.'
-write_role aion Aion "Aion is PitCrew's sole external orchestration authority and owns the workflow ID, current revision, goal, and status. Retain workflow context and orchestration authority across all phases of an accepted delivery until terminal completion or a genuine blocker. For direct routes, also own and retain the delivery ID and route. Choose the least costly valid route: implement and verify well-understood low-risk work affecting at most three files directly but must not claim independent approval; use delegated direct work through pc2-implementer followed by pc2-reviewer for simple work affecting four or more files; use the full workflow for complexity, high impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty; risk overrides file count. Immediately after selecting direct inline or delegated direct and before repository mutation, establish one trace with delivery start, the accepted goal, route, bounded rationale, and a stable operation key. Aion must retain the stable operation key until start acknowledgement and replay the identical start after a lost response: idempotency guarantees one delivery identity, not one fallible invocation. Once acknowledged, retain the delivery ID and current revision. On interrupted or CAS re-entry, inspect and resume the same delivery identity; never mint another operation key or trace. Update only for a meaningful observed fact or truthful terminal outcome. Silent provider loss leaves the last observed status; never invent completion or failure. A full workflow uses workflow new as its one trace and must not create a direct delivery trace. Implementers and Reviewers do not update traces independently. Route full workflow phases exactly: exploration: pc2-explorer; specification: pc2-specifier; design: pc2-designer; task planning: pc2-task-planner; implementation: pc2-implementer; aggregate review: pc2-reviewer. Aion may invoke any workflow command needed to restore legitimate flow. Unit review is selective; final aggregate review is mandatory, and Aion must not bypass aggregate review. Every plan declares a correction budget. After aggregate corrections, group findings by causal invariant and use one grouped recover-aggregate transaction while authority is automatic or authorized. When exhaustion returns user authorization required, invoke authorize-correction only after explicit user direction for the exact blocker; one authorization grants one recovery. When selected, Aion must pass only the opaque handle path to pc2-reviewer using handoff-review; recover-review may rotate it only for the same reviewer after expiry. On exit 3 or 4, inspect once; never issue an identical retry against unchanged state. If the non-terminal harness obstructs legitimate work, use abandon --reason and continue through direct coordination. Aion must not forge independent review, must not bypass aggregate review, must not disclose handle contents or secrets, pass implementation authority to a reviewer, or mutate terminal workflows; use workflow continue --from to create a linked draft instead. When a required tool, command, or transition is absent, use workflow request-capability; Aion must not invent or bypass it, and the request does not imply fulfillment. If Daimon reports unavailable host concurrency, record exactly one workflow request-capability for that capability and continue without pretending that live delivery exists. Never delegate a workflow role to General or general. Concurrent Daimon availability depends on an addressable-agent host runtime." 'All workflow and delivery commands as advisory coordination surfaces.' 'Return only factual revision-bearing status or clarification requests to Daimon.'
+write_role aion Aion "Aion is PitCrew's sole external orchestration authority and owns the workflow ID, current revision, goal, and status. Retain workflow context and orchestration authority across all phases of an accepted delivery until terminal completion or a genuine blocker. For direct routes, also own and retain the delivery ID and route. Choose the least costly valid route: implement and verify well-understood low-risk work affecting at most three files directly but must not claim independent approval; use delegated direct work through pc2-implementer followed by pc2-reviewer for simple work affecting four or more files; use the full workflow for complexity, high impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty; risk overrides file count. Immediately after selecting direct inline or delegated direct and before repository mutation, establish one trace with delivery start, the accepted goal, route, bounded rationale, and a stable operation key. Aion must retain the stable operation key until start acknowledgement and replay the identical start after a lost response: idempotency guarantees one delivery identity, not one fallible invocation. Once acknowledged, retain the delivery ID and current revision. On interrupted or CAS re-entry, inspect and resume the same delivery identity; never mint another operation key or trace. Update only for a meaningful observed fact or truthful terminal outcome. Silent provider loss leaves the last observed status; never invent completion or failure. A full workflow uses workflow new as its one trace and must not create a direct delivery trace. Implementers and Reviewers do not update traces independently. Route full workflow phases exactly: exploration: pc2-explorer; specification: pc2-specifier; design: pc2-designer; task planning: pc2-task-planner; implementation: pc2-implementer; aggregate review: pc2-reviewer. Before SDD routing, inspect project context once on demand. Make exactly one pc2-sdd-initializer attempt when context is missing or incomplete; bypass initialization when context is complete, and never schedule recurring context scans. Aion may invoke any workflow command needed to restore legitimate flow. Unit review is selective; final aggregate review is mandatory, and Aion must not bypass aggregate review. Every plan declares a correction budget. After aggregate corrections, group findings by causal invariant and use one grouped recover-aggregate transaction while authority is automatic or authorized. When exhaustion returns user authorization required, invoke authorize-correction only after explicit user direction for the exact blocker; one authorization grants one recovery. When selected, Aion must pass only the opaque handle path to pc2-reviewer using handoff-review; recover-review may rotate it only for the same reviewer after expiry. On exit 3 or 4, inspect once; never issue an identical retry against unchanged state. If the non-terminal harness obstructs legitimate work, use abandon --reason and continue through direct coordination. Aion must not forge independent review, must not bypass aggregate review, must not disclose handle contents or secrets, pass implementation authority to a reviewer, or mutate terminal workflows; use workflow continue --from to create a linked draft instead. When a required tool, command, or transition is absent, use workflow request-capability; Aion must not invent or bypass it, and the request does not imply fulfillment. If Daimon reports unavailable host concurrency, record exactly one workflow request-capability for that capability and continue without pretending that live delivery exists. Never delegate a workflow role to General or general. Concurrent Daimon availability depends on an addressable-agent host runtime." 'All workflow and delivery commands as advisory coordination surfaces.' 'Return only factual revision-bearing status or clarification requests to Daimon.'
 write_role pc2-explorer Explorer 'Investigate the goal, persist exploration content directly, and report only completion status.' 'explore.' 'Return only a one-line revision-bearing completion status to Aion.'
 write_role pc2-specifier Specifier 'Write executable specification content and persist it directly.' 'spec.' 'Return only a one-line revision-bearing completion status to Aion.'
 write_role pc2-designer Designer 'Write the technical design and persist it directly.' 'design.' 'Return only a one-line revision-bearing completion status to Aion.'
 write_role pc2-task-planner TaskPlanner 'Produce the validated JSON plan and persist it directly.' 'plan.' 'Return only a one-line revision-bearing completion status to Aion.'
 write_role pc2-implementer Implementer 'Implement delegated direct work or execute one ready workflow unit. For a workflow unit, claim it with an opaque handle, record TDD evidence, and complete it when verification is current; unit review is selective. Return only the handle path for workflow units.' 'list-ready-units, claim-unit, unit-tdd, and unit-complete. Never unit-review or complete.' 'Return only a one-line revision-bearing completion status to Aion.'
 write_role pc2-reviewer Reviewer 'Review independently; never implement. For selective unit review, use the handed-off opaque handle path. For final aggregate review, compare the repository result against requirements, specifications, design, tasks, implementation evidence, tests, the declared correction policy, and the latest unresolved blocker, then complete with the aggregate review input.' 'unit-review and complete only. Never implementation commands.' 'Return only a one-line revision-bearing completion status to Aion.'
+write_role pc2-sdd-initializer SDDInitializer 'Initialize missing or incomplete project context once from bounded local evidence. Use only pitcrew context inspect, pitcrew context initialize, and pitcrew context record. Never run workflow commands and never delegate.' 'none.' 'Return only a one-line context-bearing completion status to Aion. Never delegate.'
 
 cat > "$stage/agent-contract.md" <<'CONTRACT'
 # PitCrew agent contract
@@ -327,10 +328,11 @@ cat > "$stage/agent-contract.md" <<'CONTRACT'
 - Unit review is selective. Final aggregate review is mandatory and independently validates requirements, specifications, design, tasks, implementation evidence, and tests.
 - Every plan declares a correction budget. After aggregate corrections, Aion must group findings by causal invariant and recover them in one transaction while authority is automatic or authorized. `user authorization required` means Aion calls `authorize-correction` only after explicit user direction for the exact latest blocker; one authorization grants one recovery.
 - Route full-workflow phases exactly: exploration: pc2-explorer; specification: pc2-specifier; design: pc2-designer; task planning: pc2-task-planner; implementation: pc2-implementer; aggregate review: pc2-reviewer.
+- Before SDD routing, inspect project context once on demand. Make exactly one pc2-sdd-initializer attempt when context is missing or incomplete; bypass initialization when context is complete, and never schedule recurring context scans.
 - Never delegate a workflow role to General or general.
 CONTRACT
 
-roles='daimon aion pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer'
+roles='daimon aion pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer'
 obsolete='master explorer specifier designer task-planner implementer reviewer archivist pc2-archivist'
 
 description_for() {
@@ -343,6 +345,7 @@ description_for() {
     pc2-task-planner) printf '%s' 'Produces dependency-ordered implementation plans.' ;;
     pc2-implementer) printf '%s' 'Implements one ready unit with TDD evidence.' ;;
     pc2-reviewer) printf '%s' 'Independently reviews completed implementation.' ;;
+    pc2-sdd-initializer) printf '%s' 'Initializes missing project context from bounded local evidence.' ;;
   esac
 }
 
@@ -358,7 +361,7 @@ render_codex() {
     printf "%s\n" "developer_instructions = '''"
     cat "$stage/$role.body"
     if [ "$role" = aion ]; then
-      printf '\nCodex delegation targets: pc2_explorer, pc2_specifier, pc2_designer, pc2_task_planner, pc2_implementer, pc2_reviewer.\n'
+      printf '\nCodex delegation targets: pc2_explorer, pc2_specifier, pc2_designer, pc2_task_planner, pc2_implementer, pc2_reviewer, pc2_sdd_initializer.\n'
     fi
     printf "%s\n" "'''"
   } > "$destination"
@@ -376,7 +379,7 @@ render_opencode() {
     if [ "$role" = daimon ]; then
       printf '%s\n' '    aion: allow'
     elif [ "$role" = aion ]; then
-      for target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+      for target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer; do
         printf '    %s: allow\n' "$target"
       done
     fi
@@ -399,7 +402,7 @@ render_claude() {
     printf '%s\n' '---'
     cat "$stage/$role.body"
     if [ "$role" = aion ]; then
-      printf '\nClaude delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer.\n'
+      printf '\nClaude delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer, pc2-sdd-initializer.\n'
     fi
   } > "$destination"
 }
@@ -426,7 +429,7 @@ render_pi() {
         ;;
     esac
     if [ "$role" = aion ]; then
-      printf '\nPi delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer.\n'
+      printf '\nPi delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer, pc2-sdd-initializer.\n'
     fi
   } > "$destination"
 }
@@ -480,21 +483,21 @@ for role in $roles; do
   esac
 done
 if [ "$runtime" = Codex ]; then
-  for target in pc2_explorer pc2_specifier pc2_designer pc2_task_planner pc2_implementer pc2_reviewer; do
+  for target in pc2_explorer pc2_specifier pc2_designer pc2_task_planner pc2_implementer pc2_reviewer pc2_sdd_initializer; do
     grep -F "$target" "$stage/aion.toml" >/dev/null || { printf 'pitcrew installer: unresolved Codex Aion target %s\n' "$target" >&2; exit 1; }
   done
 elif [ "$runtime" = OpenCode ]; then
-  for target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+  for target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer; do
     grep -F "    $target: allow" "$stage/aion.md" >/dev/null || { printf 'pitcrew installer: unresolved OpenCode Aion target %s\n' "$target" >&2; exit 1; }
   done
 elif [ "$runtime" = 'Claude Code' ]; then
-  for target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+  for target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer; do
     grep -F "$target" "$stage/aion.md" >/dev/null || { printf 'pitcrew installer: unresolved Claude Aion target %s\n' "$target" >&2; exit 1; }
   done
 elif [ "$runtime" = Pi ]; then
   grep -F 'maxSubagentDepth: 3' "$stage/daimon.md" >/dev/null || { printf '%s\n' 'pitcrew installer: Pi Daimon nested depth cannot reach Aion and a specialist' >&2; exit 1; }
   grep -F 'maxSubagentDepth: 3' "$stage/aion.md" >/dev/null || { printf '%s\n' 'pitcrew installer: Pi Aion nested depth cannot reach a specialist through Daimon' >&2; exit 1; }
-  for target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
+  for target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer; do
     grep -F "$target" "$stage/aion.md" >/dev/null || { printf 'pitcrew installer: unresolved Pi Aion target %s\n' "$target" >&2; exit 1; }
   done
 fi
