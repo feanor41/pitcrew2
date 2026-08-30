@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/history"
+	"github.com/fmazzalomo/pitcrew/internal/project"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
 
@@ -150,6 +151,155 @@ func TestDeliveryCommandsTraceEachRouteExactlyOnce(t *testing.T) {
 	if direct != 1 || workflows != 1 {
 		t.Fatalf("direct=%d workflows=%d", direct, workflows)
 	}
+}
+
+func TestDeliveryActiveReportsZeroOneAndAmbiguousCandidatesWithoutSelecting(t *testing.T) {
+	emptyRoot := t.TempDir()
+	empty := mustOK(t, runAt(t, emptyRoot, "delivery", "active"))
+	if _, err := os.Stat(filepath.Join(emptyRoot, ".pitcrew")); !os.IsNotExist(err) {
+		t.Fatalf("active discovery initialized project state: %v", err)
+	}
+	var emptyDocument struct {
+		Data struct {
+			Deliveries []history.Delivery `json:"deliveries"`
+		} `json:"data"`
+		NextAction string `json:"next_action"`
+	}
+	if err := json.Unmarshal(empty, &emptyDocument); err != nil {
+		t.Fatal(err)
+	}
+	if emptyDocument.Data.Deliveries == nil || len(emptyDocument.Data.Deliveries) != 0 || emptyDocument.NextAction != "aion admit new delivery" {
+		t.Fatalf("empty active discovery = %s", empty)
+	}
+
+	root := t.TempDir()
+	start := writeInput(t, root, "active-start.json", `{"operation_key":"active-request","route":"direct_inline","goal":"Retain exact identity","route_reason":"bounded work"}`)
+	started := mustOK(t, runAt(t, root, "delivery", "start", "--actor", "aion", "--input-file", start))
+	directID := deliveryID(t, started)
+	one := mustOK(t, runAt(t, root, "delivery", "active"))
+	var oneDocument struct {
+		Data struct {
+			Deliveries []history.Delivery `json:"deliveries"`
+		} `json:"data"`
+		NextAction string `json:"next_action"`
+	}
+	if err := json.Unmarshal(one, &oneDocument); err != nil {
+		t.Fatal(err)
+	}
+	if len(oneDocument.Data.Deliveries) != 1 || oneDocument.Data.Deliveries[0].ID != directID || oneDocument.Data.Deliveries[0].Revision != 1 || oneDocument.NextAction != "delivery show --delivery-id "+directID {
+		t.Fatalf("single active discovery = %s", one)
+	}
+	if repeated := mustOK(t, runAt(t, root, "delivery", "active")); !bytes.Equal(one, repeated) {
+		t.Fatalf("repeat active discovery differs:\nfirst=%s\nsecond=%s", one, repeated)
+	}
+
+	created := mustOK(t, runAt(t, root, "workflow", "new", "--name", "Second candidate", "--goal", "Require explicit selection", "--actor", "aion"))
+	workflowID := workflowID(t, created)
+	many := mustOK(t, runAt(t, root, "delivery", "active"))
+	var manyDocument struct {
+		Data struct {
+			Deliveries []history.Delivery `json:"deliveries"`
+		} `json:"data"`
+		NextAction string `json:"next_action"`
+	}
+	if err := json.Unmarshal(many, &manyDocument); err != nil {
+		t.Fatal(err)
+	}
+	if len(manyDocument.Data.Deliveries) != 2 || manyDocument.NextAction != "aion clarify delivery identity" {
+		t.Fatalf("ambiguous active discovery = %s", many)
+	}
+	ids := map[string]bool{}
+	for _, candidate := range manyDocument.Data.Deliveries {
+		ids[candidate.ID] = true
+	}
+	if !ids[directID] || !ids[workflowID] {
+		t.Fatalf("ambiguous candidates lost an identity: %s", many)
+	}
+	explicit := mustOK(t, runAt(t, root, "delivery", "show", "--delivery-id", workflowID))
+	if !strings.Contains(string(explicit), `"id":"`+workflowID+`"`) || strings.Contains(string(explicit), `"id":"`+directID+`"`) {
+		t.Fatalf("explicit inspection selected wrong identity: %s", explicit)
+	}
+	activeAfterShow := mustOK(t, runAt(t, root, "delivery", "active"))
+	if !bytes.Equal(many, activeAfterShow) {
+		t.Fatalf("read-only selection flow mutated candidates:\nbefore=%s\nafter=%s", many, activeAfterShow)
+	}
+}
+
+func TestDeliveryActiveSharesCentralStateAcrossLinkedWorktreesAndIsolatesClones(t *testing.T) {
+	root := t.TempDir()
+	main, linked, clone := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "clone")
+	admin := filepath.Join(main, ".git", "worktrees", "linked")
+	for _, directory := range []string{admin, linked, filepath.Join(clone, ".git")} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, content := range map[string]string{
+		filepath.Join(linked, ".git"):     "gitdir: " + admin + "\n",
+		filepath.Join(admin, "commondir"): "../..\n",
+		filepath.Join(admin, "gitdir"):    filepath.Join(linked, ".git") + "\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dataHome := filepath.Join(root, "data")
+	start := writeInput(t, root, "central-active-start.json", `{"operation_key":"central-active","route":"direct_inline","goal":"Share active state","route_reason":"linked worktree proof"}`)
+	created := mustOK(t, runCentral(t, main, dataHome, "delivery", "start", "--actor", "aion", "--input-file", start))
+	deliveryID := deliveryID(t, created)
+	mainActive := mustOK(t, runCentral(t, main, dataHome, "delivery", "active"))
+	linkedActive := mustOK(t, runCentral(t, linked, dataHome, "delivery", "active"))
+	if !bytes.Equal(mainActive, linkedActive) {
+		t.Fatalf("linked worktree active view differs:\nmain=%s\nlinked=%s", mainActive, linkedActive)
+	}
+	var activeDocument struct {
+		Data struct {
+			Deliveries []history.Delivery `json:"deliveries"`
+		} `json:"data"`
+		NextAction string `json:"next_action"`
+	}
+	if err := json.Unmarshal(linkedActive, &activeDocument); err != nil {
+		t.Fatal(err)
+	}
+	if len(activeDocument.Data.Deliveries) != 1 || activeDocument.Data.Deliveries[0].ID != deliveryID || activeDocument.NextAction != "delivery show --delivery-id "+deliveryID {
+		t.Fatalf("linked active cardinality = %s", linkedActive)
+	}
+
+	cloneInspection, err := project.Inspect(clone, dataHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cloneInspection.Project.ID == "" || cloneInspection.Project.ID == projectIDFor(t, main) {
+		t.Fatalf("independent clone did not receive an isolated identity: %#v", cloneInspection.Project)
+	}
+	if _, err := os.Stat(cloneInspection.Paths.ProjectRoot); !os.IsNotExist(err) {
+		t.Fatalf("clone central state existed before active discovery: %v", err)
+	}
+	cloneActive := mustOK(t, runCentral(t, clone, dataHome, "delivery", "active"))
+	if !strings.Contains(string(cloneActive), `"deliveries":[]`) || !strings.Contains(string(cloneActive), `"next_action":"aion admit new delivery"`) {
+		t.Fatalf("independent clone leaked active state: %s", cloneActive)
+	}
+	if _, err := os.Stat(cloneInspection.Paths.ProjectRoot); !os.IsNotExist(err) {
+		t.Fatalf("clone active discovery created central state: %v", err)
+	}
+	for _, checkout := range []string{linked, clone} {
+		if _, err := os.Stat(filepath.Join(checkout, ".pitcrew")); !os.IsNotExist(err) {
+			t.Fatalf("active discovery created checkout-local state in %s: %v", checkout, err)
+		}
+	}
+	if afterClone := mustOK(t, runCentral(t, main, dataHome, "delivery", "active")); !bytes.Equal(mainActive, afterClone) {
+		t.Fatalf("clone discovery changed canonical active state:\nbefore=%s\nafter=%s", mainActive, afterClone)
+	}
+}
+
+func projectIDFor(t *testing.T, root string) string {
+	t.Helper()
+	resolved, err := project.Resolve(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved.ID
 }
 
 func TestDeliveryUpdateRejectsStaleNoOpTerminalAndInvalidWithoutMutation(t *testing.T) {

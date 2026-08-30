@@ -296,7 +296,7 @@ func runDelivery(args []string, deps Dependencies) int {
 	}
 	command, rest := args[0], args[1:]
 	if equalArgs(rest, "--help") {
-		if command == "start" || command == "update" || command == "show" || command == "search" {
+		if command == "start" || command == "update" || command == "show" || command == "search" || command == "active" {
 			writeHelp(deps.Stdout, "Usage: pitcrew delivery "+command+" [options]\n")
 			return 0
 		}
@@ -310,6 +310,8 @@ func runDelivery(args []string, deps Dependencies) int {
 		return runDeliveryShow(rest, deps)
 	case "search":
 		return runDeliverySearch(rest, deps)
+	case "active":
+		return runDeliveryActive(rest, deps)
 	default:
 		return fail(deps, ErrUsage, fmt.Sprintf("unknown delivery subcommand %q", command))
 	}
@@ -390,6 +392,29 @@ func runDeliverySearch(args []string, deps Dependencies) int {
 		}
 		return writeSuccess(deps, map[string]any{"deliveries": results}, "delivery show")
 	})
+}
+
+func runDeliveryActive(args []string, deps Dependencies) int {
+	if len(args) != 0 {
+		return fail(deps, ErrUsage, "delivery active accepts no options")
+	}
+	empty := func() error {
+		return writeSuccess(deps, map[string]any{"deliveries": []history.Delivery{}}, "aion admit new delivery")
+	}
+	return withReadStoreOrUninitialized(deps, func(s *store.Store) error {
+		deliveries, err := history.New(s).ListActiveDeliveries(context.Background())
+		if err != nil {
+			return err
+		}
+		next := "aion clarify delivery identity"
+		switch len(deliveries) {
+		case 0:
+			next = "aion admit new delivery"
+		case 1:
+			next = "delivery show --delivery-id " + deliveries[0].ID
+		}
+		return writeSuccess(deps, map[string]any{"deliveries": deliveries}, next)
+	}, empty)
 }
 
 func deliveryStateError(err error) error {
@@ -1093,6 +1118,9 @@ func withStore(deps Dependencies, action func(*store.Store) error) int {
 	return 0
 }
 func withReadStore(deps Dependencies, action func(*store.Store) error) int {
+	return withReadStoreOrUninitialized(deps, action, nil)
+}
+func withReadStoreOrUninitialized(deps Dependencies, action func(*store.Store) error, uninitialized func() error) int {
 	var s *store.Store
 	var err error
 	if deps.DataHome == "" {
@@ -1110,7 +1138,9 @@ func withReadStore(deps Dependencies, action func(*store.Store) error) int {
 			s, err = readProjectStore(inspection)
 		}
 	}
-	if err == nil {
+	if errors.Is(err, tui.ErrUninitialized) && uninitialized != nil {
+		err = uninitialized()
+	} else if err == nil {
 		defer s.Close()
 		err = action(s)
 	}
@@ -1202,7 +1232,7 @@ Commands:
   install codex|opencode|claude|pi
   project inspect|consolidate
   context inspect|initialize|record
-  delivery start|update|show|search
+  delivery start|update|show|search|active
   tui
   principles
   workflow new|continue|show|progress|request-capability|explore|spec|design|plan|amend-plan|approve-plan
@@ -1221,7 +1251,7 @@ Commands: new, continue, show, progress, request-capability, explore, spec, desi
 `
 const deliveryHelp = `Usage: pitcrew delivery <subcommand> [options]
 
-Commands: start, update, show, search
+Commands: start, update, show, search, active
 `
 const principlesHelp = `Usage: pitcrew principles [--json]
 `

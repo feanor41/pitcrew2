@@ -28,6 +28,7 @@ evidence, reviews, and consolidation bodies.
 | `delivery update` | `--delivery-id <dl-id> --revision <n> --actor <label> --input-file <path>` |
 | `delivery show` | `--delivery-id <dl-id|wf-id>` |
 | `delivery search` | `--query <nonblank-text>` |
+| `delivery active` | none; extra arguments are rejected |
 | `new` | `--name <text> --goal <text> --actor <label>` |
 | `continue` | `--from <terminal-wf-id> --actor <label>` |
 | `show` | `--workflow-id <wf-id> [--view coordination|phase|unit|aggregate|audit] [--unit-id <wu-id>]`; unit id is required only for the unit view |
@@ -113,6 +114,35 @@ revision CAS. Status SHALL be one of `in_progress`, `blocked`, `interrupted`,
 `completed`, `cancelled`, or `failed`; terminal traces SHALL be immutable.
 `delivery show` SHALL resolve either physical trace kind, and `delivery search`
 SHALL reuse the unified bounded literal projection.
+
+`delivery active` SHALL be an argument-free, read-only, non-initializing view
+over that same unified projection. It SHALL include direct traces only in
+`in_progress`, `blocked`, or `interrupted` and every non-terminal workflow, and
+SHALL return delivery identity, route, current status, revision, and derived
+`next_action`. Terminal and unknown direct states SHALL be excluded. Linked
+worktrees SHALL share the canonical project result; independent clones SHALL
+remain isolated. Ordering SHALL be stable for display but SHALL NOT confer
+selection authority.
+
+#### Scenario: Active candidate cardinality controls continuation
+
+- GIVEN zero active candidates
+- WHEN Aion runs `delivery active`
+- THEN discovery SHALL succeed without creating project state and normal admission MAY continue
+- GIVEN exactly one active candidate
+- WHEN Aion continues work
+- THEN it SHALL perform one identity-specific inspection and retain that identity and revision
+- GIVEN multiple active candidates without an explicit returned ID in accepted user intent
+- WHEN Aion considers continuation
+- THEN it SHALL mutate nothing and request clarification
+- AND it SHALL NOT select by recency, ordering, route, goal similarity, or status
+
+#### Scenario: Active discovery preserves project isolation
+
+- GIVEN one canonical repository with a linked worktree and an independent clone
+- WHEN each checkout runs `delivery active`
+- THEN the main checkout and linked worktree SHALL return the same candidates
+- AND the independent clone SHALL return only its own candidates without creating state
 
 #### Scenario: Direct commands never synthesize workflow machinery
 

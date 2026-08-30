@@ -7,8 +7,8 @@ The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon 
 Every route leaves one Control Plane delivery. Full workflows keep their existing
 `wf-*` record. Direct inline and delegated direct use one lightweight `dl-*`
 trace started by Aion before repository mutation; they create no synthetic SDD
-phases, work units, or review artifacts. `delivery show` and `delivery search`
-inspect both kinds through the same projection.
+phases, work units, or review artifacts. `delivery active`, `delivery show`, and
+`delivery search` inspect both kinds through the same projection.
 
 ## Quick path
 
@@ -97,6 +97,7 @@ install the extension, access the network, or modify Pi configuration.
 | `delivery update` | `--delivery-id <dl-id> --revision <n> --actor <label> --input-file <path>` |
 | `delivery show` | `--delivery-id <dl-id|wf-id>` |
 | `delivery search` | `--query <nonblank-text>` |
+| `delivery active` | None; extra arguments are rejected. |
 | `workflow new` | `--name <text> --goal <text> --actor <label>` |
 | `workflow continue` | `--from <terminal-wf-id> --actor <label>` |
 | `workflow show` | `--workflow-id <wf-id> [--view coordination|phase|unit|aggregate|audit] [--unit-id <wu-id>]`; `--unit-id` is required only for `unit` and rejected otherwise. |
@@ -121,6 +122,18 @@ install the extension, access the network, or modify Pi configuration.
 | `workflow unit-tdd` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
+
+`delivery active` is read-only and succeeds with `data.deliveries: []` when the
+project has no state. It returns only active direct traces (`in_progress`,
+`blocked`, or `interrupted`) and non-terminal workflows, including each ID,
+route, status, revision, and `next_action`. Its envelope action is `aion admit new delivery`
+for zero candidates, `delivery show --delivery-id <id>` for one,
+and `aion clarify delivery identity` for many. Ordering never authorizes a
+selection; among multiple candidates, accepted user intent must name a returned
+ID. Linked worktrees share the project result, while independent clones do not.
+Direct-only capability gaps remain truthful blockers: there is no direct
+capability-request ledger, and Aion does not invent a workflow or parallel
+lifecycle to record one.
 
 ## Stage artifact inputs
 
