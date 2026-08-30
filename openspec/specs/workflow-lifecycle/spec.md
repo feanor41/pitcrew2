@@ -93,6 +93,35 @@ The command SHALL infer kind `exploration`, `specification`, or `design`. On the
 - AND it SHALL preserve the current state and forward `next_action`
 - AND stage commands SHALL remain rejected from later and terminal states
 
+### Requirement: Pinned delta continuation (REQ-CONT-001)
+
+Continuation creation SHALL atomically pin the terminal predecessor workflow
+id, exact revision, and ordered identities of its accepted exploration,
+specification, and design artifacts. Schema-v1 stage inputs SHALL store typed
+`requirement`, `scenario`, and `section` entries with stable ids, optional
+parent ids, `add|replace|remove` operations, JSON bodies, and their exact
+workflow/artifact/revision provenance. Phase and aggregate consumers SHALL use
+a bounded resolver that applies the pinned baseline followed by ordered deltas
+and emits each effective entry once with its winning provenance.
+
+The resolver SHALL reject a nonterminal or revision-mismatched predecessor, an
+artifact-manifest mismatch, a lineage cycle, lineage deeper than 32 edges,
+duplicate stable ids, unknown replacements or removals, kind-changing
+supersession, and scenarios without an effective requirement parent. Failed
+creation, recording, or resolution SHALL NOT partially mutate the workflow.
+Opaque historical artifacts and unrelated workflows SHALL remain standalone;
+the resolver SHALL NOT parse prose to invent structure or identifiers, and a
+continuation SHALL NOT upgrade them merely by existing.
+
+#### Scenario: Supersession preserves exact provenance (SCN-CONT-001)
+
+- GIVEN an immutable terminal predecessor with a pinned requirement and scenario
+- WHEN its continuation replaces that requirement through a typed specification delta
+- THEN the effective set SHALL contain the replacement exactly once with child artifact provenance
+- AND the unchanged scenario SHALL retain exact predecessor artifact provenance
+- AND mutable, mismatched, cyclic, over-depth, unknown, or duplicate lineage SHALL fail closed
+- AND legacy prose-only and unrelated workflows SHALL retain standalone behavior
+
 ### Requirement: Inspection
 
 `workflow show --workflow-id` SHALL return the aggregate in `data.workflow`, every durable stage artifact in `data.artifacts`, and review-relevant history in `data.records` and `data.timeline`. Inspection SHALL expose plans, units, evidence, and reviews without handles or secrets. A completed or abandoned workflow SHALL remain queryable.

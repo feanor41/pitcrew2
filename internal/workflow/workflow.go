@@ -177,6 +177,20 @@ func (s *Service) Continue(ctx context.Context, sourceID, actor string) (Continu
 	if source.State != Completed && source.State != Abandoned {
 		return ContinuationResult{}, &TransitionError{Current: source.State, Expected: []State{Completed, Abandoned}, Event: "continue"}
 	}
+	// Validate any existing ancestry before extending it. A continuation pins
+	// terminal facts; it never launders corrupt, mutable, cyclic, or over-deep
+	// lineage into a new baseline.
+	if _, err = resolveNormative(ctx, tx, source.ID); err != nil {
+		return ContinuationResult{}, err
+	}
+	manifest, err := artifactManifest(ctx, tx, source.ID)
+	if err != nil {
+		return ContinuationResult{}, err
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return ContinuationResult{}, err
+	}
 	id, err := ids.NewWorkflow()
 	if err != nil {
 		return ContinuationResult{}, err
@@ -188,6 +202,12 @@ func (s *Service) Continue(ctx context.Context, sourceID, actor string) (Continu
 		return ContinuationResult{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,?,?,?,?,1,?)`, id, "", Draft, actor, "", at); err != nil {
+		return ContinuationResult{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workflow_baselines(child_id,predecessor_id,predecessor_revision,artifact_manifest_json) VALUES(?,?,?,?)`, id, source.ID, source.Revision, string(manifestJSON)); err != nil {
+		return ContinuationResult{}, err
+	}
+	if _, err = resolveNormative(ctx, tx, id); err != nil {
 		return ContinuationResult{}, err
 	}
 	lineage, err := json.Marshal(struct {

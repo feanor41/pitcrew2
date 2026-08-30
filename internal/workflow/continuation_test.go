@@ -2,10 +2,277 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
+
+func TestContinuationPinsManifestAndResolvesTypedSupersession(t *testing.T) {
+	svc, db := testService(t)
+	ctx := context.Background()
+	source, err := svc.Create(ctx, "Original", "goal", "specifier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err = svc.RecordNormativeArtifact(ctx, source.ID, source.Revision, Explore, "exploration", NormativeArtifact{
+		Content: "baseline exploration", SchemaVersion: 1,
+		Entries: []NormativeEntry{{Kind: "section", ID: "SEC-CONTEXT", Operation: "add", Body: json.RawMessage(`{"text":"old context"}`)}},
+	}, "explorer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err = svc.RecordNormativeArtifact(ctx, source.ID, source.Revision, Specify, "specification", NormativeArtifact{
+		Content: "baseline specification", SchemaVersion: 1,
+		Entries: []NormativeEntry{
+			{Kind: "requirement", ID: "REQ-CONT-001", Operation: "add", Body: json.RawMessage(`{"text":"old"}`)},
+			{Kind: "scenario", ID: "SCN-CONT-001", ParentID: "REQ-CONT-001", Operation: "add", Body: json.RawMessage(`{"text":"kept"}`)},
+		},
+	}, "specifier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err = svc.RecordNormativeArtifact(ctx, source.ID, source.Revision, Design, "design", NormativeArtifact{
+		Content: "baseline design", SchemaVersion: 1,
+		Entries: []NormativeEntry{{Kind: "section", ID: "SEC-DESIGN", Operation: "add", Body: json.RawMessage(`{"text":"design"}`)}},
+	}, "designer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`UPDATE workflows SET state='completed' WHERE id=?`, source.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	continued, err := svc.Continue(ctx, source.ID, "aion")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var predecessorID, manifestJSON string
+	var predecessorRevision int64
+	if err = db.QueryRow(`SELECT predecessor_id,predecessor_revision,artifact_manifest_json FROM workflow_baselines WHERE child_id=?`, continued.Workflow.ID).Scan(&predecessorID, &predecessorRevision, &manifestJSON); err != nil {
+		t.Fatal(err)
+	}
+	var manifest []ArtifactIdentity
+	if err = json.Unmarshal([]byte(manifestJSON), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if predecessorID != source.ID || predecessorRevision != source.Revision || len(manifest) != 3 {
+		t.Fatalf("baseline=%s/%d manifest=%s", predecessorID, predecessorRevision, manifestJSON)
+	}
+	for i, wantKind := range []string{"exploration", "specification", "design"} {
+		if manifest[i].ID < 1 || manifest[i].Kind != wantKind || manifest[i].Revision != int64(i+2) {
+			t.Fatalf("manifest[%d]=%#v", i, manifest[i])
+		}
+	}
+
+	child := continued.Workflow
+	child, err = svc.RecordNormativeArtifact(ctx, child.ID, child.Revision, Explore, "exploration", NormativeArtifact{Content: "no exploration changes", SchemaVersion: 1}, "explorer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err = svc.RecordNormativeArtifact(ctx, child.ID, child.Revision, Specify, "specification", NormativeArtifact{
+		Content: "replace requirement", SchemaVersion: 1,
+		Entries: []NormativeEntry{{Kind: "requirement", ID: "REQ-CONT-001", Operation: "replace", Body: json.RawMessage(`{"text":"new"}`)}},
+	}, "specifier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := svc.ResolveNormative(ctx, child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.Structured || resolved.Baseline == nil || resolved.Baseline.WorkflowID != source.ID || resolved.Baseline.Revision != source.Revision || len(resolved.Baseline.Artifacts) != 3 || len(resolved.Entries) != 4 {
+		t.Fatalf("resolved=%#v", resolved)
+	}
+	byID := map[string]ResolvedNormativeEntry{}
+	for _, entry := range resolved.Entries {
+		byID[entry.ID] = entry
+	}
+	requirement := byID["REQ-CONT-001"]
+	if string(requirement.Body) != `{"text":"new"}` || requirement.Source.WorkflowID != child.ID || requirement.Source.ArtifactID < 1 || requirement.Source.Revision != child.Revision || requirement.Operation != "replace" {
+		t.Fatalf("requirement=%#v", requirement)
+	}
+	scenario := byID["SCN-CONT-001"]
+	if scenario.ParentID != "REQ-CONT-001" || scenario.Source.WorkflowID != source.ID || scenario.Source.ArtifactID != manifest[1].ID || scenario.Source.Revision != 3 {
+		t.Fatalf("scenario=%#v", scenario)
+	}
+}
+
+func TestNormativeResolverRejectsUnsafeLineageAndInvalidOperations(t *testing.T) {
+	t.Run("cycle", func(t *testing.T) {
+		svc, db := testService(t)
+		a := insertTerminalWorkflow(t, svc, db, "a")
+		b := insertTerminalWorkflow(t, svc, db, "b")
+		insertBaseline(t, db, a.ID, b.ID, b.Revision, `[]`)
+		insertBaseline(t, db, b.ID, a.ID, a.Revision, `[]`)
+		if _, err := svc.ResolveNormative(context.Background(), a.ID); !errors.Is(err, ErrLineageCycle) {
+			t.Fatalf("cycle error=%v", err)
+		}
+	})
+	t.Run("depth", func(t *testing.T) {
+		svc, db := testService(t)
+		chain := make([]Workflow, 34)
+		for i := range chain {
+			chain[i] = insertTerminalWorkflow(t, svc, db, fmt.Sprintf("w-%d", i))
+		}
+		for i := 1; i < len(chain); i++ {
+			insertBaseline(t, db, chain[i].ID, chain[i-1].ID, chain[i-1].Revision, `[]`)
+		}
+		if _, err := svc.ResolveNormative(context.Background(), chain[len(chain)-1].ID); !errors.Is(err, ErrLineageDepth) {
+			t.Fatalf("depth error=%v", err)
+		}
+	})
+	for _, tt := range []struct {
+		name   string
+		mutate func(t *testing.T, db DB, source Workflow, child Workflow)
+	}{
+		{"mutable baseline", func(t *testing.T, db DB, source Workflow, _ Workflow) {
+			_, _ = db.Exec(`UPDATE workflows SET state='draft' WHERE id=?`, source.ID)
+		}},
+		{"revision mismatch", func(t *testing.T, db DB, source Workflow, _ Workflow) {
+			_, _ = db.Exec(`UPDATE workflows SET revision=revision+1 WHERE id=?`, source.ID)
+		}},
+		{"manifest mismatch", func(t *testing.T, db DB, source Workflow, _ Workflow) {
+			_, _ = db.Exec(`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,'specification','late','actor',1,'now')`, source.ID)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, db := testService(t)
+			source := insertTerminalWorkflow(t, svc, db, "source")
+			child := insertTerminalWorkflow(t, svc, db, "child")
+			insertBaseline(t, db, child.ID, source.ID, source.Revision, `[]`)
+			tt.mutate(t, db, source, child)
+			if _, err := svc.ResolveNormative(context.Background(), child.ID); !errors.Is(err, ErrInvalidBaseline) {
+				t.Fatalf("baseline error=%v", err)
+			}
+		})
+	}
+	for _, operation := range []string{"replace", "remove"} {
+		t.Run("unknown "+operation, func(t *testing.T) {
+			svc, db := testService(t)
+			wf := insertTerminalWorkflow(t, svc, db, "unknown")
+			insertNormativeRow(t, db, wf.ID, "requirement", "REQ-MISSING", "", operation)
+			if _, err := svc.ResolveNormative(context.Background(), wf.ID); !errors.Is(err, ErrInvalidNormativeArtifact) || !strings.Contains(err.Error(), "unknown") {
+				t.Fatalf("operation error=%v", err)
+			}
+		})
+	}
+	t.Run("duplicate stable id", func(t *testing.T) {
+		svc, db := testService(t)
+		wf := insertTerminalWorkflow(t, svc, db, "duplicate")
+		insertNormativeRow(t, db, wf.ID, "requirement", "REQ-DUP", "", "add")
+		insertNormativeRow(t, db, wf.ID, "section", "REQ-DUP", "", "add")
+		if _, err := svc.ResolveNormative(context.Background(), wf.ID); !errors.Is(err, ErrInvalidNormativeArtifact) {
+			t.Fatalf("duplicate error=%v", err)
+		}
+	})
+}
+
+func TestLegacyAndUnrelatedWorkflowsResolveStandaloneWithoutInventedStructure(t *testing.T) {
+	svc, db := testService(t)
+	legacy := insertTerminalWorkflow(t, svc, db, "legacy")
+	if _, err := db.Exec(`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,'specification','# prose only','actor',1,'now')`, legacy.ID); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := svc.ResolveNormative(context.Background(), legacy.ID)
+	if err != nil || resolved.Structured || resolved.Baseline != nil || len(resolved.Entries) != 0 {
+		t.Fatalf("legacy=%#v error=%v", resolved, err)
+	}
+	fresh := insertTerminalWorkflow(t, svc, db, "fresh")
+	insertNormativeRow(t, db, fresh.ID, "requirement", "REQ-OWN", "", "add")
+	resolved, err = svc.ResolveNormative(context.Background(), fresh.ID)
+	if err != nil || !resolved.Structured || resolved.Baseline != nil || len(resolved.Entries) != 1 || resolved.Entries[0].Source.WorkflowID != fresh.ID {
+		t.Fatalf("fresh=%#v error=%v", resolved, err)
+	}
+}
+
+func TestTypedDeltaValidationRollsBackAndContinuationCannotExtendPastDepth32(t *testing.T) {
+	t.Run("unknown replacement and duplicate input", func(t *testing.T) {
+		svc, db := testService(t)
+		wf, err := svc.Create(context.Background(), "delta", "goal", "actor")
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := continuationSourceSnapshot(t, db, wf.ID)
+		_, err = svc.RecordNormativeArtifact(context.Background(), wf.ID, wf.Revision, Explore, "exploration", NormativeArtifact{
+			Content: "bad delta", SchemaVersion: 1,
+			Entries: []NormativeEntry{{Kind: "requirement", ID: "REQ-MISSING", Operation: "replace", Body: json.RawMessage(`{}`)}},
+		}, "actor")
+		if !errors.Is(err, ErrInvalidNormativeArtifact) || continuationSourceSnapshot(t, db, wf.ID) != before {
+			t.Fatalf("unknown replacement error=%v", err)
+		}
+		_, err = svc.RecordNormativeArtifact(context.Background(), wf.ID, wf.Revision, Explore, "exploration", NormativeArtifact{
+			Content: "duplicate delta", SchemaVersion: 1,
+			Entries: []NormativeEntry{
+				{Kind: "requirement", ID: "REQ-DUP", Operation: "add", Body: json.RawMessage(`{}`)},
+				{Kind: "section", ID: "REQ-DUP", Operation: "add", Body: json.RawMessage(`{}`)},
+			},
+		}, "actor")
+		if !errors.Is(err, ErrInvalidNormativeArtifact) || continuationSourceSnapshot(t, db, wf.ID) != before {
+			t.Fatalf("duplicate error=%v", err)
+		}
+	})
+	t.Run("continuation extension", func(t *testing.T) {
+		svc, db := testService(t)
+		chain := make([]Workflow, 33)
+		for i := range chain {
+			chain[i] = insertTerminalWorkflow(t, svc, db, fmt.Sprintf("bounded-%d", i))
+		}
+		for i := 1; i < len(chain); i++ {
+			insertBaseline(t, db, chain[i].ID, chain[i-1].ID, chain[i-1].Revision, `[]`)
+		}
+		var before int
+		_ = db.QueryRow(`SELECT count(*) FROM workflows`).Scan(&before)
+		if _, err := svc.Continue(context.Background(), chain[len(chain)-1].ID, "actor"); !errors.Is(err, ErrLineageDepth) {
+			t.Fatalf("extension error=%v", err)
+		}
+		var after int
+		_ = db.QueryRow(`SELECT count(*) FROM workflows`).Scan(&after)
+		if after != before {
+			t.Fatalf("failed extension created workflow: %d -> %d", before, after)
+		}
+	})
+}
+
+func insertTerminalWorkflow(t *testing.T, svc *Service, db DB, name string) Workflow {
+	t.Helper()
+	wf, err := svc.Create(context.Background(), name, "goal", "actor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`UPDATE workflows SET state='completed' WHERE id=?`, wf.ID); err != nil {
+		t.Fatal(err)
+	}
+	wf.State = Completed
+	return wf
+}
+
+func insertBaseline(t *testing.T, db DB, childID, predecessorID string, revision int64, manifest string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO workflow_baselines(child_id,predecessor_id,predecessor_revision,artifact_manifest_json) VALUES(?,?,?,?)`, childID, predecessorID, revision, manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertNormativeRow(t *testing.T, db DB, workflowID, kind, id, parentID, operation string) {
+	t.Helper()
+	result, err := db.Exec(`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,'specification','structured','actor',1,'now')`, workflowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactID, _ := result.LastInsertId()
+	if _, err = db.Exec(`INSERT INTO normative_entries(workflow_id,artifact_id,phase,entry_kind,stable_id,parent_id,operation,body_json) VALUES(?,?,?,?,?,?,?,?)`, workflowID, artifactID, "specification", kind, id, nullableString(parentID), operation, `{}`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
 
 func TestContinueCreatesLinkedDraftWithoutMutatingTerminalSource(t *testing.T) {
 	for _, state := range []State{Completed, Abandoned} {
