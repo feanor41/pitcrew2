@@ -52,6 +52,7 @@ type Occurrence struct {
 	Attempt                                                         *int64
 	Legacy                                                          bool
 }
+
 type unitFact struct {
 	status     UnitStatus
 	state      string
@@ -123,14 +124,7 @@ func (s *Service) project(ctx context.Context, detail *Detail) error {
 		detail.Synopsis.NextAction = projected.NextAction
 		detail.Synopsis.CorrectionPolicy = &CorrectionStatus{projected.PolicyAware, projected.Allowed, projected.Used, projected.BlockerRevision, projected.BlockerContent, string(projected.Authority)}
 		if projected.BlockerRevision != 0 && detail.Workflow.State != string(workflow.Completed) && detail.Workflow.State != string(workflow.Abandoned) {
-			reason := projected.BlockerContent
-			var review struct {
-				Findings string `json:"findings"`
-			}
-			if json.Unmarshal([]byte(reason), &review) == nil && review.Findings != "" {
-				reason = review.Findings
-			}
-			choose(&detail.Synopsis, &UnitStatus{Description: "Aggregate review", Status: "Correction", Reason: reason, Derived: true}, true)
+			choose(&detail.Synopsis, &UnitStatus{Description: "Aggregate review", Status: "Correction", Reason: correctionBlockerReason(projected.BlockerContent), Derived: true}, true)
 		}
 	}
 	if detail.Workflow.State == string(workflow.Completed) || detail.Workflow.State == string(workflow.Abandoned) {
@@ -286,7 +280,7 @@ func (s *Service) unitFacts(ctx context.Context, workflowID string) (map[string]
 		claimJoin = ` LEFT JOIN handles h ON h.workflow_id=u.workflow_id AND h.unit_id=u.id` + purposeJoin + ` AND h.claim_generation=(SELECT MAX(h2.claim_generation) FROM handles h2 WHERE h2.workflow_id=u.workflow_id AND h2.unit_id=u.id` + purposeLatest + `)`
 	}
 	query := `SELECT u.id,u.description,u.depends_on,u.state,u.revision,COALESCE(r.verdict,''),COALESCE(r.findings,''),` + claimColumns + ` FROM work_units u LEFT JOIN reviews r ON r.workflow_id=u.workflow_id AND r.unit_id=u.id AND r.revision=u.revision-1` + claimJoin + ` WHERE u.workflow_id=? ORDER BY u.rowid`
-	rows, err := s.db.QueryContext(ctx, query, workflowID)
+	rows, err := s.queryContext(ctx, query, workflowID)
 	if err != nil {
 		return nil, err
 	}
