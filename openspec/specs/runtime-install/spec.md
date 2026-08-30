@@ -109,9 +109,14 @@ clarification requests. Daimon SHALL remain silent otherwise and exit the live
 turn only for terminal completion, a genuine blocker, or user cancellation.
 
 If the host cannot keep the turn and Aion concurrently addressable, Daimon SHALL
-surface that missing capability once. Aion SHALL record exactly one request-capability
-and SHALL NOT imply fulfillment or fabricate live progress. No runtime SHALL
-compensate with polling, daemon, IPC, or durable inbox behavior.
+surface that missing capability once. For a selected workflow with the supported
+durable surface, Aion SHALL record exactly one request-capability for the
+unchanged capability requirement and SHALL NOT append a duplicate request when
+the same absence is observed again. The request SHALL NOT imply fulfillment or
+fabricate live progress. If a direct-only delivery has no supported durable capability-request surface,
+Aion SHALL report that recording is unavailable and
+SHALL NOT invent a workflow or parallel lifecycle. No runtime SHALL compensate
+with polling, daemon, IPC, or durable inbox behavior.
 
 #### Scenario: User steering returns to the same wait
 
@@ -124,8 +129,17 @@ compensate with polling, daemon, IPC, or durable inbox behavior.
 
 - GIVEN a host lacks native concurrent user/Aion selection
 - WHEN Daimon detects the limitation
-- THEN it SHALL notify Aion once and Aion SHALL record one capability request
+- THEN it SHALL notify Aion once and Aion SHALL record one capability request for an active workflow
+- AND repeated observation of the unchanged absence SHALL NOT append a duplicate request
 - AND no agent SHALL poll or create another transport
+
+#### Scenario: Direct-only capability recording stays truthful
+
+- GIVEN a direct-only delivery requires missing host continuity
+- AND no supported durable capability-request surface exists for that trace
+- WHEN Aion handles the boundary
+- THEN it SHALL report that durable recording is unavailable
+- AND SHALL NOT create a workflow, request ledger, or parallel lifecycle
 
 #### Scenario: Pi runtime evidence remains honest
 

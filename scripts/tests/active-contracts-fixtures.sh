@@ -91,6 +91,57 @@ printf '%s\n' 'active user-visible turn' 'host-native dual wait/select' 'request
 printf '%s\n' 'immutable archive' \
   >"$fixture_root/openspec/changes/archive/spec.md"
 
+append_agent_continuity() {
+  printf '%s\n' \
+    '`delivery active`' \
+    'zero active candidates' \
+    'exactly one active candidate' \
+    'more than one active candidate' \
+    'one identity-specific inspection' \
+    'same delivery identity and current revision' \
+    'does not select by recency, display order, route, goal similarity, or status' \
+    'routine projected `next_action`' \
+    'stable semantic key' \
+    'unit identity, attempt, and outcome' \
+    'current actionable or terminal fact' \
+    'does not replay historical progress' \
+    >>"$fixture_root/AGENTS.md"
+}
+
+append_cli_continuity() {
+  printf '%s\n' \
+    '| `delivery active` | none' \
+    'zero active candidates' \
+    'exactly one active candidate' \
+    'multiple active candidates' \
+    'one identity-specific inspection' \
+    'SHALL NOT select by recency, ordering, route, goal similarity, or status' \
+    >>"$fixture_root/openspec/specs/cli-surface/spec.md"
+}
+
+append_agent_continuity
+append_cli_continuity
+printf '%s\n' \
+  'unchanged capability requirement' \
+  'SHALL NOT append a duplicate request' \
+  'direct-only delivery has no supported durable capability-request surface' \
+  'SHALL NOT invent a workflow or parallel lifecycle' \
+  >>"$fixture_root/openspec/specs/runtime-install/spec.md"
+printf '%s\n' \
+  '| `delivery active` | None' \
+  'aion admit new delivery' \
+  'delivery show --delivery-id <id>' \
+  'aion clarify delivery identity' \
+  'Direct-only capability gaps' \
+  >"$fixture_root/docs/cli-reference.md"
+printf '%s\n' \
+  'Run `delivery active` before admitting new work' \
+  'stable semantic key' \
+  'unit identity, attempt, and outcome' \
+  'do not replay historical progress' \
+  'direct-only delivery has no supported durable capability-request surface' \
+  >"$fixture_root/scripts/install-templates.sh"
+
 if ! sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
   echo "clean active contracts were rejected" >&2
   exit 1
@@ -118,6 +169,7 @@ if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
   exit 1
 fi
 printf '%s\n' 'Aion canonical specification' 'Daimon SHALL NOT invoke workflow commands and receives only Aion-acknowledged facts or clarification requests.' >"$fixture_root/openspec/specs/cli-surface/spec.md"
+append_cli_continuity
 
 printf '%s\n' 'Daimon coordinates workflow recovery.' >"$fixture_root/AGENTS.md"
 if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
@@ -158,6 +210,7 @@ printf '%s\n' \
   'specialists never delegate' \
   '`context inspect`, `context initialize`, `context record`' \
   >"$fixture_root/AGENTS.md"
+append_agent_continuity
 
 printf '%s\n' 'Forbidden Master documentation' >"$fixture_root/docs/guide.md"
 if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then

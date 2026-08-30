@@ -3,6 +3,15 @@ set -eu
 
 skip() { printf 'SKIP: %s\n' "$*"; exit 0; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+ROOT=$(CDPATH= cd "$(dirname "$0")/../.." && pwd)
+
+for required in \
+  'stable semantic key' \
+  'unit identity, attempt, and outcome' \
+  'workflow revision alone is insufficient' \
+  'do not replay historical progress'; do
+  grep -Fq "$required" "$ROOT/scripts/install-templates.sh" || fail "Pi semantic reporting contract omitted: $required"
+done
 
 verify_runtime_evidence() {
   node - "$1" "$2" "$3" <<'NODE'
@@ -217,7 +226,6 @@ esac
 command -v pi >/dev/null 2>&1 || skip 'Pi executable is unavailable'
 command -v node >/dev/null 2>&1 || skip 'Node.js is unavailable'
 
-ROOT=$(CDPATH= cd "$(dirname "$0")/../.." && pwd)
 SOURCE_AGENT_HOME=${PI_AGENT_HOME:-${HOME:?HOME is required}/.pi/agent}
 SOURCE_PACKAGE=$SOURCE_AGENT_HOME/npm/node_modules/pi-subagents
 SOURCE_SETTINGS=$SOURCE_AGENT_HOME/settings.json

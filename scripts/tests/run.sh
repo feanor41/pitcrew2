@@ -189,7 +189,7 @@ assert_authority_contract() {
     grep -F "$live_rule" "$daimon" >/dev/null || fail "Daimon live-turn rule omitted $live_rule in $destination"
     grep -F "$live_rule" "$contract" >/dev/null || fail "shared live-turn rule omitted $live_rule in $destination"
   done
-  grep -F 'record exactly one workflow request-capability' "$aion" >/dev/null || fail "Aion concurrency capability rule omitted in $destination"
+  grep -F 'record exactly one unchanged workflow request-capability' "$aion" >/dev/null || fail "Aion concurrency capability deduplication rule omitted in $destination"
   for specialist in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
     file=$(role_path "$destination" "$specialist")
     grep -F 'Return only a one-line revision-bearing completion status to Aion.' "$file" >/dev/null || fail "$specialist hand-off drift in $destination"
