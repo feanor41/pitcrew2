@@ -114,8 +114,8 @@ func (s *Service) Ready(ctx context.Context, workflowID string) ([]WorkUnit, err
 	} else if err != nil {
 		return nil, err
 	}
-	if state != workflow.PlanApproved && state != workflow.Implementing {
-		return nil, fmt.Errorf("%w: current state %s; expected plan_approved or implementing", workflow.ErrInvalidTransition, state)
+	if state != workflow.Implementing {
+		return nil, fmt.Errorf("%w: current state %s; expected implementing", workflow.ErrInvalidTransition, state)
 	}
 	p, err := s.load(ctx, workflowID)
 	if err != nil {

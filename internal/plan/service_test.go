@@ -3,10 +3,12 @@ package plan
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/store"
+	"github.com/fmazzalomo/pitcrew/internal/workflow"
 )
 
 func TestAggregateCorrectionPolicySubmissionPersistsDefaultAndRejectsInvalidBeforeMutation(t *testing.T) {
@@ -82,6 +84,27 @@ func TestHistoricalPlanLoadProjectsDefaultWithoutRewritingBody(t *testing.T) {
 	}
 	if after != historical {
 		t.Fatalf("historical body rewritten:\n%s\nwant:\n%s", after, historical)
+	}
+}
+
+func TestReadyRequiresImplementationToBegin(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wfID := "wf-ready-before-implementation"
+	if _, err = s.DB().ExecContext(ctx, `INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES(?,1,'plan_approved','goal','now','now')`, wfID); err != nil {
+		t.Fatal(err)
+	}
+
+	ready, err := NewService(s, time.Now).Ready(ctx, wfID)
+	if !errors.Is(err, workflow.ErrInvalidTransition) {
+		t.Fatalf("ready before implementation error=%v", err)
+	}
+	if ready != nil {
+		t.Fatalf("ready before implementation returned units: %#v", ready)
 	}
 }
 
