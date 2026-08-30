@@ -53,6 +53,16 @@ active_contract_files | while IFS= read -r relative; do
     done || :
 done
 
+cli_contract="$repo_root/openspec/specs/cli-surface/spec.md"
+for required in \
+  'Daimon SHALL NOT invoke workflow commands' \
+  'only Aion-acknowledged facts or clarification requests'; do
+  grep -Fq "$required" "$cli_contract" || {
+    printf 'CLI Daimon boundary omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
 if test -s "$findings"; then
   cat "$findings" >&2
   echo "active contracts retain legacy Master vocabulary" >&2
@@ -80,6 +90,31 @@ for required in \
   'polling, daemon, IPC, or durable inbox'; do
   grep -Fq "$required" "$runtime_contract" || {
     printf 'runtime live-turn contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for required in \
+  'first admission gate' \
+  'acknowledged before any repository mutation' \
+  'stop before mutation and surface the capability boundary' \
+  'never backfill a trace after work has started' \
+  'does not interpose on or prevent host filesystem writes' \
+  'transcript-free composition' \
+  'workflow ID and current revision' \
+  'role or unit ID' \
+  'applicable opaque handle path' \
+  'workflow show --view coordination' \
+  'workflow show --view phase' \
+  'workflow show --view unit --unit-id' \
+  'workflow show --view aggregate' \
+  'never simulate it by replaying conversation history or transcript content'; do
+  grep -Fq "$required" "$repo_root/AGENTS.md" || {
+    printf 'active trace/handoff contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+  grep -Fq "$required" "$runtime_contract" || {
+    printf 'runtime trace/handoff contract omitted: %s\n' "$required" >&2
     exit 1
   }
 done

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -49,6 +50,62 @@ func TestStandaloneBinaryInstallsCodexWithoutCheckout(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".codex", "pitcrew", "agent-contract.md")); err != nil {
 		t.Fatalf("installed contract: %v", err)
 	}
+	contract, err := os.ReadFile(filepath.Join(home, ".codex", "pitcrew", "agent-contract.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"first admission gate",
+		"does not interpose on or prevent host filesystem writes",
+		"transcript-free composition",
+		"workflow ID and current revision",
+		"workflow show --view unit --unit-id",
+		"never simulate it by replaying conversation history or transcript content",
+	} {
+		if !bytes.Contains(contract, []byte(required)) {
+			t.Fatalf("standalone installed contract omitted %q", required)
+		}
+	}
+	roleClauses := map[string]string{
+		"daimon.toml":              "Do not invoke workflow commands",
+		"aion.toml":                "Never forge or bypass independent review",
+		"pc2_explorer.toml":        "bounded phase view",
+		"pc2_specifier.toml":       "bounded phase view",
+		"pc2_designer.toml":        "bounded phase view",
+		"pc2_task_planner.toml":    "bounded phase view",
+		"pc2_implementer.toml":     "bounded unit view",
+		"pc2_reviewer.toml":        "bounded unit or aggregate view",
+		"pc2_sdd_initializer.toml": "No workflow ID, transcript, or handle is required",
+	}
+	for _, entry := range entries {
+		body, readErr := os.ReadFile(filepath.Join(registry, entry.Name()))
+		if readErr != nil || !bytes.Contains(body, []byte(roleClauses[entry.Name()])) {
+			t.Fatalf("installed role %s omitted role-specific coordination clause: %v", entry.Name(), readErr)
+		}
+	}
+	rolePermissions := map[string]string{
+		"daimon.toml":           "Allowed workflow commands: No workflow commands; forward accepted intent to Aion.",
+		"pc2_explorer.toml":     "Allowed workflow commands: workflow show --view phase and workflow explore.",
+		"pc2_specifier.toml":    "Allowed workflow commands: workflow show --view phase and workflow spec.",
+		"pc2_designer.toml":     "Allowed workflow commands: workflow show --view phase and workflow design.",
+		"pc2_task_planner.toml": "Allowed workflow commands: workflow show --view phase and workflow plan.",
+		"pc2_implementer.toml":  "Allowed workflow commands: workflow show --view unit --unit-id <wu-id>, workflow list-ready-units, workflow claim-unit, workflow unit-tdd, and workflow unit-complete. Never workflow unit-review or workflow complete.",
+		"pc2_reviewer.toml":     "Allowed workflow commands: workflow show --view unit --unit-id <wu-id>, workflow show --view aggregate, workflow unit-review, and workflow complete only. Never implementation commands.",
+	}
+	for role, permission := range rolePermissions {
+		body, readErr := os.ReadFile(filepath.Join(registry, role))
+		if readErr != nil || !bytes.Contains(body, []byte("\n"+permission+"\n")) {
+			t.Fatalf("installed role %s permission drift: %v", role, readErr)
+		}
+	}
+	var roleBytes int
+	for _, entry := range entries {
+		body, _ := os.ReadFile(filepath.Join(registry, entry.Name()))
+		roleBytes += len(body)
+	}
+	if roleBytes > 49000 {
+		t.Fatalf("installed role prompts use %d bytes; budget is 49000", roleBytes)
+	}
 	want := "Installed PitCrew agents for Codex in " + registry + "\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Fatalf("stdout=%q, want %q; stderr=%q", stdout.String(), want, stderr.String())
@@ -64,6 +121,9 @@ func TestTUIRealPTYUninitializedQuitsWithoutCreatingState(t *testing.T) {
 		t.Fatal("real PTY harness requires script(1)")
 	}
 	root, binary := t.TempDir(), filepath.Join(t.TempDir(), "pitcrew")
+	if output, err := exec.Command("git", "-C", root, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("initialize unconfigured Git project: %v: %s", err, output)
+	}
 	build := exec.Command("go", "build", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build pitcrew: %v\n%s", err, output)
@@ -78,12 +138,18 @@ func TestTUIRealPTYUninitializedQuitsWithoutCreatingState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output bytes.Buffer
+	var output synchronizedBuffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(150 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(output.String(), "Install in Runtime") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(output.String(), "Install in Runtime") {
+		t.Fatalf("home did not become ready before navigation:\n%s", output.String())
+	}
 	_, _ = io.WriteString(stdin, "jj\r")
 	time.Sleep(100 * time.Millisecond)
 	_, _ = io.WriteString(stdin, "q")
@@ -98,7 +164,24 @@ func TestTUIRealPTYUninitializedQuitsWithoutCreatingState(t *testing.T) {
 		t.Fatalf("uninitialized message missing:\n%s", output.String())
 	}
 	entries, err := os.ReadDir(root)
-	if err != nil || len(entries) != 0 {
+	if err != nil || len(entries) != 1 || entries[0].Name() != ".git" {
 		t.Fatalf("clean project mutated: entries=%v err=%v", entries, err)
 	}
+}
+
+type synchronizedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
 }

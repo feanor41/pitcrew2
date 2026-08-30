@@ -236,6 +236,85 @@ assert_delivery_trace_contract() {
   done
 }
 
+assert_first_mutation_gate_contract() {
+  destination=$1
+  aion=$(role_path "$destination" aion)
+  contract=$(contract_path "$destination")
+  for rule in \
+    'first admission gate' \
+    'acknowledged before any repository mutation' \
+    'stop before mutation and surface the capability boundary' \
+    'never backfill a trace after work has started' \
+    'does not interpose on or prevent host filesystem writes'; do
+    grep -F "$rule" "$aion" >/dev/null || fail "Aion first-mutation gate omitted $rule in $destination"
+    grep -F "$rule" "$contract" >/dev/null || fail "shared first-mutation gate omitted $rule in $destination"
+  done
+}
+
+assert_transcript_minimal_handoff_contract() {
+  destination=$1
+  contract=$(contract_path "$destination")
+  for rule in \
+    'transcript-free composition' \
+    'workflow ID and current revision' \
+    'role or unit ID' \
+    'applicable opaque handle path' \
+    'workflow show --view coordination' \
+    'workflow show --view phase' \
+    'workflow show --view unit --unit-id' \
+    'workflow show --view aggregate' \
+    'surface the capability boundary' \
+    'never simulate it by replaying conversation history or transcript content'; do
+    grep -F "$rule" "$contract" >/dev/null || fail "shared transcript-minimal handoff omitted $rule in $destination"
+  done
+
+	grep -F 'Do not invoke workflow commands' "$(role_path "$destination" daimon)" >/dev/null || fail "Daimon command boundary omitted in $destination"
+	grep -F 'Aion-acknowledged facts or clarification requests' "$(role_path "$destination" daimon)" >/dev/null || fail "Daimon acknowledgement boundary omitted in $destination"
+	grep -F 'first admission gate' "$(role_path "$destination" aion)" >/dev/null || fail "Aion admission boundary omitted in $destination"
+	grep -F 'Never forge or bypass independent review' "$(role_path "$destination" aion)" >/dev/null || fail "Aion review boundary omitted in $destination"
+	for role in pc2-explorer pc2-specifier pc2-designer pc2-task-planner; do
+		file=$(role_path "$destination" "$role")
+		grep -F 'Accept only the workflow ID and current revision' "$file" >/dev/null || fail "$role minimal handoff identity omitted in $destination"
+		grep -F 'bounded phase view' "$file" >/dev/null || fail "$role bounded view omitted in $destination"
+	done
+	grep -F 'bounded unit view' "$(role_path "$destination" pc2-implementer)" >/dev/null || fail "Implementer bounded handoff omitted in $destination"
+	grep -F 'bounded unit or aggregate view' "$(role_path "$destination" pc2-reviewer)" >/dev/null || fail "Reviewer bounded handoff omitted in $destination"
+	grep -F 'Never implement, forge approval, or accept implementation authority' "$(role_path "$destination" pc2-reviewer)" >/dev/null || fail "Reviewer authority boundary omitted in $destination"
+	grep -F 'No workflow ID, transcript, or handle is required' "$(role_path "$destination" pc2-sdd-initializer)" >/dev/null || fail "Initializer bounded handoff omitted in $destination"
+}
+
+assert_role_prompt_budget() {
+	destination=$1
+	files=
+	for role in $roles; do files="$files $(role_path "$destination" "$role")"; done
+	bytes=$(cat $files | wc -c | tr -d ' ')
+	words=$(cat $files | wc -w | tr -d ' ')
+	[ "$bytes" -le 49000 ] || fail "installed role prompts use $bytes bytes; budget is 49000"
+	[ "$words" -le 7000 ] || fail "installed role prompts use $words words; budget is 7000"
+}
+
+assert_role_view_permissions() {
+  destination=$1
+  daimon=$(role_path "$destination" daimon)
+  initializer=$(role_path "$destination" pc2-sdd-initializer)
+  grep -Fx 'Allowed workflow commands: No workflow commands; forward accepted intent to Aion.' "$daimon" >/dev/null || fail "Daimon workflow permission drift in $destination"
+  grep -Fx 'Allowed workflow commands: none.' "$initializer" >/dev/null || fail "initializer workflow permission drift in $destination"
+  for role_and_command in \
+    'pc2-explorer|explore' \
+    'pc2-specifier|spec' \
+    'pc2-designer|design' \
+    'pc2-task-planner|plan'; do
+    role=${role_and_command%%|*}
+    command=${role_and_command#*|}
+    file=$(role_path "$destination" "$role")
+    grep -Fx "Allowed workflow commands: workflow show --view phase and workflow $command." "$file" >/dev/null || fail "$role bounded-view permission drift in $destination"
+  done
+  implementer=$(role_path "$destination" pc2-implementer)
+  reviewer=$(role_path "$destination" pc2-reviewer)
+  grep -Fx 'Allowed workflow commands: workflow show --view unit --unit-id <wu-id>, workflow list-ready-units, workflow claim-unit, workflow unit-tdd, and workflow unit-complete. Never workflow unit-review or workflow complete.' "$implementer" >/dev/null || fail "Implementer bounded-view permission drift in $destination"
+  grep -Fx 'Allowed workflow commands: workflow show --view unit --unit-id <wu-id>, workflow show --view aggregate, workflow unit-review, and workflow complete only. Never implementation commands.' "$reviewer" >/dev/null || fail "Reviewer bounded-view permission drift in $destination"
+}
+
 assert_exact_maxims() {
   destination=$1
   maxim_lines=$(wc -l < "$ROOT/MAXIMS.md" | tr -d ' ')
@@ -524,6 +603,10 @@ assert_role_set "$target"
 assert_proportional_contract "$target"
 assert_authority_contract "$target"
 assert_delivery_trace_contract "$target"
+assert_first_mutation_gate_contract "$target"
+assert_transcript_minimal_handoff_contract "$target"
+assert_role_prompt_budget "$target"
+assert_role_view_permissions "$target"
 assert_context_initializer_contract "$target"
 for role in $roles; do
   file=$(role_path "$target" "$role")
@@ -833,6 +916,10 @@ for runtime in opencode claude pi; do
   assert_proportional_contract "$installed"
   assert_authority_contract "$installed"
   assert_delivery_trace_contract "$installed"
+  assert_first_mutation_gate_contract "$installed"
+  assert_transcript_minimal_handoff_contract "$installed"
+  assert_role_prompt_budget "$installed"
+  assert_role_view_permissions "$installed"
   assert_context_initializer_contract "$installed"
   if [ "$runtime" = opencode ]; then
     assert_opencode_registry "$home"
