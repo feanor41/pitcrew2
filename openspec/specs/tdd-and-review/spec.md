@@ -9,13 +9,35 @@ Define test evidence, selective unit review, corrections, unit completion, and a
 
 ### Requirement: TDD input
 
-`unit-tdd --input-file` SHALL read exactly one JSON object with string fields `red_command`, `red_outcome`, `green_command`, `green_outcome`, `refactor_summary`, `validation_command`, `validation_outcome`, and `changed_paths`. Every field except `refactor_summary` SHALL be non-empty; outcomes SHALL record RED failure and GREEN/validation success; changed paths SHALL be comma-separated normalized repository-relative paths. The explicit `--revision` SHALL identify the current unit revision. Accepted evidence SHALL persist with workflow/unit ids and recording time and move the unit from `pending` to `reviewing`.
+`unit-tdd --input-file` SHALL read exactly one JSON object with string fields `red_command`, `red_outcome`, `green_command`, `green_outcome`, `refactor_summary`, `validation_command`, `validation_outcome`, and `changed_paths`, plus optional structured `verification_runs` and `scenario_results`. Every string field except `refactor_summary` SHALL be non-empty; outcomes SHALL record RED failure and GREEN/validation success; changed paths SHALL be comma-separated normalized repository-relative paths. The explicit `--revision` SHALL identify the current unit revision. Accepted evidence SHALL persist with workflow/unit ids and recording time and move the unit from `pending` to `reviewing`.
 
 #### Scenario: Complete evidence is accepted
 
 - GIVEN a pending unit and complete TDD JSON
 - WHEN unit-tdd targets its current revision
 - THEN evidence SHALL persist and state SHALL become reviewing
+
+### Requirement: Current linked scenario coverage
+
+For a unit with declared structured coverage, current-revision TDD evidence SHALL include one successful result for every declared scenario ID. Each result SHALL reference a current verification record whose scenario set contains that ID. Missing, duplicate, failed, or unlinked results SHALL be rejected before evidence or state mutation and the error SHALL identify the missing scenario. Legacy opaque units without declared coverage SHALL retain the existing evidence contract and SHALL NOT gain inferred IDs.
+
+#### Scenario: Missing current result is rejected
+
+- GIVEN a structured unit declares `SCN-COV-001`
+- WHEN current TDD evidence omits that scenario result
+- THEN evidence admission SHALL fail naming `SCN-COV-001` without mutation
+
+### Requirement: Tiered immutable verification
+
+Every structured verification record SHALL contain an immutable ID, one tier from `focused`, `affected_package`, `aggregate_full`, or `publication_full`, the command as inert evidence text, an exit-bearing outcome, repository fingerprint, covered scenario IDs, actor, and recording time. PitCrew SHALL NOT execute stored command strings. Structured unit evidence SHALL include successful current `focused` and `affected_package` records.
+
+A reuse record SHALL name an existing immutable successful record and SHALL be accepted only when tier, command, repository fingerprint, and normalized scenario set match exactly. Missing, failed, or stale source evidence SHALL be rejected without mutation. A risk decision MAY still require a fresh run.
+
+#### Scenario: Stale reuse is rejected
+
+- GIVEN an immutable success recorded for one repository fingerprint
+- WHEN a reuse record supplies another fingerprint
+- THEN the reuse SHALL fail and current verification SHALL remain required
 
 ### Requirement: Review input
 
@@ -59,7 +81,7 @@ An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL requi
 
 ### Requirement: Independent aggregate review
 
-`workflow complete --input-file` SHALL accept an existing review verdict shape with `approved|corrections`, summary, and findings. It SHALL reject an actor matching implementation evidence for any current unit revision and reject repeated completion while an aggregate blocker is unresolved, without mutation. The reviewer SHALL validate the repository result and tests against requirements, all specification/design amendments, plan/tasks, current evidence, unit reviews, and the declared correction policy. Approval with no blocker SHALL append an `aggregate_review` artifact and atomically complete the workflow. Corrections SHALL append it once, advance CAS in `ready_to_complete`, and return `workflow recover-aggregate` when authority exists or `user authorization required` when exhausted; the verdict itself consumes no round.
+`workflow complete --input-file` SHALL accept an existing review verdict shape with `approved|corrections`, summary, and findings, plus structured aggregate verification and a reviewed-result checkpoint when the workflow has structured coverage. It SHALL reject an actor matching implementation evidence for any current unit revision and reject repeated completion while an aggregate blocker is unresolved, without mutation. The reviewer SHALL validate the repository result and tests against requirements, all specification/design amendments, plan/tasks, current evidence, unit reviews, and the declared correction policy. Approval with no blocker SHALL append an `aggregate_review` artifact and atomically complete the workflow. Corrections SHALL append it once, advance CAS in `ready_to_complete`, and return `workflow recover-aggregate` when authority exists or `user authorization required` when exhausted; the verdict itself consumes no round.
 
 `authorize-correction` SHALL accept strict `{aggregate_review_revision,reason,user_direction_confirmed:true}` only for the exact current exhausted blocker. It SHALL append one authorization artifact/activity and a same-state CAS event atomically. Premature, mismatched, repeated-unconsumed, or terminal requests SHALL fail without mutation; the actor and confirmation are audited assertions, not authentication.
 
@@ -68,6 +90,18 @@ An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL requi
 - GIVEN all units are done and an independent reviewer reports corrections
 - WHEN workflow complete succeeds
 - THEN the review SHALL persist, workflow CAS SHALL advance, state SHALL remain ready_to_complete, and the response SHALL return an executable correction path
+
+### Requirement: Aggregate verification bundle and reviewed checkpoint
+
+Structured aggregate approval SHALL require successful current `focused` and `affected_package` records for every structured unit revision, at least one successful `aggregate_full` record, and an identifiable reviewed-result checkpoint. The checkpoint SHALL atomically persist project ID, canonical checkout/worktree, base revision, reviewed HEAD, result digest, dirty flag, optional commit reference, optional delivery ID, aggregate revision, and recording time. A dirty or unpublished result MAY complete; an empty, relative, or otherwise unidentified checkpoint SHALL fail without workflow, review, verification, or checkpoint mutation.
+
+`publication_full` SHALL remain a separately recordable tier and SHALL NOT be an aggregate completion prerequisite. Publication policy MAY require it later at a clean delivery boundary without rewriting aggregate evidence.
+
+#### Scenario: Dirty identifiable result completes without publication
+
+- GIVEN complete unit and aggregate verification for an identifiable dirty worktree
+- WHEN an independent reviewer approves with its checkpoint and no publication record
+- THEN the review, aggregate verification, checkpoint, and completed CAS transition SHALL persist atomically
 
 ### Requirement: Aggregate recovery starts fresh evidence
 
