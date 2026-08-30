@@ -23,6 +23,13 @@ printf '%s\n' \
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'existing project-context deployment facts as the release map' \
+  'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
+  'Mechanical release execution remains direct inline regardless of mapped file count' \
+  'same-version digest mismatch is not convergence' \
+  'resume the same identity from observed physical state' \
+  'Publish only when the accepted release map selects publication' \
+  'release engine, command, schema, parallel status, daemon, polling, or IPC' \
   'first admission gate' \
   'acknowledged before any repository mutation' \
   'stop before mutation and surface the capability boundary' \
@@ -140,6 +147,13 @@ printf '%s\n' \
   'unit identity, attempt, and outcome' \
   'do not replay historical progress' \
   'direct-only delivery has no supported durable capability-request surface' \
+  'existing project-context deployment facts as the release map' \
+  'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
+  'Mechanical release execution remains direct inline regardless of mapped file count' \
+  'same-version digest mismatch is not convergence' \
+  'resume the same identity from observed physical state' \
+  'Publish only when the accepted release map selects publication' \
+  'release engine, command, schema, parallel status, daemon, polling, or IPC' \
   >"$fixture_root/scripts/install-templates.sh"
 
 if ! sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
@@ -162,6 +176,14 @@ if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
   exit 1
 fi
 printf '%s\n' 'host-native dual wait/select' >>"$fixture_root/openspec/specs/runtime-install/spec.md"
+
+grep -Fv 'same-version digest mismatch is not convergence' "$fixture_root/scripts/install-templates.sh" >"$fixture_root/installer.tmp"
+mv "$fixture_root/installer.tmp" "$fixture_root/scripts/install-templates.sh"
+if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
+  echo "missing generated recoverable-release contract escaped validation" >&2
+  exit 1
+fi
+printf '%s\n' 'same-version digest mismatch is not convergence' >>"$fixture_root/scripts/install-templates.sh"
 
 printf '%s\n' 'Forbidden Master canonical specification' >"$fixture_root/openspec/specs/cli-surface/spec.md"
 if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
@@ -187,6 +209,13 @@ printf '%s\n' \
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'existing project-context deployment facts as the release map' \
+  'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
+  'Mechanical release execution remains direct inline regardless of mapped file count' \
+  'same-version digest mismatch is not convergence' \
+  'resume the same identity from observed physical state' \
+  'Publish only when the accepted release map selects publication' \
+  'release engine, command, schema, parallel status, daemon, polling, or IPC' \
   'first admission gate' \
   'acknowledged before any repository mutation' \
   'stop before mutation and surface the capability boundary' \

@@ -249,6 +249,28 @@ assert_delivery_trace_contract() {
   done
 }
 
+assert_recoverable_release_contract() {
+  destination=$1
+  aion=$(role_path "$destination" aion)
+  contract=$(contract_path "$destination")
+  for rule in \
+    'existing project-context deployment facts as the release map' \
+    'repository, binary destination, owned backup, exact managed runtime set, and publication choice' \
+    'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
+    'Mechanical release execution remains direct inline regardless of mapped file count' \
+    'Acknowledge the admission gate before the first mutation' \
+    'Git state, binary version and digest, owned backup, and each exact managed runtime file' \
+    'same-version digest mismatch is not convergence' \
+    'Record a checkpoint only after each meaningful physical transition' \
+    'resume the same identity from observed physical state' \
+    'Publish only when the accepted release map selects publication' \
+    'Preserve every unrelated runtime file and application setting' \
+    'release engine, command, schema, parallel status, daemon, polling, or IPC'; do
+    grep -F "$rule" "$aion" >/dev/null || fail "Aion recoverable-release contract omitted $rule in $destination"
+    grep -F "$rule" "$contract" >/dev/null || fail "shared recoverable-release contract omitted $rule in $destination"
+  done
+}
+
 assert_first_mutation_gate_contract() {
   destination=$1
   aion=$(role_path "$destination" aion)
@@ -304,14 +326,14 @@ assert_role_prompt_budget() {
 	words=$(cat $files | wc -w | tr -d ' ')
   aion=$(role_path "$destination" aion)
   case $aion in
-    *.toml) baseline_bytes=46073 baseline_words=6372 ;;
+    *.toml) baseline_bytes=46836 baseline_words=6481 ;;
     *)
       if grep -F 'Pi native supervisor rule' "$aion" >/dev/null; then
-        baseline_bytes=48553 baseline_words=6751
+        baseline_bytes=49316 baseline_words=6860
       elif grep -F 'mode: all' "$aion" >/dev/null; then
-        baseline_bytes=46116 baseline_words=6378
+        baseline_bytes=46879 baseline_words=6487
       else
-        baseline_bytes=45969 baseline_words=6352
+        baseline_bytes=46732 baseline_words=6461
       fi
       ;;
   esac
@@ -629,6 +651,7 @@ assert_role_set "$target"
 assert_proportional_contract "$target"
 assert_authority_contract "$target"
 assert_delivery_trace_contract "$target"
+assert_recoverable_release_contract "$target"
 assert_first_mutation_gate_contract "$target"
 assert_transcript_minimal_handoff_contract "$target"
 assert_role_prompt_budget "$target"
@@ -943,6 +966,7 @@ for runtime in opencode claude pi; do
   assert_proportional_contract "$installed"
   assert_authority_contract "$installed"
   assert_delivery_trace_contract "$installed"
+  assert_recoverable_release_contract "$installed"
   assert_first_mutation_gate_contract "$installed"
   assert_transcript_minimal_handoff_contract "$installed"
   assert_role_prompt_budget "$installed"
