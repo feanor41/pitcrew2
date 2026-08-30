@@ -23,9 +23,13 @@ type ProjectContextSnapshot struct {
 
 // LoadProjectContext loads and validates the stored singleton without repair.
 func (s *Store) LoadProjectContext(ctx context.Context) (ProjectContextSnapshot, bool, error) {
+	available, err := s.projectContextAvailable(ctx)
+	if err != nil || !available {
+		return ProjectContextSnapshot{}, false, err
+	}
 	var schemaVersion int
 	var content, actor, updatedAt string
-	err := s.db.QueryRowContext(ctx, `SELECT schema_version,content,actor,updated_at FROM project_context WHERE singleton=1`).Scan(&schemaVersion, &content, &actor, &updatedAt)
+	err = s.db.QueryRowContext(ctx, `SELECT schema_version,content,actor,updated_at FROM project_context WHERE singleton=1`).Scan(&schemaVersion, &content, &actor, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProjectContextSnapshot{}, false, nil
 	}
@@ -37,6 +41,25 @@ func (s *Store) LoadProjectContext(ctx context.Context) (ProjectContextSnapshot,
 		return ProjectContextSnapshot{}, true, err
 	}
 	return snapshot, true, nil
+}
+
+func (s *Store) projectContextAvailable(ctx context.Context) (bool, error) {
+	var migrationName string
+	migrationErr := s.db.QueryRowContext(ctx, `SELECT name FROM schema_migrations WHERE version=5`).Scan(&migrationName)
+	if migrationErr != nil && !errors.Is(migrationErr, sql.ErrNoRows) {
+		return false, migrationErr
+	}
+	var tables int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('project_context','project_context_audits')`).Scan(&tables); err != nil {
+		return false, err
+	}
+	if errors.Is(migrationErr, sql.ErrNoRows) && tables == 0 {
+		return false, nil
+	}
+	if migrationErr != nil || migrationName != "project context" || tables != 2 {
+		return false, fmt.Errorf("%w: inconsistent V5 project-context schema", ErrInvalidState)
+	}
+	return true, nil
 }
 
 func decodeProjectContext(schemaVersion int, content, actor, updatedAt string) (ProjectContextSnapshot, error) {

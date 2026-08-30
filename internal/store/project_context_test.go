@@ -47,7 +47,7 @@ func TestMigration5PreservesPopulatedV4(t *testing.T) {
 		t.Fatalf("delivery changed: %q", delivery)
 	}
 	for query, want := range map[string]int{
-		`SELECT count(*) FROM schema_migrations`:      5,
+		`SELECT count(*) FROM schema_migrations`:      len(schemaMigrations),
 		`SELECT count(*) FROM project_context`:        0,
 		`SELECT count(*) FROM project_context_audits`: 0,
 	} {
@@ -182,6 +182,34 @@ func TestLoadProjectContextRejectsCorruptStorage(t *testing.T) {
 	}
 	if snapshot, found, err := s.LoadProjectContext(ctx); !found || !errors.Is(err, projectcontext.ErrInvalidRecord) || !reflect.DeepEqual(snapshot, ProjectContextSnapshot{}) {
 		t.Fatalf("corrupt load snapshot=%#v found=%v err=%v", snapshot, found, err)
+	}
+}
+
+func TestLoadProjectContextTreatsV4SchemaAsMissing(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	legacy := openStoreAtMigration(t, root, 4)
+	defer legacy.Close()
+
+	before := logicalSnapshot(t, legacy.Path())
+	snapshot, found, err := legacy.LoadProjectContext(ctx)
+	if err != nil || found || !reflect.DeepEqual(snapshot, ProjectContextSnapshot{}) {
+		t.Fatalf("pre-V5 load snapshot=%#v found=%v err=%v; want missing", snapshot, found, err)
+	}
+	if after := logicalSnapshot(t, legacy.Path()); !reflect.DeepEqual(after, before) {
+		t.Fatalf("pre-V5 load mutated storage\nbefore: %v\nafter:  %v", before, after)
+	}
+}
+
+func TestLoadProjectContextRejectsCorruptV5WithoutContextTable(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if _, err := s.DB().ExecContext(ctx, `DROP TABLE project_context`); err != nil {
+		t.Fatal(err)
+	}
+
+	if snapshot, found, err := s.LoadProjectContext(ctx); found || err == nil || !reflect.DeepEqual(snapshot, ProjectContextSnapshot{}) {
+		t.Fatalf("declared V5 load snapshot=%#v found=%v err=%v; want corruption error", snapshot, found, err)
 	}
 }
 
