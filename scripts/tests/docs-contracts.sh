@@ -31,7 +31,10 @@ require openspec/specs/claim-handles/spec.md '<data-home>/pitcrew/projects/<proj
 require openspec/specs/runtime-install/spec.md 'exactly all nine native definitions'
 require openspec/specs/runtime-install/spec.md 'pc2-sdd-initializer'
 require AGENTS.md 'Aion targets exactly the seven specialists'
-require docs/todo.md '**Delivered — Durable project context and SDD initialization.**'
+require docs/todo.md 'GitHub Issues is the source of truth for PitCrew backlog work:'
+require docs/todo.md 'https://github.com/feanor41/pitcrew2/issues/132'
+require docs/todo.md 'https://github.com/feanor41/pitcrew2/issues/135'
+require docs/todo.md 'Do not add new unchecked work to this file.'
 
 if grep -Fq 'current project owns `.pitcrew/state.db`' README.md; then
   echo 'README still claims checkout-local workflow ownership' >&2
