@@ -91,10 +91,35 @@ type WorkUnit struct {
 	DependsOn              []string            `json:"depends_on"`
 	EstimatedChangedLines  int                 `json:"estimated_changed_lines"`
 	EstimatedReviewMinutes int                 `json:"estimated_review_minutes"`
+	Coverage               []Coverage          `json:"coverage,omitempty"`
 	State                  UnitState           `json:"-"`
 	AdmissionException     *AdmissionException `json:"admission_exception,omitempty"`
 	present                workUnitPresence
 }
+
+type Coverage struct {
+	RequirementID string   `json:"requirement_id"`
+	ScenarioIDs   []string `json:"scenario_ids"`
+}
+
+func (c *Coverage) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		RequirementID *string   `json:"requirement_id"`
+		ScenarioIDs   *[]string `json:"scenario_ids"`
+	}
+	var value wire
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	if value.RequirementID == nil || value.ScenarioIDs == nil {
+		return fmt.Errorf("coverage requires requirement_id and scenario_ids")
+	}
+	c.RequirementID, c.ScenarioIDs = *value.RequirementID, *value.ScenarioIDs
+	return nil
+}
+
 type Plan struct {
 	Summary                   string                    `json:"summary"`
 	Scope                     string                    `json:"scope"`
@@ -110,10 +135,11 @@ type OverlapApproval struct {
 	Justification string   `json:"justification"`
 }
 
-type workUnitPresence struct{ id, description, scope, areas, depends, lines, minutes bool }
+type workUnitPresence struct{ id, description, scope, areas, depends, lines, minutes, coverage bool }
 type planPresence struct{ summary, scope, units, parallel, aggregateCorrectionPolicy bool }
 
 func (p Plan) HasAggregateCorrectionPolicy() bool { return p.present.aggregateCorrectionPolicy }
+func (u WorkUnit) HasCoverage() bool              { return u.present.coverage || len(u.Coverage) > 0 }
 
 func NormalizeForSubmission(p Plan) Plan {
 	if !p.present.aggregateCorrectionPolicy {
@@ -134,6 +160,7 @@ func (u *WorkUnit) UnmarshalJSON(data []byte) error {
 		DependsOn              *[]string           `json:"depends_on"`
 		EstimatedChangedLines  *int                `json:"estimated_changed_lines"`
 		EstimatedReviewMinutes *int                `json:"estimated_review_minutes"`
+		Coverage               *[]Coverage         `json:"coverage"`
 		AdmissionException     *AdmissionException `json:"admission_exception"`
 	}
 	var value wire
@@ -142,7 +169,7 @@ func (u *WorkUnit) UnmarshalJSON(data []byte) error {
 	if err := decoder.Decode(&value); err != nil {
 		return err
 	}
-	u.present = workUnitPresence{value.ID != nil, value.Description != nil, value.Scope != nil, value.Areas != nil, value.DependsOn != nil, value.EstimatedChangedLines != nil, value.EstimatedReviewMinutes != nil}
+	u.present = workUnitPresence{value.ID != nil, value.Description != nil, value.Scope != nil, value.Areas != nil, value.DependsOn != nil, value.EstimatedChangedLines != nil, value.EstimatedReviewMinutes != nil, value.Coverage != nil}
 	if value.ID != nil {
 		u.ID = *value.ID
 	}
@@ -163,6 +190,9 @@ func (u *WorkUnit) UnmarshalJSON(data []byte) error {
 	}
 	if value.EstimatedReviewMinutes != nil {
 		u.EstimatedReviewMinutes = *value.EstimatedReviewMinutes
+	}
+	if value.Coverage != nil {
+		u.Coverage = *value.Coverage
 	}
 	u.AdmissionException = value.AdmissionException
 	return nil
@@ -222,7 +252,11 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 	return json.Marshal(value)
 }
 
-var unitIDPattern = regexp.MustCompile(`^wu-[0-9a-f]{24}$`)
+var (
+	unitIDPattern        = regexp.MustCompile(`^wu-[0-9a-f]{24}$`)
+	requirementIDPattern = regexp.MustCompile(`^REQ-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
+	scenarioIDPattern    = regexp.MustCompile(`^SCN-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
+)
 
 func Validate(p Plan) error {
 	if (p.present.summary || p.present.scope || p.present.units || p.present.parallel) && (!p.present.summary || !p.present.scope || !p.present.units || !p.present.parallel) {
@@ -249,7 +283,8 @@ func Validate(p Plan) error {
 	}
 	knownIDs := map[string]bool{}
 	for _, unit := range p.Units {
-		if unit.present != (workUnitPresence{}) && (!unit.present.id || !unit.present.description || !unit.present.scope || !unit.present.areas || !unit.present.depends || !unit.present.lines || !unit.present.minutes) {
+		corePresent := unit.present.id || unit.present.description || unit.present.scope || unit.present.areas || unit.present.depends || unit.present.lines || unit.present.minutes
+		if corePresent && (!unit.present.id || !unit.present.description || !unit.present.scope || !unit.present.areas || !unit.present.depends || !unit.present.lines || !unit.present.minutes) {
 			return fmt.Errorf("work unit requires every declared field")
 		}
 		knownIDs[unit.ID] = true
@@ -298,6 +333,28 @@ func Validate(p Plan) error {
 		}
 		if unit.EstimatedChangedLines < 0 || unit.EstimatedReviewMinutes < 0 {
 			return fmt.Errorf("unit %s estimates must be non-negative", unit.ID)
+		}
+		if unit.present.coverage && len(unit.Coverage) == 0 {
+			return fmt.Errorf("unit %s coverage must not be empty", unit.ID)
+		}
+		seenCoverage := map[string]bool{}
+		for _, coverage := range unit.Coverage {
+			if !requirementIDPattern.MatchString(coverage.RequirementID) {
+				return fmt.Errorf("unit %s has invalid requirement id %q", unit.ID, coverage.RequirementID)
+			}
+			if len(coverage.ScenarioIDs) == 0 {
+				return fmt.Errorf("unit %s requirement %s scenario_ids must not be empty", unit.ID, coverage.RequirementID)
+			}
+			for _, scenarioID := range coverage.ScenarioIDs {
+				if !scenarioIDPattern.MatchString(scenarioID) {
+					return fmt.Errorf("unit %s has invalid scenario id %q", unit.ID, scenarioID)
+				}
+				key := coverage.RequirementID + "\x00" + scenarioID
+				if seenCoverage[key] {
+					return fmt.Errorf("unit %s has duplicate coverage for %s", unit.ID, scenarioID)
+				}
+				seenCoverage[key] = true
+			}
 		}
 	}
 	for _, unit := range p.Units {
