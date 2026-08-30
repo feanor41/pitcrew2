@@ -116,6 +116,32 @@ compensate with polling, daemon, IPC, or durable inbox behavior.
 - THEN it SHALL report `SKIP` rather than claim live-turn proof
 - AND static Pi instructions SHALL retain the same acknowledgement and transport prohibitions
 
+### Requirement: Aion supplies economical delivery facts
+
+After selecting `direct_inline` or `delegated_direct`, generated Aion
+instructions SHALL establish one trace before repository mutation with `delivery start`,
+using the accepted goal, selected route, bounded route rationale, and
+a stable operation key. Aion SHALL retain the stable operation key until start acknowledgement
+and replay the identical start after a lost response. Idempotency SHALL guarantee one delivery identity, not one fallible invocation.
+Once acknowledged, Aion
+SHALL retain the delivery ID and current revision. On interrupted or CAS re-entry,
+Aion SHALL inspect and resume the same delivery identity and SHALL NOT mint a
+replacement key or trace. It SHALL update only after a meaningful observed fact
+or truthful terminal outcome. If the provider disappears, the trace SHALL retain
+its last observed status; agents SHALL NOT infer a terminal outcome. A full
+workflow SHALL use `workflow new` as its one durable trace and Aion MUST NOT create a direct delivery trace
+in addition. Specialists SHALL NOT create or
+update a parallel trace.
+
+#### Scenario: Every route has one provider-owned trace
+
+- GIVEN Aion accepts work and selects one proportional route
+- WHEN work starts and later changes meaningfully
+- THEN a direct route SHALL have one retained `dl-*` identity before mutation
+- AND a lost start response SHALL be replayed with the retained operation key
+- AND a full workflow SHALL have one `wf-*` identity and zero direct traces
+- AND updates SHALL describe only facts Aion actually observed
+
 ### Requirement: Explicit selection and current registry paths
 
 The public command SHALL select exactly one lowercase, alias-free runtime and

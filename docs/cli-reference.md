@@ -1,8 +1,14 @@
 # PitCrew CLI reference
 
-PitCrew exposes `install`, `project`, `tui`, `principles`, two global flags, and exactly 23 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `install`, `project`, `tui`, `principles`, two global flags, and exactly 24 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
 The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon interviews, clarifies intent, preserves conversational continuity, and reports only Aion-acknowledged facts or questions. Aion alone owns routing and workflow coordination. For each accepted delivery, Daimon and the addressable-agent host reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and authority throughout. Mid-flight input remains requested, not applied, until Aion admits it against current state; concurrent Daimon availability depends on host support for addressable agents, not a PitCrew daemon, service, IPC, polling, or inbox.
+
+Every route leaves one Control Plane delivery. Full workflows keep their existing
+`wf-*` record. Direct inline and delegated direct use one lightweight `dl-*`
+trace started by Aion before repository mutation; they create no synthetic SDD
+phases, work units, or review artifacts. `delivery show` and `delivery search`
+inspect both kinds through the same projection.
 
 ## Quick path
 
@@ -84,6 +90,10 @@ install the extension, access the network, or modify Pi configuration.
 | `project inspect` | None. |
 | `project consolidate` | `--input-file <path>` |
 | `tui` | None; extra arguments are rejected. |
+| `delivery start` | `--actor <label> --input-file <path>` |
+| `delivery update` | `--delivery-id <dl-id> --revision <n> --actor <label> --input-file <path>` |
+| `delivery show` | `--delivery-id <dl-id|wf-id>` |
+| `delivery search` | `--query <nonblank-text>` |
 | `workflow new` | `--name <text> --goal <text> --actor <label>` |
 | `workflow continue` | `--from <terminal-wf-id> --actor <label>` |
 | `workflow show` | `--workflow-id <wf-id>` |
@@ -108,6 +118,21 @@ install the extension, access the network, or modify Pi configuration.
 | `workflow unit-tdd` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
+
+`delivery start` accepts strict JSON
+`{"operation_key":"...","route":"direct_inline|delegated_direct","goal":"...","route_reason":"..."}`.
+The stable operation key makes an identical retry idempotent. Aion retains it
+until start acknowledgement and replays the same logical start after a lost
+response, producing one delivery identity rather than trusting one fallible
+invocation. Interrupted or CAS re-entry inspects and resumes that identity; it
+never mints a replacement operation key or trace. Goal is bounded to 4,000
+runes, operation key and actor to 128, and route reason to 500. Start returns
+status `in_progress` at revision 1. `delivery update` accepts strict JSON
+`{"status":"in_progress|blocked|interrupted|completed|cancelled|failed","summary":"...","next_action":"..."}`,
+with summary bounded to 500 runes and next action to 200. Updates use revision
+CAS, permit transitions among non-terminal states or to a terminal state, and
+make terminal traces immutable. `interrupted` records an observed interruption;
+silent provider loss leaves the last observed status unchanged.
 
 ## Project inspection and consolidation
 

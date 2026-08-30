@@ -25,7 +25,7 @@ PitCrew is a local control plane for one person, one machine, and one project pe
 | Role | Allowed workflow commands | Responsibility |
 |---|---|---|
 | Daimon | none | Interview the user, clarify intent and constraints, preserve conversational continuity, forward accepted requests to Aion, and communicate only Aion-acknowledged facts or clarification requests. |
-| Aion | all workflow commands as advisory coordination surfaces | Own workflow context and mutation sequencing; select routes, dispatch specialists, approve execution, coordinate handles, recovery, corrections, continuation, capability requests, and completion. |
+| Aion | all workflow and delivery commands as advisory coordination surfaces | Own delivery identity, route selection, workflow context, mutation sequencing, specialist dispatch, approvals, handles, recovery, corrections, continuation, capability requests, and completion. |
 | Explorer | `workflow explore` | Persist investigation evidence. |
 | Specifier | `workflow spec` | Persist executable specification content. |
 | Designer | `workflow design` | Persist the technical design. |
@@ -49,6 +49,8 @@ Applying an already-decided approach creates no new gate, justification, or arti
 - Direct: Aion implements and verifies well-understood, low-risk work affecting at most three files. It never calls its own verification independent approval.
 - Delegated direct: simple work affecting four or more files goes to `pc2-implementer`, followed by one complete-change review from `pc2-reviewer`, without synthetic workflow artifacts.
 - Full workflow: complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty require the complete workflow regardless of file count.
+
+Immediately after selecting direct inline or delegated direct and before repository mutation, Aion MUST establish one trace with `delivery start`, the accepted goal, route, bounded rationale, and a stable operation key. It MUST retain the stable operation key until start acknowledgement and replay the identical start after a lost response: idempotency guarantees one delivery identity, not one fallible invocation. Once acknowledged, Aion MUST retain the delivery ID and current revision. On interrupted or CAS re-entry it MUST inspect and resume the same delivery identity, never mint another operation key or trace, and update only for a meaningful observed fact or truthful terminal outcome. Silent provider loss leaves the last observed status; Aion never invents completion or failure. Full workflow routing uses `workflow new` as its single trace and MUST NOT create a direct delivery trace. Implementers and Reviewers update no trace independently.
 
 Unit review is selective where early feedback materially reduces risk. Every full workflow ends with one independent aggregate review against requirements, specifications, design, tasks, implementation evidence, and tests. On exit 3 or 4, Aion inspects once and never repeats an identical command against unchanged state. If the harness obstructs legitimate work, Aion may `abandon --reason` and continue by direct coordination; it may not forge review, bypass aggregate review, disclose handle contents or secrets, discard evidence, or mutate terminal workflows. When unit review is selected, Aion passes only the opaque handle path to the Reviewer.
 
