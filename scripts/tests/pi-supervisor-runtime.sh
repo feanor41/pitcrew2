@@ -9,7 +9,14 @@ for required in \
   'stable semantic key' \
   'unit identity, attempt, and outcome' \
   'workflow revision alone is insufficient' \
-  'do not replay historical progress'; do
+  'do not replay historical progress' \
+  'Reviewer alone runs `workflow complete` and returns the terminal result' \
+  'relays it before the first publication action' \
+  'broader delivery continues, and gives the actual next action' \
+  'final delivery-only report omits that terminal key' \
+  'Terminal facts require the Reviewer terminal result and Aion relay first' \
+  'If there is no new accepted fact, emit nothing' \
+  'Without a live Aion relay, do not synthesize an update'; do
   grep -Fq "$required" "$ROOT/scripts/install-templates.sh" || fail "Pi semantic reporting contract omitted: $required"
 done
 
@@ -19,8 +26,16 @@ const fs = require('fs');
 const path = require('path');
 const [tracePath, artifactsDir, mode] = process.argv.slice(2);
 const ACK = 'AION_ACKNOWLEDGED_FACT';
+const DELIVERY_ACK = 'AION_ACKNOWLEDGED_DELIVERY_FACT';
+const TERMINAL = 'REVIEWER_TERMINAL_REVISION_2';
+const TERMINAL_KEY = 'workflow:wf-smoke:terminal:2';
+const DELIVERY_KEY = 'delivery:wf-smoke:published:3';
+const WORKFLOW_COMPLETION = 'workflow wf-smoke completed at revision 2';
+const BROADER_DELIVERY = 'broader delivery continues';
+const NEXT_ACTION = 'next action: publish pull request';
 const RAW = 'SPECIALIST_RAW_COMPLETION_DO_NOT_NARRATE';
 const MARKER = 'DAIMON_USER_UPDATE_MARKER';
+const FINAL_MARKER = 'FINAL_DELIVERY_UPDATE_MARKER';
 const HOST_NOT_LIVE = 'PITCREW_HOST_NOT_LIVE';
 
 const fail = message => { throw new Error(message); };
@@ -73,6 +88,7 @@ function verify(root, transcriptSources) {
   for (const { event } of assistantEvents(root)) {
     if (text(event.message).includes(RAW)) fail('Daimon user-facing assistant message exposed raw specialist prose');
   }
+  const hostNotLive = assistantEvents(root).filter(({ event }) => text(event.message).trim() === HOST_NOT_LIVE);
 
   const transcripts = transcriptSources.map(({ file, events }) => {
     if (events.length === 0) fail(`${file} is empty`);
@@ -95,36 +111,44 @@ function verify(root, transcriptSources) {
   });
   const byAgent = agent => transcripts.filter(transcript => transcript.agent === agent);
   const [aion] = byAgent('aion');
+  const [reviewer] = byAgent('pc2-reviewer');
   const [specialist] = byAgent('pc2-explorer');
-  if (byAgent('aion').length !== 1 || byAgent('pc2-explorer').length !== 1 || transcripts.length !== 2) {
+  if (byAgent('aion').length !== 1 || byAgent('pc2-reviewer').length !== 1 ||
+      byAgent('pc2-explorer').length !== 1 || transcripts.length !== 3) {
     fail('Pi child transcripts are missing, duplicated, or unattributable');
   }
 
   const aionAcknowledgements = aion.events.map((event, index) => ({ event, index })).filter(({ event }) =>
     event.recordType === 'message' && event.sourceEventType === 'message_end' && event.role === 'assistant' &&
-    typeof event.text === 'string' && event.text.includes(ACK));
+    typeof event.text === 'string' && event.text.includes(ACK) && event.text.includes(TERMINAL_KEY));
   if (aionAcknowledgements.length !== 1) fail('expected one Aion acknowledgement event');
+  const terminalResults = reviewer.events.map((event, index) => ({ event, index })).filter(({ event }) =>
+    event.recordType === 'message' && event.sourceEventType === 'message_end' && event.role === 'assistant' &&
+    typeof event.text === 'string' && event.text.includes(TERMINAL) && event.text.includes(TERMINAL_KEY));
+  if (terminalResults.length !== 1) fail('expected one attributable Reviewer terminal result');
   const calls = aion.events.map((event, index) => ({ event, index })).filter(({ event }) =>
     event.recordType === 'tool_start' && event.sourceEventType === 'tool_execution_start' && event.toolName === 'contact_supervisor');
-  if (calls.length !== 1) fail(`expected one injected Aion contact_supervisor call, found ${calls.length}`);
-  const call = calls[0];
-  const callEnds = aion.events.filter(event =>
-    event.recordType === 'tool_end' && event.sourceEventType === 'tool_execution_end' &&
-    event.toolName === 'contact_supervisor' && event.toolCallId === call.event.toolCallId);
-  if (callEnds.length !== 1 || callEnds[0].isError !== false) {
-    fail('injected Aion contact_supervisor did not complete successfully');
-  }
-  let args;
-  try { args = object(JSON.parse(call.event.argsPayload), 'Aion contact_supervisor arguments are malformed'); }
-  catch (error) { fail(`Aion contact_supervisor arguments are malformed: ${error.message}`); }
-  if (args.reason !== 'progress_update' || typeof args.message !== 'string' ||
-      !args.message.includes('wf-smoke') || !args.message.includes('revision 1') ||
-      !args.message.includes(ACK) || !/next action/i.test(args.message)) {
+  const parsedCalls = calls.map(call => {
+    const callEnds = aion.events.filter(event =>
+      event.recordType === 'tool_end' && event.sourceEventType === 'tool_execution_end' &&
+      event.toolName === 'contact_supervisor' && event.toolCallId === call.event.toolCallId);
+    if (callEnds.length !== 1 || callEnds[0].isError !== false) fail('injected Aion contact_supervisor did not complete successfully');
+    try { return { ...call, args: object(JSON.parse(call.event.argsPayload), 'Aion contact_supervisor arguments are malformed') }; }
+    catch (error) { fail(`Aion contact_supervisor arguments are malformed: ${error.message}`); }
+  });
+  const terminalCalls = parsedCalls.filter(call => typeof call.args.message === 'string' && call.args.message.includes(TERMINAL_KEY));
+  if (terminalCalls.length !== 1) fail('expected one terminal Aion contact_supervisor call');
+  const terminalCall = terminalCalls[0];
+  const args = terminalCall.args;
+  if (args.reason !== 'progress_update' || !args.message.includes(WORKFLOW_COMPLETION) ||
+      !args.message.includes(BROADER_DELIVERY) || !args.message.includes(NEXT_ACTION) ||
+      args.message.includes('delivery completed') || !args.message.includes(ACK)) {
     fail('Aion contact_supervisor arguments do not match the smoke contract');
   }
-  if (aionAcknowledgements[0].index >= call.index ||
-      timestamp(aionAcknowledgements[0].event.timestamp, 'Aion acknowledgement') >= timestamp(call.event.timestamp, 'Aion contact_supervisor call')) {
-    fail('Aion acknowledgement did not precede contact_supervisor');
+  if (aionAcknowledgements[0].index >= terminalCall.index ||
+      timestamp(terminalResults[0].event.timestamp, 'Reviewer terminal result') >= timestamp(aionAcknowledgements[0].event.timestamp, 'Aion acknowledgement') ||
+      timestamp(aionAcknowledgements[0].event.timestamp, 'Aion acknowledgement') >= timestamp(terminalCall.event.timestamp, 'Aion contact_supervisor call')) {
+    fail('Reviewer terminal result, Aion acknowledgement, and relay call are out of order');
   }
 
   const specialistCalls = specialist.events.filter(event =>
@@ -138,31 +162,70 @@ function verify(root, transcriptSources) {
   const relays = root.map((event, index) => ({ event, index })).filter(({ event }) =>
     event.type === 'message_end' && event.message && event.message.role === 'custom' &&
     event.message.customType === 'subagent_supervisor_request');
-  const hostNotLive = assistantEvents(root).filter(({ event }) => text(event.message).trim() === HOST_NOT_LIVE);
+  const publications = aion.events.map((event, index) => ({ event, index })).filter(({ event }) =>
+    event.recordType === 'tool_start' && event.sourceEventType === 'tool_execution_start' && event.toolName === 'bash' &&
+    typeof event.argsPayload === 'string' && event.argsPayload.includes('FIRST_PUBLICATION_ACTION'));
   if (hostNotLive.length > 0) {
-    if (hostNotLive.length !== 1 || relays.length !== 0 ||
-        timestamp(call.event.timestamp, 'Aion contact_supervisor call') >= timestamp(hostNotLive[0].event.message.timestamp, 'Daimon host-liveness result')) {
+    if (hostNotLive.length !== 1 || parsedCalls.length !== 1 || relays.length !== 0 ||
+        assistantEvents(root).some(({ event }) => text(event.message).includes(MARKER) || text(event.message).includes(FINAL_MARKER)) ||
+        publications.length !== 0 ||
+        timestamp(terminalCall.event.timestamp, 'Aion contact_supervisor call') >= timestamp(hostNotLive[0].event.message.timestamp, 'Daimon host-liveness result')) {
       fail('host-liveness skip is not verified by an attributable Aion call and Daimon result');
     }
     return 'host-not-live';
   }
-  if (relays.length !== 1) fail(`expected one native Aion progress relay, found ${relays.length}`);
-  const relay = relays[0];
+  if (parsedCalls.length !== 2 || relays.length !== 2) fail('expected one terminal relay and one independent delivery relay');
+  const terminalRelays = relays.filter(({ event }) => text(event.message).includes(TERMINAL_KEY));
+  const deliveryRelays = relays.filter(({ event }) => text(event.message).includes(DELIVERY_KEY));
+  if (terminalRelays.length !== 1 || deliveryRelays.length !== 1) fail('native relays do not have distinct terminal and delivery keys');
+  const relay = terminalRelays[0];
   const details = object(relay.event.message.details, 'native Aion progress relay details are malformed');
   if (details.reason !== 'progress_update' || details.agent !== 'aion' || details.runId !== aion.runId ||
-      details.childIndex !== aion.childIndex || !text(relay.event.message).includes(ACK)) {
+      details.childIndex !== aion.childIndex || !text(relay.event.message).includes(ACK) ||
+      !text(relay.event.message).includes(TERMINAL_KEY)) {
     fail('native progress relay does not identify the Aion session and acknowledgement');
   }
-  if (timestamp(call.event.timestamp, 'Aion contact_supervisor call') >= timestamp(relay.event.message.timestamp, 'native Aion progress relay')) {
+  if (timestamp(terminalCall.event.timestamp, 'Aion contact_supervisor call') >= timestamp(relay.event.message.timestamp, 'native Aion progress relay')) {
     fail('native Aion progress relay preceded its Aion call');
   }
 
   const markers = assistantEvents(root).filter(({ event }) => text(event.message).includes(MARKER));
   if (markers.length !== 1) fail(`expected one Daimon user marker, found ${markers.length}`);
   const marker = markers[0];
-  if (text(marker.event.message).includes(RAW)) fail('Daimon marker exposed raw specialist prose');
+  if (text(marker.event.message).includes(RAW) || !text(marker.event.message).includes(WORKFLOW_COMPLETION) ||
+      !text(marker.event.message).includes(BROADER_DELIVERY) || !text(marker.event.message).includes(NEXT_ACTION)) {
+    fail('Daimon marker is raw, mislabels workflow completion, or omits the actual broader-delivery next action');
+  }
   if (timestamp(relay.event.message.timestamp, 'native Aion progress relay') >= timestamp(marker.event.message.timestamp, 'Daimon user marker')) {
     fail('Daimon user marker preceded the native Aion progress relay');
+  }
+  if (publications.length !== 1 ||
+      timestamp(marker.event.message.timestamp, 'Daimon user marker') >= timestamp(publications[0].event.timestamp, 'first publication action')) {
+    fail('first publication action did not follow the Daimon workflow-complete message');
+  }
+  const deliveryAcknowledgements = aion.events.map((event, index) => ({ event, index })).filter(({ event }) =>
+    event.recordType === 'message' && event.sourceEventType === 'message_end' && event.role === 'assistant' &&
+    typeof event.text === 'string' && event.text.includes(DELIVERY_ACK) && event.text.includes(DELIVERY_KEY));
+  const deliveryCalls = parsedCalls.filter(call => typeof call.args.message === 'string' && call.args.message.includes(DELIVERY_KEY));
+  if (deliveryAcknowledgements.length !== 1 || deliveryCalls.length !== 1 ||
+      deliveryCalls[0].args.reason !== 'progress_update' || !deliveryCalls[0].args.message.includes('delivery published') ||
+      deliveryCalls[0].args.message.includes(TERMINAL_KEY) || deliveryCalls[0].args.message.includes(WORKFLOW_COMPLETION) ||
+      timestamp(publications[0].event.timestamp, 'first publication action') >= timestamp(deliveryAcknowledgements[0].event.timestamp, 'Aion delivery acknowledgement') ||
+      timestamp(deliveryAcknowledgements[0].event.timestamp, 'Aion delivery acknowledgement') >= timestamp(deliveryCalls[0].event.timestamp, 'Aion delivery relay call')) {
+    fail('final delivery fact is not independently acknowledged and relayed after publication');
+  }
+  const deliveryRelay = deliveryRelays[0];
+  const deliveryDetails = object(deliveryRelay.event.message.details, 'native Aion delivery relay details are malformed');
+  if (deliveryDetails.reason !== 'progress_update' || deliveryDetails.agent !== 'aion' || deliveryDetails.runId !== aion.runId ||
+      deliveryDetails.childIndex !== aion.childIndex || !text(deliveryRelay.event.message).includes(DELIVERY_ACK) ||
+      timestamp(deliveryCalls[0].event.timestamp, 'Aion delivery relay call') >= timestamp(deliveryRelay.event.message.timestamp, 'native Aion delivery relay')) {
+    fail('native delivery relay is unattributable or out of order');
+  }
+  const finalReports = assistantEvents(root).filter(({ event }) => text(event.message).includes(FINAL_MARKER));
+  if (finalReports.length !== 1 || !text(finalReports[0].event.message).includes('delivery published') ||
+      text(finalReports[0].event.message).includes(WORKFLOW_COMPLETION) || text(finalReports[0].event.message).includes(TERMINAL_KEY) ||
+      timestamp(deliveryRelay.event.message.timestamp, 'native Aion delivery relay') >= timestamp(finalReports[0].event.message.timestamp, 'final delivery-only report')) {
+    fail('final delivery-only report is missing, premature, or replays the workflow-terminal key');
   }
   return 'passed';
 }
@@ -179,14 +242,24 @@ if (mode === 'regression' || mode === 'regression-red') {
   const validRoot = [
     { type: 'session', version: 3, id: 'daimon-session', timestamp: '2026-01-01T00:00:00.000Z', cwd: '/fixture' },
     message('user', `submitted task input: ${RAW}`, '2026-01-01T00:00:01.000Z'),
-    { type: 'message_end', message: { role: 'custom', customType: 'subagent_supervisor_request', content: [{ type: 'text', text: ACK }], details: { reason: 'progress_update', agent: 'aion', runId: 'aion-run', childIndex: 0 }, timestamp: '2026-01-01T00:00:04.000Z' } },
-    message('assistant', MARKER, '2026-01-01T00:00:05.000Z'),
+    { type: 'message_end', message: { role: 'custom', customType: 'subagent_supervisor_request', content: [{ type: 'text', text: `${ACK}; ${TERMINAL_KEY}; ${WORKFLOW_COMPLETION}; ${BROADER_DELIVERY}; ${NEXT_ACTION}` }], details: { reason: 'progress_update', agent: 'aion', runId: 'aion-run', childIndex: 0 }, timestamp: '2026-01-01T00:00:04.000Z' } },
+    message('assistant', `${MARKER}; ${WORKFLOW_COMPLETION}; ${BROADER_DELIVERY}; ${NEXT_ACTION}`, '2026-01-01T00:00:05.000Z'),
+    { type: 'message_end', message: { role: 'custom', customType: 'subagent_supervisor_request', content: [{ type: 'text', text: `${DELIVERY_ACK}; ${DELIVERY_KEY}; delivery published; next action: none` }], details: { reason: 'progress_update', agent: 'aion', runId: 'aion-run', childIndex: 0 }, timestamp: '2026-01-01T00:00:08.000Z' } },
+    message('assistant', `${FINAL_MARKER}; delivery published; next action: none`, '2026-01-01T00:00:09.000Z'),
   ];
   const transcripts = [
     { file: 'aion_transcript.jsonl', events: [
-      fixtureEvent('aion', 'message', 'message_end', '2026-01-01T00:00:02.000Z', { role: 'assistant', text: ACK }),
-      fixtureEvent('aion', 'tool_start', 'tool_execution_start', '2026-01-01T00:00:03.000Z', { toolName: 'contact_supervisor', toolCallId: 'call-1', argsPayload: JSON.stringify({ reason: 'progress_update', message: `wf-smoke revision 1 ${ACK}; next action: verify` }) }),
+      fixtureEvent('aion', 'message', 'message_end', '2026-01-01T00:00:02.000Z', { role: 'assistant', text: `${ACK}; ${TERMINAL_KEY}` }),
+      fixtureEvent('aion', 'tool_start', 'tool_execution_start', '2026-01-01T00:00:03.000Z', { toolName: 'contact_supervisor', toolCallId: 'call-1', argsPayload: JSON.stringify({ reason: 'progress_update', message: `${WORKFLOW_COMPLETION}; ${BROADER_DELIVERY}; ${NEXT_ACTION}; ${TERMINAL_KEY}; ${ACK}` }) }),
       fixtureEvent('aion', 'tool_end', 'tool_execution_end', '2026-01-01T00:00:03.500Z', { toolName: 'contact_supervisor', toolCallId: 'call-1', isError: false }),
+      fixtureEvent('aion', 'tool_start', 'tool_execution_start', '2026-01-01T00:00:06.000Z', { toolName: 'bash', toolCallId: 'publish-1', argsPayload: '{"cmd":"printf FIRST_PUBLICATION_ACTION"}' }),
+      fixtureEvent('aion', 'tool_end', 'tool_execution_end', '2026-01-01T00:00:06.500Z', { toolName: 'bash', toolCallId: 'publish-1', isError: false }),
+      fixtureEvent('aion', 'message', 'message_end', '2026-01-01T00:00:07.000Z', { role: 'assistant', text: `${DELIVERY_ACK}; ${DELIVERY_KEY}` }),
+      fixtureEvent('aion', 'tool_start', 'tool_execution_start', '2026-01-01T00:00:07.500Z', { toolName: 'contact_supervisor', toolCallId: 'call-2', argsPayload: JSON.stringify({ reason: 'progress_update', message: `${DELIVERY_ACK}; ${DELIVERY_KEY}; delivery published; next action: none` }) }),
+      fixtureEvent('aion', 'tool_end', 'tool_execution_end', '2026-01-01T00:00:07.750Z', { toolName: 'contact_supervisor', toolCallId: 'call-2', isError: false }),
+    ] },
+    { file: 'pc2-reviewer_transcript.jsonl', events: [
+      fixtureEvent('pc2-reviewer', 'message', 'message_end', '2026-01-01T00:00:01.500Z', { role: 'assistant', text: `${TERMINAL}; ${TERMINAL_KEY}` }),
     ] },
     { file: 'pc2-explorer_transcript.jsonl', events: [
       fixtureEvent('pc2-explorer', 'message', 'message_end', '2026-01-01T00:00:02.500Z', { role: 'assistant', text: RAW }),
@@ -200,9 +273,39 @@ if (mode === 'regression' || mode === 'regression-red') {
   };
   if (verify(validRoot, transcripts) !== 'passed') fail('valid fixture did not satisfy runtime evidence checks');
   process.stdout.write('valid-runtime-evidence=passed\n');
+  const silent = (label, rootEvents, transcriptEvents) => {
+    const calls = transcriptEvents.flatMap(source => source.events).filter(event => event.recordType === 'tool_start' && event.toolName === 'contact_supervisor');
+    const relays = rootEvents.filter(event => event.type === 'message_end' && event.message && event.message.customType === 'subagent_supervisor_request');
+    const markers = assistantEvents(rootEvents).filter(({ event }) => text(event.message).includes(MARKER));
+    if (calls.length !== 0 || relays.length !== 0 || markers.length !== 0) fail(`${label} emitted a report`);
+    process.stdout.write(`${label}=silent\n`);
+  };
+  silent('fact-free-observation', promptOnly, []);
+  silent('replayed-observation', [validRoot[0], validRoot[1]], [{ file: 'aion-replay', events: [transcripts[0].events[0]] }]);
+  const absentRelayRoot = [validRoot[0], validRoot[1], message('assistant', HOST_NOT_LIVE, '2026-01-01T00:00:05.000Z')];
+  const noPublicationTranscripts = [{ ...transcripts[0], events: transcripts[0].events.slice(0, 3) }, transcripts[1], transcripts[2]];
+  if (verify(absentRelayRoot, noPublicationTranscripts) !== 'host-not-live') fail('absent live relay did not stay truthful');
+  process.stdout.write('absent-live-relay=truthful\n');
   assertRejected('prompt-only-runtime-evidence', () => verify(promptOnly, []));
   assertRejected('separate-raw-leak-runtime-evidence', () =>
     verify([...validRoot, message('assistant', RAW, '2026-01-01T00:00:06.000Z')], transcripts));
+  assertRejected('reviewer-terminal-after-relay', () => verify(validRoot, [
+    transcripts[0],
+    { ...transcripts[1], events: [{ ...transcripts[1].events[0], timestamp: '2026-01-01T00:00:04.500Z' }] },
+    transcripts[2],
+  ]));
+  assertRejected('delivery-workflow-mislabel', () => verify(validRoot, [
+    { ...transcripts[0], events: transcripts[0].events.map(event => event.toolCallId === 'call-1' && event.recordType === 'tool_start' ? { ...event, argsPayload: JSON.stringify({ reason: 'progress_update', message: `delivery completed; ${TERMINAL_KEY}; ${ACK}; next action: none` }) } : event) },
+    transcripts[1], transcripts[2],
+  ]));
+  assertRejected('publication-before-daimon-message', () => verify(validRoot, [
+    { ...transcripts[0], events: transcripts[0].events.map(event => event.toolCallId === 'publish-1' ? { ...event, timestamp: '2026-01-01T00:00:04.500Z' } : event) },
+    transcripts[1], transcripts[2],
+  ]));
+  assertRejected('final-replays-terminal-key', () => verify(validRoot.map(event =>
+    event.type === 'message_end' && event.message && text(event.message).includes(FINAL_MARKER)
+      ? message('assistant', `${FINAL_MARKER}; delivery published; ${TERMINAL_KEY}`, '2026-01-01T00:00:09.000Z') : event), transcripts));
+  assertRejected('fabricated-marker-without-relay', () => verify([...absentRelayRoot, message('assistant', `${MARKER}; ${WORKFLOW_COMPLETION}`, '2026-01-01T00:00:06.000Z')], noPublicationTranscripts));
   process.exit(0);
 }
 
@@ -280,7 +383,7 @@ printf '%s\n' '{"maxSubagentDepth":3,"intercomBridge":{"mode":"always","resultDe
 PI_AGENT_HOME=$TEST_HOME sh "$ROOT/scripts/install-templates.sh" pi >/dev/null || fail 'could not render isolated Pi definitions'
 DAIMON_PROMPT=$(cat "$TEST_HOME/agents/daimon.md")
 TRACE=$TMP_ROOT/events.jsonl
-TASK='Use only the official subagent tool. Launch the generated aion agent. Aion must launch generated pc2-explorer, which returns the fixed internal fact SPECIALIST_RAW_COMPLETION_DO_NOT_NARRATE. Aion must first emit a separate acknowledgement containing AION_ACKNOWLEDGED_FACT, then call its injected contact_supervisor exactly once with reason progress_update and a concise message containing workflow ID wf-smoke, revision 1, AION_ACKNOWLEDGED_FACT, and a next action. Keep the Daimon parent live while that call occurs. Re-observe the unchanged fact without a second contact_supervisor call. Daimon must produce exactly one user-facing marker DAIMON_USER_UPDATE_MARKER derived from the Aion event, without the raw specialist fact. If the host cannot retain the live native parent chain, output PITCREW_HOST_NOT_LIVE and do not claim delivery.'
+TASK='Use only the official subagent tool. Launch generated aion. Aion launches generated pc2-reviewer, which returns REVIEWER_TERMINAL_REVISION_2 and workflow:wf-smoke:terminal:2, and pc2-explorer, which returns SPECIALIST_RAW_COMPLETION_DO_NOT_NARRATE. Aion emits AION_ACKNOWLEDGED_FACT with that terminal key, then calls contact_supervisor once for that fact with workflow completion, broader delivery continues, and next action: publish pull request. Daimon emits one DAIMON_USER_UPDATE_MARKER from that relay. Only afterward Aion calls bash to print FIRST_PUBLICATION_ACTION, emits AION_ACKNOWLEDGED_DELIVERY_FACT with delivery:wf-smoke:published:3, and calls contact_supervisor once for that separate delivery published fact without the terminal key. Daimon emits one FINAL_DELIVERY_UPDATE_MARKER without replaying workflow completion or its terminal key. Replayed and fact-free observations stay silent. If the first live native relay is absent, output only PITCREW_HOST_NOT_LIVE; do not publish or emit either user marker.'
 
 if ! (
   cd "$TEST_PROJECT"

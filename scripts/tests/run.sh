@@ -190,6 +190,19 @@ assert_authority_contract() {
     grep -F "$live_rule" "$contract" >/dev/null || fail "shared live-turn rule omitted $live_rule in $destination"
   done
   grep -F 'record exactly one unchanged workflow request-capability' "$aion" >/dev/null || fail "Aion concurrency capability deduplication rule omitted in $destination"
+  for terminal_rule in \
+    'Reviewer alone runs `workflow complete` and returns the terminal result' \
+    'relays it before the first publication action' \
+    'broader delivery continues, and gives the actual next action' \
+    'final delivery-only report omits that terminal key'; do
+    grep -F "$terminal_rule" "$aion" >/dev/null || fail "Aion terminal-report ordering omitted $terminal_rule in $destination"
+  done
+  for silence_rule in \
+    'Terminal facts require the Reviewer terminal result and Aion relay first' \
+    'If there is no new accepted fact, emit nothing' \
+    'Without a live Aion relay, do not synthesize an update'; do
+    grep -F "$silence_rule" "$daimon" >/dev/null || fail "Daimon terminal-report silence omitted $silence_rule in $destination"
+  done
   for specialist in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer; do
     file=$(role_path "$destination" "$specialist")
     grep -F 'Return only a one-line revision-bearing completion status to Aion.' "$file" >/dev/null || fail "$specialist hand-off drift in $destination"
@@ -289,8 +302,21 @@ assert_role_prompt_budget() {
 	for role in $roles; do files="$files $(role_path "$destination" "$role")"; done
 	bytes=$(cat $files | wc -c | tr -d ' ')
 	words=$(cat $files | wc -w | tr -d ' ')
-	[ "$bytes" -le 49000 ] || fail "installed role prompts use $bytes bytes; budget is 49000"
-	[ "$words" -le 7000 ] || fail "installed role prompts use $words words; budget is 7000"
+  aion=$(role_path "$destination" aion)
+  case $aion in
+    *.toml) baseline_bytes=46073 baseline_words=6372 ;;
+    *)
+      if grep -F 'Pi native supervisor rule' "$aion" >/dev/null; then
+        baseline_bytes=48553 baseline_words=6751
+      elif grep -F 'mode: all' "$aion" >/dev/null; then
+        baseline_bytes=46116 baseline_words=6378
+      else
+        baseline_bytes=45969 baseline_words=6352
+      fi
+      ;;
+  esac
+  [ "$bytes" -le "$baseline_bytes" ] || fail "installed role prompts grew from $baseline_bytes baseline bytes to $bytes"
+  [ "$words" -le "$baseline_words" ] || fail "installed role token proxy grew from $baseline_words baseline words to $words"
 }
 
 assert_role_view_permissions() {
