@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,23 +28,58 @@ var (
 type DB = *sql.DB
 type Verdict string
 type PlanImpact string
+type VerificationTier string
 
 const (
 	Approved    Verdict    = "approved"
 	Corrections Verdict    = "corrections"
 	Inside      PlanImpact = "inside"
 	Outside     PlanImpact = "outside"
+
+	Focused         VerificationTier = "focused"
+	AffectedPackage VerificationTier = "affected_package"
+	AggregateFull   VerificationTier = "aggregate_full"
+	PublicationFull VerificationTier = "publication_full"
 )
 
+type VerificationRun struct {
+	ID                    string           `json:"id"`
+	Tier                  VerificationTier `json:"tier"`
+	Command               string           `json:"command"`
+	Outcome               string           `json:"outcome"`
+	RepositoryFingerprint string           `json:"repository_fingerprint"`
+	ScenarioIDs           []string         `json:"scenario_ids"`
+	ReusedFromID          string           `json:"reused_from_id,omitempty"`
+}
+
+type ScenarioResult struct {
+	ScenarioID     string `json:"scenario_id"`
+	Outcome        string `json:"outcome"`
+	VerificationID string `json:"verification_id"`
+}
+
+type ReviewedCheckpoint struct {
+	ProjectID    string  `json:"project_id"`
+	CheckoutRoot string  `json:"checkout_root"`
+	BaseRevision string  `json:"base_revision"`
+	HeadRevision string  `json:"head_revision"`
+	ResultDigest string  `json:"result_digest"`
+	Dirty        bool    `json:"dirty"`
+	CommitRef    *string `json:"commit_ref,omitempty"`
+	DeliveryID   *string `json:"delivery_id,omitempty"`
+}
+
 type TDDRecord struct {
-	RedCommand        string `json:"red_command"`
-	RedOutcome        string `json:"red_outcome"`
-	GreenCommand      string `json:"green_command"`
-	GreenOutcome      string `json:"green_outcome"`
-	RefactorSummary   string `json:"refactor_summary"`
-	ValidationCommand string `json:"validation_command"`
-	ValidationOutcome string `json:"validation_outcome"`
-	ChangedPaths      string `json:"changed_paths"`
+	RedCommand        string            `json:"red_command"`
+	RedOutcome        string            `json:"red_outcome"`
+	GreenCommand      string            `json:"green_command"`
+	GreenOutcome      string            `json:"green_outcome"`
+	RefactorSummary   string            `json:"refactor_summary"`
+	ValidationCommand string            `json:"validation_command"`
+	ValidationOutcome string            `json:"validation_outcome"`
+	ChangedPaths      string            `json:"changed_paths"`
+	VerificationRuns  []VerificationRun `json:"verification_runs,omitempty"`
+	ScenarioResults   []ScenarioResult  `json:"scenario_results,omitempty"`
 	present           map[string]bool
 }
 type Review struct {
@@ -123,6 +159,47 @@ func outcomeExitCode(outcome string) (int, bool) {
 	}
 	code, err := strconv.Atoi(codeText)
 	return code, err == nil && code >= 0
+}
+
+func (r VerificationRun) Validate() error {
+	if strings.TrimSpace(r.ID) == "" {
+		return fmt.Errorf("verification ID is required")
+	}
+	switch r.Tier {
+	case Focused, AffectedPackage, AggregateFull, PublicationFull:
+	default:
+		return fmt.Errorf("invalid verification tier %q", r.Tier)
+	}
+	if strings.TrimSpace(r.Command) == "" {
+		return fmt.Errorf("verification command is required")
+	}
+	if strings.TrimSpace(r.RepositoryFingerprint) == "" {
+		return fmt.Errorf("repository fingerprint is required")
+	}
+	if _, ok := outcomeExitCode(r.Outcome); !ok {
+		return fmt.Errorf("verification outcome must record an exit")
+	}
+	if r.ReusedFromID == r.ID && r.ReusedFromID != "" {
+		return fmt.Errorf("verification cannot reuse itself")
+	}
+	if _, err := normalizedScenarioIDs(r.ScenarioIDs); err != nil {
+		return err
+	}
+	return nil
+}
+
+func normalizedScenarioIDs(values []string) ([]string, error) {
+	result := append([]string(nil), values...)
+	sort.Strings(result)
+	for index, value := range result {
+		if strings.TrimSpace(value) == "" || value != strings.TrimSpace(value) {
+			return nil, fmt.Errorf("verification scenario IDs must be non-empty and normalized")
+		}
+		if index > 0 && result[index-1] == value {
+			return nil, fmt.Errorf("verification scenario IDs must be unique")
+		}
+	}
+	return result, nil
 }
 
 func (r *TDDRecord) UnmarshalJSON(data []byte) error {
@@ -205,8 +282,20 @@ func (s *Service) RecordTDDAsTx(ctx context.Context, tx *sql.Tx, wfID, unitID st
 	if state != "pending" {
 		return fmt.Errorf("%w: current state %s; expected pending", ErrInvalidState, state)
 	}
+	covered, err := loadCoveredScenarios(ctx, tx, wfID, unitID)
+	if err != nil {
+		return err
+	}
+	if len(covered) > 0 {
+		if err := validateStructuredUnitEvidence(r, covered); err != nil {
+			return err
+		}
+	}
 	now := s.now()
 	at := ids.FormatTime(now)
+	if err := persistVerificationRuns(ctx, tx, wfID, &unitID, &revision, actor, at, r.VerificationRuns); err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO evidence(workflow_id,unit_id,revision,actor,red_command,red_outcome,green_command,green_outcome,refactor_summary,validation_command,validation_outcome,changed_paths,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, wfID, unitID, revision, actor, r.RedCommand, r.RedOutcome, r.GreenCommand, r.GreenOutcome, r.RefactorSummary, r.ValidationCommand, r.ValidationOutcome, r.ChangedPaths, at)
 	if err != nil {
 		return err
@@ -222,6 +311,155 @@ func (s *Service) RecordTDDAsTx(ctx context.Context, tx *sql.Tx, wfID, unitID st
 		return store.ErrCASMismatch
 	}
 	return activity.AppendTx(ctx, tx, activity.New(wfID, unitID, activity.UnitTDDRecorded, actor, now, activity.EvidenceSubject(unitID, revision)))
+}
+
+func loadCoveredScenarios(ctx context.Context, tx *sql.Tx, wfID, unitID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT scenario_id FROM unit_coverage WHERE workflow_id=? AND unit_id=? ORDER BY scenario_id`, wfID, unitID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []string
+	for rows.Next() {
+		var scenarioID string
+		if err := rows.Scan(&scenarioID); err != nil {
+			return nil, err
+		}
+		result = append(result, scenarioID)
+	}
+	return result, rows.Err()
+}
+
+func validateStructuredUnitEvidence(record TDDRecord, covered []string) error {
+	runs := make(map[string]VerificationRun, len(record.VerificationRuns))
+	tiers := map[VerificationTier]bool{}
+	for _, run := range record.VerificationRuns {
+		if err := run.Validate(); err != nil {
+			return err
+		}
+		if _, exists := runs[run.ID]; exists {
+			return fmt.Errorf("duplicate verification ID %q", run.ID)
+		}
+		exit, _ := outcomeExitCode(run.Outcome)
+		if exit != 0 {
+			return fmt.Errorf("%s verification must record exit 0", run.Tier)
+		}
+		runs[run.ID] = run
+		tiers[run.Tier] = true
+	}
+	for _, tier := range []VerificationTier{Focused, AffectedPackage} {
+		if !tiers[tier] {
+			return fmt.Errorf("current %s verification is required", tier)
+		}
+	}
+	results := make(map[string]ScenarioResult, len(record.ScenarioResults))
+	for _, result := range record.ScenarioResults {
+		if strings.TrimSpace(result.ScenarioID) == "" || strings.TrimSpace(result.VerificationID) == "" {
+			return fmt.Errorf("scenario result requires scenario and verification IDs")
+		}
+		if _, exists := results[result.ScenarioID]; exists {
+			return fmt.Errorf("duplicate current scenario result %s", result.ScenarioID)
+		}
+		exit, ok := outcomeExitCode(result.Outcome)
+		if !ok || exit != 0 {
+			return fmt.Errorf("scenario result %s must record exit 0", result.ScenarioID)
+		}
+		run, ok := runs[result.VerificationID]
+		if !ok || !contains(run.ScenarioIDs, result.ScenarioID) {
+			return fmt.Errorf("scenario result %s must reference a current verification covering it", result.ScenarioID)
+		}
+		results[result.ScenarioID] = result
+	}
+	for _, scenarioID := range covered {
+		if _, ok := results[scenarioID]; !ok {
+			return fmt.Errorf("current scenario result is required for %s", scenarioID)
+		}
+	}
+	return nil
+}
+
+func persistVerificationRuns(ctx context.Context, tx *sql.Tx, wfID string, unitID *string, unitRevision *int64, actor, at string, runs []VerificationRun) error {
+	for _, run := range runs {
+		if err := run.Validate(); err != nil {
+			return err
+		}
+		scenarios, _ := normalizedScenarioIDs(run.ScenarioIDs)
+		if run.ReusedFromID != "" {
+			var tier, command, outcome, fingerprint, encoded string
+			if err := tx.QueryRowContext(ctx, `SELECT tier,command,outcome,fingerprint,scenario_ids_json FROM verification_records WHERE id=?`, run.ReusedFromID).Scan(&tier, &command, &outcome, &fingerprint, &encoded); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return fmt.Errorf("reused verification %s does not identify an immutable record", run.ReusedFromID)
+				}
+				return err
+			}
+			var priorScenarios []string
+			if err := json.Unmarshal([]byte(encoded), &priorScenarios); err != nil {
+				return fmt.Errorf("reused verification %s has invalid scenario set: %w", run.ReusedFromID, err)
+			}
+			priorScenarios, err := normalizedScenarioIDs(priorScenarios)
+			if err != nil {
+				return err
+			}
+			if VerificationTier(tier) != run.Tier {
+				return fmt.Errorf("reused verification tier does not match")
+			}
+			if command != run.Command {
+				return fmt.Errorf("reused verification command does not match")
+			}
+			if fingerprint != run.RepositoryFingerprint {
+				return fmt.Errorf("reused verification repository fingerprint does not match")
+			}
+			if !equalStrings(priorScenarios, scenarios) {
+				return fmt.Errorf("reused verification scenario set does not match")
+			}
+			if exit, ok := outcomeExitCode(outcome); !ok || exit != 0 {
+				return fmt.Errorf("reused verification is not an immutable success")
+			}
+		}
+		encoded, err := json.Marshal(scenarios)
+		if err != nil {
+			return err
+		}
+		var unit, revision any
+		if unitID != nil {
+			unit = *unitID
+		}
+		if unitRevision != nil {
+			revision = *unitRevision
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO verification_records(id,workflow_id,unit_id,unit_revision,tier,command,outcome,fingerprint,scenario_ids_json,reused_from_id,actor,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, wfID, unit, revision, run.Tier, run.Command, run.Outcome, run.RepositoryFingerprint, string(encoded), nullable(run.ReusedFromID), actor, at); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func nullable(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (s *Service) RecordReview(ctx context.Context, r Review) (ReviewOutcome, error) {
