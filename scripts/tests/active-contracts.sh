@@ -71,6 +71,7 @@ done
 
 for required in \
   'existing project-context deployment facts as the release map' \
+  'canonical repository, binary destination, owned backup, exact managed runtime set, and publication choice' \
   'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
   'Mechanical release execution remains direct inline regardless of mapped file count' \
   'same-version digest mismatch is not convergence' \

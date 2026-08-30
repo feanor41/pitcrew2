@@ -255,7 +255,7 @@ assert_recoverable_release_contract() {
   contract=$(contract_path "$destination")
   for rule in \
     'existing project-context deployment facts as the release map' \
-    'repository, binary destination, owned backup, exact managed runtime set, and publication choice' \
+    'canonical repository, binary destination, owned backup, exact managed runtime set, and publication choice' \
     'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
     'Mechanical release execution remains direct inline regardless of mapped file count' \
     'Acknowledge the admission gate before the first mutation' \
@@ -326,14 +326,14 @@ assert_role_prompt_budget() {
 	words=$(cat $files | wc -w | tr -d ' ')
   aion=$(role_path "$destination" aion)
   case $aion in
-    *.toml) baseline_bytes=46836 baseline_words=6481 ;;
+    *.toml) baseline_bytes=46846 baseline_words=6482 ;;
     *)
       if grep -F 'Pi native supervisor rule' "$aion" >/dev/null; then
-        baseline_bytes=49316 baseline_words=6860
+        baseline_bytes=49326 baseline_words=6861
       elif grep -F 'mode: all' "$aion" >/dev/null; then
-        baseline_bytes=46879 baseline_words=6487
+        baseline_bytes=46889 baseline_words=6488
       else
-        baseline_bytes=46732 baseline_words=6461
+        baseline_bytes=46742 baseline_words=6462
       fi
       ;;
   esac
