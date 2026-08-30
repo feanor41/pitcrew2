@@ -55,9 +55,17 @@ Applying an already-decided approach creates no new gate, justification, or arti
 - One SQLite connection; no daemon, IPC, network, shared cache, or remote API.
 - `MAXIMS.md` is canonical. Change it only through its own OpenSpec change.
 - The command surface is closed. Adding a command or flag requires an OpenSpec change.
+- Keep `workflow show` reads proportional: use `coordination` first for CAS
+  recovery, `phase` for normative phase context, `unit --unit-id` for one
+  implementation/review unit, and `aggregate` for final review. Preserve the
+  omitted/explicit `audit` response for compatibility and operator debugging;
+  the TUI deliberately remains a full-audit consumer.
 - `pitcrew tui` is the only visual entry point. Keep it same-process, central-state, read-only, non-initializing, and free of self-subprocesses.
 - Large command payloads travel only through strict, no-follow `--input-file` JSON.
 - Production claims remain opaque. Never add a raw-token input or output path.
+- Implementation and review handles use purpose-aware fifteen-minute leases
+  measured from issue. Successful commands never renew them; do not add
+  heartbeat polling or background renewal.
 - Implementer and Reviewer actor labels remain distinct collision metadata, not authentication.
 - Legacy consolidation is explicit, exact-set, whole-graph, atomic, and source-preserving. Never rewrite or remove a checkout-local database or WAL as part of import.
 - Central delivery worktrees and handles are private. Verify a committed checkpoint exists before worktree cleanup; never delete the only copy of unfinished work.
