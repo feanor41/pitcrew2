@@ -123,6 +123,8 @@ func (s *Service) coordination(ctx context.Context, wf Workflow) (Coordination, 
 	}
 	if wf.State == string(workflow.Completed) || wf.State == string(workflow.Abandoned) {
 		result.Current = nil
+		result.Ready = nil
+		result.Blocker = nil
 	}
 	return result, nil
 }

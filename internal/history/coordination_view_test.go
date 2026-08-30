@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/fmazzalomo/pitcrew/internal/store"
 )
 
 func TestProjectViewsAreBoundedParityPreservingAndSecretFree(t *testing.T) {
@@ -25,6 +27,9 @@ func TestProjectViewsAreBoundedParityPreservingAndSecretFree(t *testing.T) {
 	if coordination.Workflow.Revision != audit.Audit.Workflow.Revision || coordination.Coordination.NextAction != audit.Audit.Synopsis.NextAction {
 		t.Fatalf("coordination/audit parity = %#v / %#v", coordination, audit)
 	}
+	if coordination.Workflow.State != "abandoned" || coordination.Coordination.Current != nil || coordination.Coordination.Blocker != nil || len(coordination.Coordination.Ready) != 0 {
+		t.Fatalf("terminal coordination retained executable unit state: %#v", coordination.Coordination)
+	}
 	if len(coordinationJSON)*10 > len(auditJSON) {
 		t.Fatalf("coordination is not at least 90%% smaller: coordination=%d audit=%d", len(coordinationJSON), len(auditJSON))
 	}
@@ -34,6 +39,32 @@ func TestProjectViewsAreBoundedParityPreservingAndSecretFree(t *testing.T) {
 				t.Fatalf("public projection contains %q: %s", forbidden, raw)
 			}
 		}
+	}
+}
+
+func TestTerminalCoordinationClearsOperationalBlockers(t *testing.T) {
+	ctx := context.Background()
+	opened, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-terminal',9,'abandoned','Terminal','goal','now','now')`,
+		`INSERT INTO work_units VALUES('wu-dependency','wf-terminal','dependency','scope','[]','[]',1,1,'pending',NULL,0,1)`,
+		`INSERT INTO work_units VALUES('wu-blocked','wf-terminal','blocked','scope','[]','["wu-dependency"]',1,1,'pending',NULL,0,1)`,
+	} {
+		if _, err = opened.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projection, err := New(opened).Project(ctx, "wf-terminal", ViewCoordination, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordination := projection.Coordination
+	if coordination.NextAction != "none" || coordination.Current != nil || coordination.Blocker != nil || len(coordination.Ready) != 0 {
+		t.Fatalf("terminal coordination retained executable unit state: %#v", coordination)
 	}
 }
 
