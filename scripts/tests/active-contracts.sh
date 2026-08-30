@@ -56,9 +56,58 @@ done
 cli_contract="$repo_root/openspec/specs/cli-surface/spec.md"
 for required in \
   'Daimon SHALL NOT invoke workflow commands' \
-  'only Aion-acknowledged facts or clarification requests'; do
+  'only Aion-acknowledged facts or clarification requests' \
+  '| `delivery active` | none' \
+  'zero active candidates' \
+  'exactly one active candidate' \
+  'multiple active candidates' \
+  'one identity-specific inspection' \
+  'SHALL NOT select by recency, ordering, route, goal similarity, or status'; do
   grep -Fq "$required" "$cli_contract" || {
     printf 'CLI Daimon boundary omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for required in \
+  '`delivery active`' \
+  'zero active candidates' \
+  'exactly one active candidate' \
+  'more than one active candidate' \
+  'one identity-specific inspection' \
+  'same delivery identity and current revision' \
+  'does not select by recency, display order, route, goal similarity, or status' \
+  'routine projected `next_action`' \
+  'stable semantic key' \
+  'unit identity, attempt, and outcome' \
+  'current actionable or terminal fact' \
+  'does not replay historical progress'; do
+  grep -Fq "$required" "$repo_root/AGENTS.md" || {
+    printf 'active continuity contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for required in \
+  '`delivery active` | None' \
+  'aion admit new delivery' \
+  'delivery show --delivery-id <id>' \
+  'aion clarify delivery identity' \
+  'Direct-only capability gaps'; do
+  grep -Fq "$required" "$repo_root/docs/cli-reference.md" || {
+    printf 'active continuity CLI documentation omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for required in \
+  'Run `delivery active` before admitting new work' \
+  'stable semantic key' \
+  'unit identity, attempt, and outcome' \
+  'do not replay historical progress' \
+  'direct-only delivery has no supported durable capability-request surface'; do
+  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
+    printf 'installed continuity contract omitted: %s\n' "$required" >&2
     exit 1
   }
 done
@@ -87,7 +136,11 @@ for required in \
   'requested state' \
   'terminal completion, a genuine blocker, or user cancellation' \
   'exactly one request-capability' \
-  'polling, daemon, IPC, or durable inbox'; do
+  'polling, daemon, IPC, or durable inbox' \
+  'unchanged capability requirement' \
+  'SHALL NOT append a duplicate request' \
+  'direct-only delivery has no supported durable capability-request surface' \
+  'SHALL NOT invent a workflow or parallel lifecycle'; do
   grep -Fq "$required" "$runtime_contract" || {
     printf 'runtime live-turn contract omitted: %s\n' "$required" >&2
     exit 1
