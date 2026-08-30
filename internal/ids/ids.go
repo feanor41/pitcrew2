@@ -12,6 +12,7 @@ const timestampLayout = "2006-01-02T15:04:05.000Z"
 
 func NewWorkflow() (string, error) { return newPrefixed(rand.Reader, "wf-", 12) }
 func NewWorkUnit() (string, error) { return newPrefixed(rand.Reader, "wu-", 12) }
+func NewDelivery() (string, error) { return newPrefixed(rand.Reader, "dl-", 12) }
 func NewClaim() (string, error)    { return newHex(rand.Reader, 16) }
 func NewSecret() (string, error)   { return newHex(rand.Reader, 16) }
 
