@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,11 +119,12 @@ func TestServiceProjectsBoundedCorrectionAuthorityAndContextualActivities(t *tes
 	}
 	defer s.Close()
 	unitID := "wu-000000000000000000000088"
-	planBody := `{"summary":"bounded","scope":"internal","work_units":[{"id":"` + unitID + `","description":"unit","scope":"internal/x","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}],"max_parallel_units":1,"aggregate_correction_policy":{"automatic_rounds":1,"on_exhaustion":"require_user_authorization"}}`
+	readyID := "wu-000000000000000000000089"
+	planBody := `{"summary":"bounded","scope":"internal","work_units":[{"id":"` + unitID + `","description":"unit","scope":"internal/x","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"` + readyID + `","description":"ready unit","scope":"internal/y","areas":[],"depends_on":[],"estimated_changed_lines":2,"estimated_review_minutes":2}],"max_parallel_units":1,"aggregate_correction_policy":{"automatic_rounds":1,"on_exhaustion":"require_user_authorization"}}`
 	for _, statement := range []struct {
 		query string
 		args  []any
-	}{{`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-active',8,'ready_to_complete','Bounded','goal','now','now')`, nil}, {`INSERT INTO plans(workflow_id,summary,scope,max_parallel_units,body) VALUES('wf-active','bounded','internal',1,?)`, []any{planBody}}, {`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,'wf-active','unit','internal/x','[]','[]',1,1,'done',1)`, []any{unitID}}} {
+	}{{`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-active',8,'ready_to_complete','Bounded','goal','now','now')`, nil}, {`INSERT INTO plans(workflow_id,summary,scope,max_parallel_units,body) VALUES('wf-active','bounded','internal',1,?)`, []any{planBody}}, {`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,'wf-active','unit','internal/x','[]','[]',1,1,'done',1)`, []any{unitID}}, {`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,'wf-active','ready unit','internal/y','[]','[]',2,2,'pending',1)`, []any{readyID}}} {
 		if _, err = s.DB().Exec(statement.query, statement.args...); err != nil {
 			t.Fatal(err)
 		}
@@ -146,7 +148,11 @@ func TestServiceProjectsBoundedCorrectionAuthorityAndContextualActivities(t *tes
 			t.Fatal(err)
 		}
 	}
-	detail, err := New(s).Detail(ctx, "wf-active")
+	if _, err = s.DB().Exec(`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-active','progress','{"status":"blocked","summary":"awaiting correction","next_action":"workflow recover-aggregate"}','aion',8,'2026-08-29T20:00:01Z')`); err != nil {
+		t.Fatal(err)
+	}
+	service := New(s)
+	detail, err := service.Detail(ctx, "wf-active")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +162,42 @@ func TestServiceProjectsBoundedCorrectionAuthorityAndContextualActivities(t *tes
 	}
 	if detail.Synopsis.Blocker == nil || detail.Synopsis.Blocker.Reason != "latest blocker" {
 		t.Fatalf("latest blocker = %#v", detail.Synopsis.Blocker)
+	}
+	bounded, err := service.Project(ctx, "wf-active", ViewCoordination, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, pair := range map[string][2]any{
+		"current":              {detail.Synopsis.Current, bounded.Coordination.Current},
+		"blocker":              {detail.Synopsis.Blocker, bounded.Coordination.Blocker},
+		"correction authority": {detail.Synopsis.CorrectionPolicy, bounded.Coordination.CorrectionAuthority},
+		"progress":             {detail.Synopsis.Progress, bounded.Coordination.LatestProgress},
+	} {
+		left, _ := json.Marshal(pair[0])
+		right, _ := json.Marshal(pair[1])
+		if !bytes.Equal(left, right) {
+			t.Errorf("coordination %s parity: audit=%s bounded=%s", name, left, right)
+		}
+	}
+	if detail.Synopsis.Ready != len(bounded.Coordination.Ready) {
+		t.Errorf("coordination ready parity: audit=%d bounded=%d", detail.Synopsis.Ready, len(bounded.Coordination.Ready))
+	}
+	var auditReady *UnitStatus
+	if detail.Synopsis.Planned != nil {
+		for i := range detail.Synopsis.Planned.Units {
+			if detail.Synopsis.Planned.Units[i].Status == "Ready" {
+				auditReady = &detail.Synopsis.Planned.Units[i]
+			}
+		}
+	}
+	if auditReady == nil || len(bounded.Coordination.Ready) != 1 {
+		t.Fatalf("missing authoritative ready unit: audit=%#v bounded=%#v", auditReady, bounded.Coordination.Ready)
+	} else {
+		left, _ := json.Marshal(auditReady)
+		right, _ := json.Marshal(bounded.Coordination.Ready[0])
+		if !bytes.Equal(left, right) {
+			t.Errorf("coordination ready content parity: audit=%s bounded=%s", left, right)
+		}
 	}
 	delivery, err := New(s).GetDelivery(ctx, "wf-active")
 	if err != nil {

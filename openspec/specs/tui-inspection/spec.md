@@ -26,10 +26,22 @@ detail SHALL retain its existing cockpit and expose route `full_workflow`.
 
 `pitcrew tui` MUST inspect persisted state in the existing process. It MUST NOT invoke a subprocess, execute mutating workflow commands, record control-plane activity, run migrations, change schema objects, or insert, update, or delete persisted rows.
 
+The TUI SHALL intentionally consume the full audit history projection rather
+than a bounded CLI coordination, phase, unit, or aggregate view. This is the
+documented inspection escape hatch required to navigate every durable record;
+it SHALL NOT change the bounded default guidance for orchestration agents.
+
 #### Scenario: Existing logical state remains invariant
 - GIVEN an initialized project with captured schema, rows, workflow state, and activities
 - WHEN a user browses, searches, and exits the TUI
 - THEN all captured state SHALL remain unchanged
+
+#### Scenario: TUI retains complete audit inspection
+
+- GIVEN a workflow with normative artifacts, multiple unit results, and activities
+- WHEN the operator opens its TUI detail
+- THEN every durable record SHALL remain navigable
+- AND no bounded CLI view SHALL replace or truncate the audit detail
 
 ### Requirement: Shared project history
 
