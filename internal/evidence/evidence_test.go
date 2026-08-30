@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -272,6 +274,91 @@ func TestOutsidePlanCorrectionSignalsPlanRevision(t *testing.T) {
 	}
 }
 
+func TestCoverageRequiresCurrentSuccessfulScenarioResultsAndUnitTiers(t *testing.T) {
+	svc, db, wfID, unitID := evidenceService(t)
+	if _, err := db.Exec(`INSERT INTO unit_coverage(workflow_id,unit_id,requirement_id,scenario_id) VALUES(?,?,?,?),(?,?,?,?)`, wfID, unitID, "REQ-COV-001", "SCN-COV-001", wfID, unitID, "REQ-VER-001", "SCN-VER-001"); err != nil {
+		t.Fatal(err)
+	}
+	record := structuredTDD("fingerprint-a")
+	record.ScenarioResults = record.ScenarioResults[:1]
+	if err := svc.RecordTDD(context.Background(), wfID, unitID, 1, record); err == nil || !strings.Contains(err.Error(), "SCN-VER-001") {
+		t.Fatalf("missing scenario result error = %v", err)
+	}
+	var evidenceCount, verificationCount int
+	_ = db.QueryRow(`SELECT count(*) FROM evidence WHERE workflow_id=?`, wfID).Scan(&evidenceCount)
+	_ = db.QueryRow(`SELECT count(*) FROM verification_records WHERE workflow_id=?`, wfID).Scan(&verificationCount)
+	if evidenceCount != 0 || verificationCount != 0 {
+		t.Fatalf("rejected evidence mutated evidence=%d verification=%d", evidenceCount, verificationCount)
+	}
+
+	record = structuredTDD("fingerprint-a")
+	record.VerificationRuns = record.VerificationRuns[:1]
+	if err := svc.RecordTDD(context.Background(), wfID, unitID, 1, record); err == nil || !strings.Contains(err.Error(), "affected_package") {
+		t.Fatalf("missing affected-package error = %v", err)
+	}
+
+	record = structuredTDD("fingerprint-a")
+	marker := filepath.Join(t.TempDir(), "stored-command-ran")
+	record.VerificationRuns[0].Command = "touch " + marker
+	if err := svc.RecordTDD(context.Background(), wfID, unitID, 1, record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stored command was executed or marker cannot be inspected: %v", err)
+	}
+	_ = db.QueryRow(`SELECT count(*) FROM verification_records WHERE workflow_id=?`, wfID).Scan(&verificationCount)
+	if verificationCount != 2 {
+		t.Fatalf("verification records = %d", verificationCount)
+	}
+}
+
+func TestReuseRequiresImmutableMatchingSuccessfulVerification(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*VerificationRun)
+		want   string
+	}{
+		{"stale fingerprint", func(run *VerificationRun) { run.RepositoryFingerprint = "fingerprint-b" }, "fingerprint"},
+		{"different command", func(run *VerificationRun) { run.Command = "go test ./internal/evidence -count=2" }, "command"},
+		{"different tier", func(run *VerificationRun) { run.Tier = AffectedPackage }, "tier"},
+		{"different scenarios", func(run *VerificationRun) { run.ScenarioIDs = []string{"SCN-OTHER-001"} }, "scenario set"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, db, wfID, unitID := evidenceService(t)
+			if _, err := db.Exec(`INSERT INTO unit_coverage(workflow_id,unit_id,requirement_id,scenario_id) VALUES(?,?,?,?)`, wfID, unitID, "REQ-COV-001", "SCN-COV-001"); err != nil {
+				t.Fatal(err)
+			}
+			seed := structuredTDD("fingerprint-a")
+			seed.ScenarioResults = seed.ScenarioResults[:1]
+			for index := range seed.VerificationRuns {
+				seed.VerificationRuns[index].ScenarioIDs = []string{"SCN-COV-001"}
+			}
+			if err := svc.RecordTDD(context.Background(), wfID, unitID, 1, seed); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`UPDATE work_units SET state='pending',revision=2 WHERE id=?`, unitID); err != nil {
+				t.Fatal(err)
+			}
+			reused := structuredTDD("fingerprint-a")
+			reused.ScenarioResults = reused.ScenarioResults[:1]
+			for index := range reused.VerificationRuns {
+				reused.VerificationRuns[index].ScenarioIDs = []string{"SCN-COV-001"}
+				reused.VerificationRuns[index].ReusedFromID = seed.VerificationRuns[index].ID
+				reused.VerificationRuns[index].ID += "-reuse"
+			}
+			tt.mutate(&reused.VerificationRuns[0])
+			reused.ScenarioResults[0].VerificationID = reused.VerificationRuns[1].ID
+			if reused.VerificationRuns[0].Tier != Focused {
+				reused.VerificationRuns = append(reused.VerificationRuns, VerificationRun{ID: "vr-current-focused", Tier: Focused, Command: "go test ./internal/evidence -run Coverage", Outcome: "exit 0", RepositoryFingerprint: "fingerprint-a", ScenarioIDs: []string{"SCN-COV-001"}})
+			}
+			if err := svc.RecordTDD(context.Background(), wfID, unitID, 2, reused); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("reuse error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func evidenceService(t *testing.T) (*Service, DB, string, string) {
 	t.Helper()
 	s, err := store.Open(context.Background(), t.TempDir())
@@ -302,4 +389,17 @@ func evidenceService(t *testing.T) (*Service, DB, string, string) {
 
 func validTDD() TDDRecord {
 	return TDDRecord{RedCommand: "go test -run TestX", RedOutcome: "exit 1", GreenCommand: "go test -run TestX", GreenOutcome: "exit 0", RefactorSummary: "", ValidationCommand: "go test ./...", ValidationOutcome: "exit 0", ChangedPaths: "internal/x"}
+}
+
+func structuredTDD(fingerprint string) TDDRecord {
+	record := validTDD()
+	record.VerificationRuns = []VerificationRun{
+		{ID: "vr-focused", Tier: Focused, Command: "go test ./internal/evidence -run Coverage", Outcome: "exit 0", RepositoryFingerprint: fingerprint, ScenarioIDs: []string{"SCN-COV-001", "SCN-VER-001"}},
+		{ID: "vr-package", Tier: AffectedPackage, Command: "go test ./internal/evidence", Outcome: "exit 0", RepositoryFingerprint: fingerprint, ScenarioIDs: []string{"SCN-COV-001", "SCN-VER-001"}},
+	}
+	record.ScenarioResults = []ScenarioResult{
+		{ScenarioID: "SCN-COV-001", Outcome: "exit 0", VerificationID: "vr-focused"},
+		{ScenarioID: "SCN-VER-001", Outcome: "exit 0", VerificationID: "vr-focused"},
+	}
+	return record
 }
