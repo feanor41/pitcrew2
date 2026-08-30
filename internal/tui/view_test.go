@@ -223,7 +223,7 @@ func TestViewHomeUsesSharedBorderedHeaderAndExactActions(t *testing.T) {
 		t.Fatalf("home header is not bordered:\n%s", got)
 	}
 	last := -1
-	for _, action := range []string{"Install in Runtime", "Configure Runtime Models", "Workflows", "Exit"} {
+	for _, action := range []string{"Install in Runtime", "Configure Runtime Models", "Deliveries", "Exit"} {
 		if count := strings.Count(plain, action); count != 1 {
 			t.Fatalf("home action %q count = %d:\n%s", action, count, got)
 		}
@@ -279,7 +279,7 @@ func TestViewWorkflowsUsesResponsiveBorderedNonWrappingGrid(t *testing.T) {
 			model, _ = model.Update(size)
 			got := model.View().Content
 			plain := ansi.Strip(got)
-			for _, heading := range []string{"Started", "Workflow", "Status"} {
+			for _, heading := range []string{"Started", "Delivery", "Status"} {
 				if !strings.Contains(plain, heading) {
 					t.Fatalf("grid heading %q missing:\n%s", heading, got)
 				}
@@ -307,9 +307,9 @@ func TestViewWorkflowsShowsTruthfulLoadingEmptyAndErrorStates(t *testing.T) {
 		model Model
 		want  []string
 	}{
-		{"loading", Model{screen: WorkflowsScreen, loading: true}, []string{"WORKFLOWS", "Loading workflows…"}},
-		{"empty", Model{screen: WorkflowsScreen}, []string{"WORKFLOWS", "No workflows are available."}},
-		{"error", Model{screen: WorkflowsScreen, err: errors.New("database is locked")}, []string{"WORKFLOWS", "Could not load workflows.", "database is locked"}},
+		{"loading", Model{screen: WorkflowsScreen, loading: true}, []string{"DELIVERIES", "Loading deliveries…"}},
+		{"empty", Model{screen: WorkflowsScreen}, []string{"DELIVERIES", "No deliveries are available."}},
+		{"error", Model{screen: WorkflowsScreen, err: errors.New("database is locked")}, []string{"DELIVERIES", "Could not load deliveries.", "database is locked"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			model, _ := test.model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
@@ -346,12 +346,20 @@ func TestViewWorkflowNoColorGolden(t *testing.T) {
 	model, _ := workflowGridViewModel().Update(tea.WindowSizeMsg{Width: 60, Height: 16})
 	got := model.View().Content
 	assertNoANSI(t, got)
-	for _, want := range []string{"Started", "Workflow", "Status", "▶", "[DONE]"} {
+	for _, want := range []string{"Started", "Delivery", "Status", "▶", "[DONE]"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("NO_COLOR workflow frame missing %q:\n%s", want, got)
 		}
 	}
 	assertGolden(t, "workflow-no-color", got)
+}
+
+func TestViewDirectDeliveryGolden(t *testing.T) {
+	delivery := history.Delivery{ID: "dl-123", Revision: 2, Route: "delegated_direct", Status: "completed", Goal: "Update bounded docs", RouteReason: "Several simple files", Summary: "Docs and checks passed", NextAction: "None", CreatedAt: "2026-08-29T12:00:00Z", UpdatedAt: "2026-08-29T12:05:00Z", FinishedAt: "2026-08-29T12:05:00Z"}
+	model := Model{screen: DetailScreen, openedDelivery: history.DeliveryDetail{Delivery: delivery}}
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	assertFrameBounds(t, model.View().Content, 80, 24)
+	assertGolden(t, "direct-delivery", model.View().Content)
 }
 
 func TestViewUsesSharedHierarchyAndNativeComponents(t *testing.T) {
@@ -548,9 +556,9 @@ func TestViewStatesAndResize(t *testing.T) {
 		want  []string
 	}{
 		{"uninitialized", Model{screen: WorkflowsScreen, err: ErrUninitialized}, []string{"No PitCrew repository is initialized for this project.", "q quit"}},
-		{"empty", Model{screen: WorkflowsScreen}, []string{"No workflows are available.", "q quit"}},
+		{"empty", Model{screen: WorkflowsScreen}, []string{"No deliveries are available.", "q quit"}},
 		{"no results", Model{screen: ResultsScreen, query: "missing"}, []string{`No results for "missing".`, "query: missing"}},
-		{"error", Model{screen: WorkflowsScreen, err: errors.New("database is locked")}, []string{"Could not load workflows.", "database is locked", "q quit"}},
+		{"error", Model{screen: WorkflowsScreen, err: errors.New("database is locked")}, []string{"Could not load deliveries.", "database is locked", "q quit"}},
 		{"search input", Model{screen: WorkflowsScreen, workflows: workflowViewModel().workflows, searchFocused: true, query: "review"}, []string{"SEARCH ›", "review", "enter search"}},
 		{"minimum", workflowViewModel(), []string{"Terminal too small", "60×16", "q quit"}},
 	}
@@ -758,7 +766,7 @@ func TestViewDetailFootersAdvertiseRefresh(t *testing.T) {
 
 func TestViewGridMetadataTimelineAndVersionAccent(t *testing.T) {
 	grid, _ := workflowViewModel().Update(tea.WindowSizeMsg{Width: 112, Height: 28})
-	for _, want := range []string{"Started", "Work", "Status", "2026-08-22 03:17", "Redesign TUI history"} {
+	for _, want := range []string{"Started", "Delivery", "Status", "2026-08-22 03:17", "Redesign TUI history"} {
 		if !strings.Contains(grid.View().Content, want) {
 			t.Fatalf("grid missing %q", want)
 		}

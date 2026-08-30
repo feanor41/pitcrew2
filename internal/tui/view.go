@@ -127,6 +127,9 @@ func (m Model) footerHints() string {
 		return fmt.Sprintf("↑/k ↓/j move • ←/h back • enter evidence • r refresh • record %d/%d • q quit", current, total)
 	}
 	if m.screen == DetailScreen {
+		if m.openedDelivery.Workflow == nil && m.openedDelivery.Delivery.ID != "" {
+			return "r refresh • h back • q quit"
+		}
 		current, total := m.detailPosition()
 		if m.width < 96 {
 			return fmt.Sprintf("j/k • enter • r refresh • q quit • row %d/%d", current, total)
@@ -153,7 +156,7 @@ func (m Model) body() string {
 		}
 		return statePanel("READ ERROR", "Could not read PitCrew history.\n"+m.err.Error()+"\nCheck the database and try again.")
 	}
-	if m.screen == ResultsScreen && len(m.results) == 0 {
+	if m.screen == ResultsScreen && len(m.results) == 0 && len(m.deliveryResults) == 0 {
 		return statePanel("SEARCH", fmt.Sprintf("No results for %q.\nquery: %s", m.query, m.query))
 	}
 	var body string
@@ -173,16 +176,16 @@ func (m Model) body() string {
 }
 
 func (m Model) workflowsView() string {
-	lines := []string{flight.title.Render("WORKFLOWS")}
-	hasData := len(m.workflows) > 0
+	lines := []string{flight.title.Render("DELIVERIES")}
+	hasData := m.itemCount() > 0
 	if m.loading && (!m.loadPreserves || !hasData) {
-		return strings.Join(append(lines, "Loading workflows…"), "\n")
+		return strings.Join(append(lines, "Loading deliveries…"), "\n")
 	}
 	if m.err != nil && (!m.loadPreserves || !hasData) {
-		return strings.Join(append(lines, "Could not load workflows.", ellipsize(m.err.Error(), m.width)), "\n")
+		return strings.Join(append(lines, "Could not load deliveries.", ellipsize(m.err.Error(), m.width)), "\n")
 	}
 	if !hasData {
-		return strings.Join(append(lines, "No workflows are available."), "\n")
+		return strings.Join(append(lines, "No deliveries are available."), "\n")
 	}
 	if m.loading {
 		lines = append(lines, flight.muted.Render("REFRESHING · keeping current selection"))
@@ -204,13 +207,19 @@ func (m Model) workflowGrid(height int) string {
 	}
 	lines := []string{
 		horizontal("╭", "┬", "╮"),
-		row(fitLabel("Started", startedWidth), fitLabel("Workflow", workflowWidth), fitLabel("Status", statusWidth)),
+		row(fitLabel("Started", startedWidth), fitLabel("Delivery", workflowWidth), fitLabel("Status", statusWidth)),
 		horizontal("├", "┼", "┤"),
 	}
 	visible := max(0, height-4)
-	start := max(0, min(m.workflowTop, len(m.workflows)))
-	end := min(len(m.workflows), start+visible)
+	start := max(0, min(m.workflowTop, m.itemCount()))
+	end := min(m.itemCount(), start+visible)
 	for i := start; i < end; i++ {
+		if _, ok := m.loader.(deliveryLoader); ok {
+			delivery := m.deliveries[i]
+			started := focus(i == m.selected) + fitText(formatTime(delivery.CreatedAt), 17)
+			lines = append(lines, row(started, fitText(delivery.Name, workflowWidth), fitStatus(delivery.Status, statusWidth)))
+			continue
+		}
 		workflow := m.workflows[i]
 		started := focus(i == m.selected) + fitText(formatTime(workflow.CreatedAt), 17)
 		lines = append(lines, row(started, fitText(displayName(workflow), workflowWidth), fitStatus(workflow.State, statusWidth)))
@@ -249,11 +258,11 @@ func (m Model) hasActiveData() bool {
 	case HomeScreen:
 		return true
 	case ResultsScreen:
-		return len(m.results) > 0
+		return len(m.results) > 0 || len(m.deliveryResults) > 0
 	case DetailScreen:
-		return m.opened.Detail.Workflow.ID != ""
+		return m.opened.Detail.Workflow.ID != "" || m.openedDelivery.Delivery.ID != ""
 	default:
-		return len(m.workflows) > 0
+		return len(m.workflows) > 0 || len(m.deliveries) > 0
 	}
 }
 
@@ -264,6 +273,12 @@ func statePanel(title, message string) string {
 func (m Model) list() string {
 	var lines []string
 	if m.screen == ResultsScreen {
+		if _, ok := m.loader.(deliveryLoader); ok {
+			for i, result := range m.deliveryResults {
+				lines = append(lines, focus(i == m.selected)+fmt.Sprintf("%s · %s · %s\n  %s", result.Route, result.DeliveryID, result.Status, result.Context))
+			}
+			return strings.Join(lines, "\n")
+		}
 		for i, result := range m.results {
 			lines = append(lines, focus(i == m.selected)+fmt.Sprintf("%s · %s\n  %s", result.Kind, result.WorkflowID, result.Context))
 		}
@@ -289,6 +304,9 @@ func focus(selected bool) string {
 }
 
 func (m *Model) detailView() string {
+	if m.openedDelivery.Workflow == nil && m.openedDelivery.Delivery.ID != "" {
+		return m.directDeliveryView()
+	}
 	detail := m.opened.Detail
 	if detail.Workflow.ID == "" {
 		return "Select a workflow to inspect its evidence."
@@ -320,6 +338,20 @@ func (m *Model) detailView() string {
 	}
 	available = max(1, m.height-6-len(lines))
 	return strings.Join(append(lines, m.gridLines(available)...), "\n")
+}
+
+func (m Model) directDeliveryView() string {
+	d := m.openedDelivery.Delivery
+	lines := []string{flight.title.Render("DIRECT DELIVERY"), labeled("Goal", d.Goal), labeled("Route", d.Route), labeled("Status", d.Status), labeled("Revision", fmt.Sprint(d.Revision)), labeled("Started", formatTime(d.CreatedAt)), labeled("Updated", formatTime(d.UpdatedAt))}
+	if d.FinishedAt != "" {
+		lines = append(lines, labeled("Finished", formatTime(d.FinishedAt)))
+	}
+	for _, item := range [][2]string{{"Reason", d.RouteReason}, {"Summary", d.Summary}, {"Next action", d.NextAction}} {
+		if item[1] != "" {
+			lines = append(lines, labeled(item[0], item[1]))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) wideDetailMode() bool {

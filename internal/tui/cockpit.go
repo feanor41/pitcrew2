@@ -194,7 +194,7 @@ func namedStage(value string) (lifecycleStage, bool) {
 
 func statusRows(detail history.Detail) []panelRow {
 	s := detail.Synopsis
-	rows := []panelRow{{"state", "State", detail.Workflow.State, semantic(detail.Workflow.State)}}
+	rows := []panelRow{{"route", "Route", history.FullWorkflow, stateNeutral}, {"state", "State", detail.Workflow.State, semantic(detail.Workflow.State)}}
 	if s.Planned != nil {
 		rows = append(rows, panelRow{"plan_progress", "Plan", fmt.Sprintf("%d/%d · %d%%", s.Planned.Done, s.Planned.Total, s.Planned.Percent), stateNeutral})
 	} else if s.PlanNotice != "" {

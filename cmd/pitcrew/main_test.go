@@ -91,10 +91,10 @@ func TestTUIRealPTYUninitializedQuitsWithoutCreatingState(t *testing.T) {
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("PTY run: %v\n%s", err, output.String())
 	}
-	if !strings.Contains(output.String(), "Install in Runtime") || !strings.Contains(output.String(), "Configure Runtime Models") || !strings.Contains(output.String(), "Workflows") {
-		t.Fatalf("Home did not launch before Workflows:\n%s", output.String())
+	if !strings.Contains(output.String(), "Install in Runtime") || !strings.Contains(output.String(), "Configure Runtime Models") || !strings.Contains(output.String(), "Deliveries") {
+		t.Fatalf("Home did not launch before Deliveries:\n%s", output.String())
 	}
-	if !strings.Contains(output.String(), "Could not load workflows.") || !strings.Contains(output.String(), "No PitCrew repository is initialized for this project.") {
+	if !strings.Contains(output.String(), "Could not load deliveries.") || !strings.Contains(output.String(), "No PitCrew repository is initialized for this project.") {
 		t.Fatalf("uninitialized message missing:\n%s", output.String())
 	}
 	entries, err := os.ReadDir(root)

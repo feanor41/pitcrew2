@@ -1,15 +1,15 @@
 Redesign TUI history  ·  READY_TO_COMPLETE  ·  r7  ·  v0.17.1
 Ship read-only terminal inspection
 ╭ ACTIVE TREE ────────────────────────────────────────────────────────────────────╮╭ STATUS ─────────────────────────────────────────────────────────────────────────╮
-│   ● ▾ Redesign TUI history · active                                             ││ ▶ ● State: ready_to_complete                                                    │
-│   ✓ ├─ ▸ Spec · done                                                            ││   ○ Plan: 2/3 · 66%                                                             │
-│   ○ ├─ ▾ Build · recorded                                                       ││   ● Current: Render diseño operativo                                            │
-│   ○   ├─ approved · recorded                                                    ││   ! Blocked: new publication blocker                                            │
-│   ✓   ├─ Map history signals · done                                             ││   ○ Corrections: 1/1 used                                                       │
-│   ✓   ├─ Define responsive hierarchy · done                                     ││   ! Blocker review: r9                                                          │
-│ ▶ ●   └─ Render diseño operativo · active                                       ││   ○ Authority: none                                                             │
-│   ● └─ Review · active                                                          ││   › Executable: user authorization required                                     │
-│                                                                                 ││                                                                                 │
+│   ● ▾ Redesign TUI history · active                                             ││ ▶ ○ Route: full_workflow                                                        │
+│   ✓ ├─ ▸ Spec · done                                                            ││   ● State: ready_to_complete                                                    │
+│   ○ ├─ ▾ Build · recorded                                                       ││   ○ Plan: 2/3 · 66%                                                             │
+│   ○   ├─ approved · recorded                                                    ││   ● Current: Render diseño operativo                                            │
+│   ✓   ├─ Map history signals · done                                             ││   ! Blocked: new publication blocker                                            │
+│   ✓   ├─ Define responsive hierarchy · done                                     ││   ○ Corrections: 1/1 used                                                       │
+│ ▶ ●   └─ Render diseño operativo · active                                       ││   ! Blocker review: r9                                                          │
+│   ● └─ Review · active                                                          ││   ○ Authority: none                                                             │
+│                                                                                 ││   › Executable: user authorization required                                     │
 │                                                                                 ││                                                                                 │
 │                                                                                 ││                                                                                 │
 │                                                                                 ││                                                                                 │
