@@ -176,6 +176,37 @@ func (s *Service) ListDeliveries(ctx context.Context) ([]Delivery, error) {
 	return deliveries, nil
 }
 
+// ListActiveDeliveries returns the active subset of the unified delivery
+// projection without assigning selection authority to its display order.
+func (s *Service) ListActiveDeliveries(ctx context.Context) ([]Delivery, error) {
+	deliveries, err := s.ListDeliveries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	workflows, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	activeWorkflows := make(map[string]bool, len(workflows))
+	for _, workflow := range workflows {
+		activeWorkflows[workflow.ID] = workflow.State != string(workflowdomain.Completed) && workflow.State != string(workflowdomain.Abandoned)
+	}
+	active := make([]Delivery, 0, len(deliveries))
+	for _, delivery := range deliveries {
+		if delivery.Route == FullWorkflow {
+			if activeWorkflows[delivery.ID] {
+				active = append(active, delivery)
+			}
+			continue
+		}
+		switch delivery.Status {
+		case "in_progress", "blocked", "interrupted":
+			active = append(active, delivery)
+		}
+	}
+	return active, nil
+}
+
 func (s *Service) GetDelivery(ctx context.Context, id string) (DeliveryDetail, error) {
 	if strings.HasPrefix(id, "wf-") {
 		detail, err := s.Detail(ctx, id)
