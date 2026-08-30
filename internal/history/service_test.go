@@ -628,6 +628,71 @@ func TestServiceListsDirectDelegatedAndFullDeliveriesExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestListActiveDeliveriesFiltersUnifiedHistoryAndKeepsStableCandidateFacts(t *testing.T) {
+	ctx, root := context.Background(), t.TempDir()
+	s, err := store.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err = s.DB().ExecContext(ctx, `PRAGMA ignore_check_constraints=ON`); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-planning',3,'planning','Planning workflow','plan goal','2026-08-29T14:00:00Z','2026-08-29T14:30:00Z')`,
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-blocked',4,'implementing','Blocked workflow','blocked goal','2026-08-29T13:00:00Z','2026-08-29T13:30:00Z')`,
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-completed',5,'completed','Completed workflow','done goal','2026-08-29T12:00:00Z','2026-08-29T12:30:00Z')`,
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-abandoned',6,'abandoned','Abandoned workflow','abandoned goal','2026-08-29T11:00:00Z','2026-08-29T11:30:00Z')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-blocked','progress','{"status":"blocked","summary":"waiting on input","next_action":"ask user"}','aion',4,'2026-08-29T13:30:00Z')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-completed','progress','{"status":"blocked","summary":"stale terminal progress","next_action":"retry"}','aion',5,'2026-08-29T12:20:00Z')`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000011','in-progress','direct_inline','in progress goal','small change','in_progress','working','finish',1,'aion','aion','2026-08-29T10:00:00Z','2026-08-29T10:30:00Z',NULL)`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000012','blocked','delegated_direct','blocked goal','multiple files','blocked','waiting','unblock',2,'aion','aion','2026-08-29T09:00:00Z','2026-08-29T09:30:00Z',NULL)`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000013','interrupted','direct_inline','interrupted goal','lost acknowledgement','interrupted','resume','inspect',3,'aion','aion','2026-08-29T08:00:00Z','2026-08-29T08:30:00Z',NULL)`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000014','completed','direct_inline','completed goal','done','completed','done','none',4,'aion','aion','2026-08-29T07:00:00Z','2026-08-29T07:30:00Z','2026-08-29T07:30:00Z')`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000015','cancelled','direct_inline','cancelled goal','cancelled','cancelled','cancelled','none',5,'aion','aion','2026-08-29T06:00:00Z','2026-08-29T06:30:00Z','2026-08-29T06:30:00Z')`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000016','failed','delegated_direct','failed goal','failed','failed','failed','none',6,'aion','aion','2026-08-29T05:00:00Z','2026-08-29T05:30:00Z','2026-08-29T05:30:00Z')`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000017','unknown','direct_inline','unknown goal','unknown','mystery','unknown','none',7,'aion','aion','2026-08-29T04:00:00Z','2026-08-29T04:30:00Z',NULL)`,
+	} {
+		if _, err = s.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = s.DB().ExecContext(ctx, `PRAGMA ignore_check_constraints=OFF`); err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(s)
+	first, err := service.ListActiveDeliveries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.ListActiveDeliveries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstJSON, _ := json.Marshal(first)
+	secondJSON, _ := json.Marshal(second)
+	if !bytes.Equal(firstJSON, secondJSON) {
+		t.Fatalf("repeat reads differ: first=%s second=%s", firstJSON, secondJSON)
+	}
+	if got := deliveryIDs(first); got != "wf-planning,wf-blocked,dl-000000000000000000000011,dl-000000000000000000000012,dl-000000000000000000000013" {
+		t.Fatalf("active delivery order = %s; deliveries=%#v", got, first)
+	}
+	byID := map[string]Delivery{}
+	for _, delivery := range first {
+		byID[delivery.ID] = delivery
+	}
+	if got := byID["wf-planning"]; got.Route != FullWorkflow || got.Revision != 3 || got.Status != "planning" || got.NextAction == "" {
+		t.Fatalf("workflow candidate facts = %#v", got)
+	}
+	if got := byID["wf-blocked"]; got.Status != "blocked" || got.Revision != 4 || got.NextAction != "ask user" {
+		t.Fatalf("blocked workflow candidate facts = %#v", got)
+	}
+	if got := byID["dl-000000000000000000000013"]; got.Route != "direct_inline" || got.Revision != 3 || got.Status != "interrupted" || got.NextAction != "inspect" {
+		t.Fatalf("direct candidate facts = %#v", got)
+	}
+}
+
 func TestServiceSearchesEveryDeliveryFieldOnceAndResolvesPhysicalTruth(t *testing.T) {
 	ctx, root := context.Background(), t.TempDir()
 	s, err := store.Open(ctx, root)
@@ -761,6 +826,14 @@ func hasRecord(records []Record, kind string) bool {
 		}
 	}
 	return false
+}
+
+func deliveryIDs(deliveries []Delivery) string {
+	ids := make([]string, len(deliveries))
+	for i, delivery := range deliveries {
+		ids[i] = delivery.ID
+	}
+	return strings.Join(ids, ",")
 }
 
 func recordText(records []Record) string {
