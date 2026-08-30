@@ -258,7 +258,7 @@ func TestOpenCreatesLocalSchemaAndAppliesPragmas(t *testing.T) {
 			t.Fatalf("PRAGMA %s = %q, %v; want %q", name, got, err, want)
 		}
 	}
-	for _, table := range []string{"workflows", "events", "plans", "work_units", "evidence", "reviews", "handles", "direct_delivery_traces"} {
+	for _, table := range []string{"workflows", "events", "plans", "work_units", "evidence", "reviews", "handles", "direct_delivery_traces", "project_context", "project_context_audits"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("table %s count = %d, %v", table, count, err)
@@ -443,7 +443,7 @@ func TestDirectTraceMigrationIsAdditiveAndPreservesWorkflowGraphs(t *testing.T) 
 		query string
 		want  int
 	}{
-		{`SELECT count(*) FROM schema_migrations`, 4},
+		{`SELECT count(*) FROM schema_migrations`, 5},
 		{`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='direct_delivery_traces'`, 1},
 		{`SELECT count(*) FROM direct_delivery_traces`, 0},
 	} {

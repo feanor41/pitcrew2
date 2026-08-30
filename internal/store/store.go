@@ -234,4 +234,18 @@ CREATE TABLE direct_delivery_traces (
     updated_at TEXT NOT NULL,
     finished_at TEXT
 );
+`}, {Version: 5, Name: "project context", SQL: `
+CREATE TABLE project_context (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    schema_version INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE project_context_audits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    changed_categories TEXT NOT NULL
+);
 `}}
