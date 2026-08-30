@@ -258,7 +258,7 @@ func TestOpenCreatesLocalSchemaAndAppliesPragmas(t *testing.T) {
 			t.Fatalf("PRAGMA %s = %q, %v; want %q", name, got, err, want)
 		}
 	}
-	for _, table := range []string{"workflows", "events", "plans", "work_units", "evidence", "reviews", "handles", "direct_delivery_traces", "project_context", "project_context_audits"} {
+	for _, table := range []string{"workflows", "events", "plans", "work_units", "evidence", "reviews", "handles", "direct_delivery_traces", "project_context", "project_context_audits", "workflow_baselines", "normative_entries", "unit_coverage", "verification_records", "reviewed_checkpoints"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("table %s count = %d, %v", table, count, err)
@@ -269,6 +269,92 @@ func TestOpenCreatesLocalSchemaAndAppliesPragmas(t *testing.T) {
 		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, table, column).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("column %s.%s count = %d, %v", table, column, count, err)
 		}
+	}
+}
+
+func TestMigrationV6AddsBoundedCoordinationFoundationsWithoutRewritingV5(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	legacy := openStoreAtMigration(t, root, 5)
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-v5',11,'implementing','preserve workflow','created','updated')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-v5','design','preserve artifact','designer',7,'recorded')`,
+		`INSERT INTO project_context(singleton,schema_version,content,actor,updated_at) VALUES(1,1,'{"schema_version":1,"facts":{"stack":[],"runtime":[],"deployment":[],"architecture":[],"documentation":[],"sdd":[]}}','aion','2026-08-30T17:00:00Z')`,
+	} {
+		if _, err := legacy.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var workflow, artifact, projectContext string
+	if err := migrated.DB().QueryRowContext(ctx, `SELECT id||':'||revision||':'||state||':'||goal||':'||created_at||':'||updated_at FROM workflows WHERE id='wf-v5'`).Scan(&workflow); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.DB().QueryRowContext(ctx, `SELECT kind||':'||content||':'||actor||':'||accepted_revision||':'||recorded_at FROM artifacts WHERE workflow_id='wf-v5'`).Scan(&artifact); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.DB().QueryRowContext(ctx, `SELECT schema_version||':'||actor||':'||updated_at FROM project_context WHERE singleton=1`).Scan(&projectContext); err != nil {
+		t.Fatal(err)
+	}
+	if workflow != "wf-v5:11:implementing:preserve workflow:created:updated" || artifact != "design:preserve artifact:designer:7:recorded" || projectContext != "1:aion:2026-08-30T17:00:00Z" {
+		t.Fatalf("V5 rows changed: workflow=%q artifact=%q context=%q", workflow, artifact, projectContext)
+	}
+	for _, table := range []string{"workflow_baselines", "normative_entries", "unit_coverage", "verification_records", "reviewed_checkpoints"} {
+		var tables, rows int
+		if err := migrated.DB().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&tables); err != nil || tables != 1 {
+			t.Fatalf("table %s count=%d err=%v", table, tables, err)
+		}
+		if err := migrated.DB().QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&rows); err != nil || rows != 0 {
+			t.Fatalf("historical %s rows=%d err=%v", table, rows, err)
+		}
+	}
+	var migrations int
+	if err := migrated.DB().QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != 6 {
+		t.Fatalf("migrations=%d err=%v; want 6", migrations, err)
+	}
+}
+
+func TestMigrationV6FoundationsBindReferencedRecords(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-a',1,'implementing','a','now','now')`,
+		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-b',1,'implementing','b','now','now')`,
+		`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES('wu-a','wf-a','unit','scope','[]','[]',1,1,'claimed',1)`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-a','specification','spec','actor',1,'now')`,
+	} {
+		if _, err := s.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var artifactID int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT id FROM artifacts WHERE workflow_id='wf-a'`).Scan(&artifactID); err != nil {
+		t.Fatal(err)
+	}
+	for name, statement := range map[string]string{
+		"baseline child":        `INSERT INTO workflow_baselines(child_id,predecessor_id,predecessor_revision,artifact_manifest_json) VALUES('wf-missing','wf-also-missing',1,'[]')`,
+		"normative workflow":    `INSERT INTO normative_entries(workflow_id,artifact_id,phase,entry_kind,stable_id,parent_id,operation,body_json) VALUES('wf-missing',1,'specification','requirement','REQ-1',NULL,'add','{}')`,
+		"normative mismatch":    fmt.Sprintf(`INSERT INTO normative_entries(workflow_id,artifact_id,phase,entry_kind,stable_id,parent_id,operation,body_json) VALUES('wf-b',%d,'specification','requirement','REQ-1',NULL,'add','{}')`, artifactID),
+		"coverage workflow":     `INSERT INTO unit_coverage(workflow_id,unit_id,requirement_id,scenario_id) VALUES('wf-missing','wu-missing','REQ-1','SCN-1')`,
+		"coverage mismatch":     `INSERT INTO unit_coverage(workflow_id,unit_id,requirement_id,scenario_id) VALUES('wf-b','wu-a','REQ-1','SCN-1')`,
+		"verification workflow": `INSERT INTO verification_records(id,workflow_id,unit_id,unit_revision,tier,command,outcome,fingerprint,scenario_ids_json,reused_from_id,actor,recorded_at) VALUES('vr-1','wf-missing',NULL,NULL,'focused','go test','passed','fp','[]',NULL,'actor','now')`,
+		"verification mismatch": `INSERT INTO verification_records(id,workflow_id,unit_id,unit_revision,tier,command,outcome,fingerprint,scenario_ids_json,reused_from_id,actor,recorded_at) VALUES('vr-2','wf-b','wu-a',1,'focused','go test','passed','fp','[]',NULL,'actor','now')`,
+		"verification reuse":    `INSERT INTO verification_records(id,workflow_id,unit_id,unit_revision,tier,command,outcome,fingerprint,scenario_ids_json,reused_from_id,actor,recorded_at) VALUES('vr-3','wf-a',NULL,NULL,'affected','go test','passed','fp','[]','vr-missing','actor','now')`,
+		"checkpoint workflow":   `INSERT INTO reviewed_checkpoints(workflow_id,aggregate_revision,project_id,checkout_root,base_revision,head_revision,result_digest,dirty,commit_ref,delivery_id,recorded_at) VALUES('wf-missing',1,'project','/checkout','base','head','digest',0,NULL,NULL,'now')`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := s.DB().ExecContext(ctx, statement); err == nil {
+				t.Fatal("orphaned foundation row was accepted")
+			}
+		})
 	}
 }
 
@@ -443,7 +529,7 @@ func TestDirectTraceMigrationIsAdditiveAndPreservesWorkflowGraphs(t *testing.T) 
 		query string
 		want  int
 	}{
-		{`SELECT count(*) FROM schema_migrations`, 5},
+		{`SELECT count(*) FROM schema_migrations`, len(schemaMigrations)},
 		{`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='direct_delivery_traces'`, 1},
 		{`SELECT count(*) FROM direct_delivery_traces`, 0},
 	} {

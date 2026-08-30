@@ -80,6 +80,11 @@ The schema SHALL preserve:
 | reviews | workflow/unit ids, unit revision, actor, verdict fields, time |
 | handles | claim/workflow/unit ids, state, secret hash, times, generation, actor identity |
 | project context | one schema-v1 bounded snapshot with actor/update metadata, plus append-only changed-category audits |
+| workflow baselines | child/predecessor workflow ids, predecessor revision, artifact manifest JSON |
+| normative entries | workflow/artifact ids, phase, entry kind, stable/parent ids, operation, body JSON |
+| unit coverage | workflow/unit, requirement, and scenario ids |
+| verification records | workflow/unit revision, tier, command/outcome, repository fingerprint, scenario ids, reuse lineage, actor/time |
+| reviewed checkpoints | workflow/aggregate revision, project/checkout identity, base/head/result identity, dirty status, optional commit/delivery references, time |
 
 Artifacts, events, activities, evidence, and reviews SHALL be append-only. Aggregate reviews SHALL use artifacts of kind `aggregate_review` rather than a new table or fake unit. Actor values SHALL be declarative collision/audit metadata, not credentials. Activities SHALL contain only navigation-safe identifiers: no claim secret, secret hash, handle contents, or handle path. Plain claim secrets SHALL never be stored.
 
@@ -115,6 +120,38 @@ fail without repair or mutation.
 - GIVEN representative V4 workflow, handle, correction, consolidation, and direct-delivery data
 - WHEN V5 migrates and project context is recorded
 - THEN prior data SHALL remain field-equivalent and the snapshot plus exact changed-category audit SHALL commit atomically
+
+### Requirement: Read-only pre-V5 context compatibility (REQ-CTX-001)
+
+A read-only project-context load SHALL treat an initialized schema older than
+V5 as context `missing` only when migration V5 and both project-context tables
+are absent. It SHALL neither apply migrations nor create or rewrite storage.
+A store that declares V5, contains only part of the V5 schema, or contains an
+invalid project-context row SHALL fail as corrupt without repair.
+
+#### Scenario: Pre-V5 inspection remains non-mutating (SCN-CTX-001)
+
+- GIVEN an initialized populated V4 store without migration V5 or either project-context table
+- WHEN `context inspect` reads it
+- THEN it SHALL report context `missing` with `context initialize` as the next action
+- AND schema version, tables, and historical rows SHALL remain unchanged
+- BUT a declared, partial, malformed, or corrupt V5 store SHALL return an error
+
+### Requirement: Additive V6 coordination foundations
+
+Ordered migration V6 SHALL add `workflow_baselines`, `normative_entries`,
+`unit_coverage`, `verification_records`, and `reviewed_checkpoints` with the
+accepted primary keys and foreign-key bindings to their durable workflow,
+artifact, unit, verification-lineage, and optional delivery records. The
+migration SHALL preserve all V1-V5 rows without fabricating baseline,
+normative, coverage, verification, or checkpoint history.
+
+#### Scenario: Populated V5 upgrade preserves existing truth
+
+- GIVEN a populated V5 store with workflow, artifact, and project-context records
+- WHEN V6 migrates
+- THEN every V5 record SHALL remain field-equivalent
+- AND all five V6 foundation tables SHALL exist empty with foreign keys enforced
 
 ### Requirement: Revision compare-and-swap
 

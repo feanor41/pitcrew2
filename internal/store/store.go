@@ -248,4 +248,62 @@ CREATE TABLE project_context_audits (
     updated_at TEXT NOT NULL,
     changed_categories TEXT NOT NULL
 );
+`}, {Version: 6, Name: "bounded coordination foundations", SQL: `
+CREATE UNIQUE INDEX artifacts_workflow_id_id ON artifacts(workflow_id, id);
+CREATE UNIQUE INDEX work_units_workflow_id_id ON work_units(workflow_id, id);
+CREATE TABLE workflow_baselines (
+    child_id TEXT PRIMARY KEY REFERENCES workflows(id),
+    predecessor_id TEXT NOT NULL REFERENCES workflows(id),
+    predecessor_revision INTEGER NOT NULL CHECK(predecessor_revision > 0),
+    artifact_manifest_json TEXT NOT NULL
+);
+CREATE TABLE normative_entries (
+    workflow_id TEXT NOT NULL REFERENCES workflows(id),
+    artifact_id INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    entry_kind TEXT NOT NULL,
+    stable_id TEXT NOT NULL,
+    parent_id TEXT,
+    operation TEXT NOT NULL,
+    body_json TEXT NOT NULL,
+    PRIMARY KEY(workflow_id, artifact_id, entry_kind, stable_id),
+    FOREIGN KEY(workflow_id, artifact_id) REFERENCES artifacts(workflow_id, id)
+);
+CREATE TABLE unit_coverage (
+    workflow_id TEXT NOT NULL REFERENCES workflows(id),
+    unit_id TEXT NOT NULL,
+    requirement_id TEXT NOT NULL,
+    scenario_id TEXT NOT NULL,
+    PRIMARY KEY(workflow_id, unit_id, requirement_id, scenario_id),
+    FOREIGN KEY(workflow_id, unit_id) REFERENCES work_units(workflow_id, id)
+);
+CREATE TABLE verification_records (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL REFERENCES workflows(id),
+    unit_id TEXT,
+    unit_revision INTEGER,
+    tier TEXT NOT NULL,
+    command TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    scenario_ids_json TEXT NOT NULL,
+    reused_from_id TEXT REFERENCES verification_records(id),
+    actor TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    FOREIGN KEY(workflow_id, unit_id) REFERENCES work_units(workflow_id, id)
+);
+CREATE TABLE reviewed_checkpoints (
+    workflow_id TEXT NOT NULL REFERENCES workflows(id),
+    aggregate_revision INTEGER NOT NULL CHECK(aggregate_revision > 0),
+    project_id TEXT NOT NULL,
+    checkout_root TEXT NOT NULL,
+    base_revision TEXT NOT NULL,
+    head_revision TEXT NOT NULL,
+    result_digest TEXT NOT NULL,
+    dirty INTEGER NOT NULL CHECK(dirty IN (0, 1)),
+    commit_ref TEXT,
+    delivery_id TEXT REFERENCES direct_delivery_traces(id),
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY(workflow_id, aggregate_revision)
+);
 `}}
