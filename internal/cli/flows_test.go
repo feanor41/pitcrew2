@@ -97,6 +97,95 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 	}
 }
 
+func TestDeliveryCommandsTraceEachRouteExactlyOnce(t *testing.T) {
+	root := t.TempDir()
+	start := writeInput(t, root, "delivery-start.json", `{"operation_key":"request-17","route":"direct_inline","goal":"Fix the release note","route_reason":"one bounded file"}`)
+	first := mustOK(t, runAt(t, root, "delivery", "start", "--actor", "aion", "--input-file", start))
+	traceID := deliveryID(t, first)
+	if !strings.HasPrefix(traceID, "dl-") || !strings.Contains(string(first), `"status":"in_progress"`) || !strings.Contains(string(first), `"next_action":"delivery show"`) {
+		t.Fatalf("start=%s", first)
+	}
+	replayed := mustOK(t, runAt(t, root, "delivery", "start", "--actor", "aion", "--input-file", start))
+	if deliveryID(t, replayed) != traceID {
+		t.Fatalf("idempotent replay created another identity: %s", replayed)
+	}
+
+	update := writeInput(t, root, "delivery-update.json", `{"status":"blocked","summary":"waiting for operator","next_action":"answer question"}`)
+	updated := mustOK(t, runAt(t, root, "delivery", "update", "--delivery-id", traceID, "--revision", "1", "--actor", "aion", "--input-file", update))
+	if !strings.Contains(string(updated), `"revision":2`) || !strings.Contains(string(updated), `"next_action":"answer question"`) {
+		t.Fatalf("update=%s", updated)
+	}
+	shown := mustOK(t, runAt(t, root, "delivery", "show", "--delivery-id", traceID))
+	if !strings.Contains(string(shown), `"route":"direct_inline"`) || !strings.Contains(string(shown), `"summary":"waiting for operator"`) {
+		t.Fatalf("show=%s", shown)
+	}
+	results := mustOK(t, runAt(t, root, "delivery", "search", "--query", "operator"))
+	if ids := deliverySearchIDs(t, results); len(ids) != 1 || ids[0] != traceID {
+		t.Fatalf("search did not return one identity: %s", results)
+	}
+
+	wf := mustOK(t, runAt(t, root, "workflow", "new", "--name", "Complex", "--goal", "Migrate durable state", "--actor", "aion"))
+	wfID := workflowID(t, wf)
+	wfShown := mustOK(t, runAt(t, root, "delivery", "show", "--delivery-id", wfID))
+	if !strings.Contains(string(wfShown), `"route":"full_workflow"`) || !strings.Contains(string(wfShown), `"workflow":`) {
+		t.Fatalf("workflow delivery=%s", wfShown)
+	}
+	fullResults := mustOK(t, runAt(t, root, "delivery", "search", "--query", "full_workflow"))
+	if ids := deliverySearchIDs(t, fullResults); len(ids) != 1 || ids[0] != wfID {
+		t.Fatalf("workflow search duplicated identity: %s", fullResults)
+	}
+
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var direct, workflows int
+	if err = s.DB().QueryRow(`SELECT count(*) FROM direct_delivery_traces`).Scan(&direct); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB().QueryRow(`SELECT count(*) FROM workflows`).Scan(&workflows); err != nil {
+		t.Fatal(err)
+	}
+	if direct != 1 || workflows != 1 {
+		t.Fatalf("direct=%d workflows=%d", direct, workflows)
+	}
+}
+
+func TestDeliveryUpdateRejectsStaleNoOpTerminalAndInvalidWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	invalidStart := writeInput(t, root, "invalid-start.json", `{"operation_key":"request-18","route":"full_workflow","goal":"Update generated prompts","route_reason":"wrong physical route"}`)
+	if result := runAt(t, root, "delivery", "start", "--actor", "aion", "--input-file", invalidStart); result.code != 3 || result.stdout != "" {
+		t.Fatalf("invalid start=%#v", result)
+	}
+	start := writeInput(t, root, "start.json", `{"operation_key":"request-18","route":"delegated_direct","goal":"Update generated prompts","route_reason":"several mechanical files"}`)
+	created := mustOK(t, runAt(t, root, "delivery", "start", "--actor", "aion", "--input-file", start))
+	id := deliveryID(t, created)
+	noOp := writeInput(t, root, "noop.json", `{"status":"in_progress","summary":"","next_action":""}`)
+	if result := runAt(t, root, "delivery", "update", "--delivery-id", id, "--revision", "1", "--actor", "aion", "--input-file", noOp); result.code != 3 || result.stdout != "" {
+		t.Fatalf("no-op=%#v", result)
+	}
+	invalid := writeInput(t, root, "invalid.json", `{"status":"invented","summary":"no","next_action":"no"}`)
+	if result := runAt(t, root, "delivery", "update", "--delivery-id", id, "--revision", "1", "--actor", "aion", "--input-file", invalid); result.code != 3 || result.stdout != "" {
+		t.Fatalf("invalid=%#v", result)
+	}
+	blocked := writeInput(t, root, "blocked.json", `{"status":"blocked","summary":"dependency unavailable","next_action":"inspect dependency"}`)
+	mustOK(t, runAt(t, root, "delivery", "update", "--delivery-id", id, "--revision", "1", "--actor", "aion", "--input-file", blocked))
+	if result := runAt(t, root, "delivery", "update", "--delivery-id", id, "--revision", "1", "--actor", "aion", "--input-file", blocked); result.code != 4 || result.stdout != "" || !strings.Contains(result.stderr, "delivery revision mismatch for "+id) || strings.Contains(result.stderr, "workflow revision mismatch") || !strings.Contains(result.stderr, "pitcrew delivery show --delivery-id "+id) {
+		t.Fatalf("stale=%#v", result)
+	}
+	completed := writeInput(t, root, "completed.json", `{"status":"completed","summary":"verified","next_action":"none"}`)
+	mustOK(t, runAt(t, root, "delivery", "update", "--delivery-id", id, "--revision", "2", "--actor", "aion", "--input-file", completed))
+	before := mustOK(t, runAt(t, root, "delivery", "show", "--delivery-id", id))
+	if result := runAt(t, root, "delivery", "update", "--delivery-id", id, "--revision", "3", "--actor", "aion", "--input-file", blocked); result.code != 3 || result.stdout != "" {
+		t.Fatalf("terminal=%#v", result)
+	}
+	after := mustOK(t, runAt(t, root, "delivery", "show", "--delivery-id", id))
+	if string(before) != string(after) {
+		t.Fatalf("rejected mutations changed trace:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
 func TestWorkflowContinueCreatesInspectableSuccessorAndPreservesSource(t *testing.T) {
 	for _, tt := range []struct {
 		state    string
@@ -1325,6 +1414,38 @@ func mustOK(t *testing.T, result result) []byte {
 }
 
 func workflowID(t *testing.T, document []byte) string { return nestedWorkflowString(t, document, "id") }
+func deliveryID(t *testing.T, document []byte) string {
+	t.Helper()
+	var v struct {
+		Data struct {
+			Delivery struct {
+				ID string `json:"id"`
+			} `json:"delivery"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(document, &v); err != nil {
+		t.Fatal(err)
+	}
+	return v.Data.Delivery.ID
+}
+func deliverySearchIDs(t *testing.T, document []byte) []string {
+	t.Helper()
+	var v struct {
+		Data struct {
+			Deliveries []struct {
+				ID string `json:"delivery_id"`
+			} `json:"deliveries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(document, &v); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, len(v.Data.Deliveries))
+	for i := range v.Data.Deliveries {
+		ids[i] = v.Data.Deliveries[i].ID
+	}
+	return ids
+}
 func workflowState(t *testing.T, document []byte) string {
 	return nestedWorkflowString(t, document, "state")
 }
