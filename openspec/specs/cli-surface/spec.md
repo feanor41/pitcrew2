@@ -30,7 +30,7 @@ evidence, reviews, and consolidation bodies.
 | `delivery search` | `--query <nonblank-text>` |
 | `new` | `--name <text> --goal <text> --actor <label>` |
 | `continue` | `--from <terminal-wf-id> --actor <label>` |
-| `show` | `--workflow-id <wf-id>` |
+| `show` | `--workflow-id <wf-id> [--view coordination|phase|unit|aggregate|audit] [--unit-id <wu-id>]`; unit id is required only for the unit view |
 | `progress` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `request-capability` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `explore`, `spec`, `design` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
@@ -171,6 +171,67 @@ Workflow and install-argument failures SHALL write one single-line error envelop
 - THEN success SHALL use the one canonical success line
 - AND failure SHALL preserve actionable installer stderr and status without JSON wrapping or a success line
 - AND neither stream SHALL expose the temporary embedded-asset path
+
+### Requirement: Proportional workflow inspection views
+
+`workflow show` SHALL accept exactly `--view coordination|phase|unit|aggregate|audit` as an optional selector. `--unit-id` SHALL be required for `unit`, rejected for every other explicit view, and rejected when the view is omitted. Invalid values and combinations SHALL exit `2` before opening or mutating the store.
+
+An omitted view and explicit `audit` SHALL preserve the existing full-audit response byte and schema contract. The `coordination`, `phase`, `unit`, and `aggregate` selections SHALL call the shared bounded history projection and return its tagged workflow identity plus exactly the selected payload. They SHALL NOT load or serialize the audit record graph, unrelated unit evidence, handle paths, hashes, or secrets.
+
+Aion SHALL use `coordination` for summary-first coordination and initial inspection after a state or CAS failure. Daimon SHALL NOT invoke workflow commands and SHALL receive only Aion-acknowledged facts or clarification requests. Phase specialists SHALL use `phase`, Implementers and selective Reviewers SHALL use `unit`, and aggregate Reviewers SHALL use `aggregate`. Full `audit` remains the explicit compatibility and operator-debugging escape hatch.
+
+#### Scenario: Omitted workflow view stays compatible
+
+- GIVEN an existing workflow
+- WHEN a caller invokes `workflow show` without `--view` and then with `--view audit`
+- THEN the successful response bytes and schema SHALL match
+- AND the response SHALL retain workflow, synopsis, artifacts, records, and timeline
+
+#### Scenario: Bounded view excludes audit and claim material
+
+- GIVEN a workflow with multiple unit results and historical activities
+- WHEN a caller requests coordination, phase, one selected unit, or aggregate
+- THEN exactly the selected tagged projection SHALL be returned
+- AND the audit graph, unrelated evidence, handle paths, hashes, and secrets SHALL be absent
+
+#### Scenario: Unit selector is closed before persistence
+
+- GIVEN an absent project store
+- WHEN `--unit-id` is omitted for the unit view or supplied for any other/omitted view
+- THEN the command SHALL exit `2`
+- AND it SHALL NOT initialize or mutate project state
+
+### Requirement: Backward-compatible typed stage input
+
+`explore`, `spec`, and `design` SHALL continue to accept the exact strict legacy
+input `{content}` without inference or upgrade. They SHALL additionally accept
+the exact strict typed input `{content,schema_version:1,entries:[...]}` and pass
+it to the shared schema-v1 normative workflow API. `schema_version` and
+`entries` SHALL appear together. Partial typed shapes, unsupported versions,
+unknown fields, and invalid entries SHALL fail before workflow mutation.
+Accepted typed entries and their prose artifact SHALL commit atomically and be
+reachable through both phase and aggregate projections.
+
+#### Scenario: Typed and legacy stages share one public command
+
+- GIVEN a schema-v1 typed exploration followed by legacy prose specification
+  and design inputs
+- WHEN phase and aggregate views are requested
+- THEN the normalized typed entries SHALL be reachable in both views
+- AND the legacy prose artifacts SHALL retain their exact content
+
+#### Scenario: Invalid typed stage input is inert
+
+- GIVEN a partial typed shape, unsupported schema version, or invalid entry
+- WHEN a stage command receives it
+- THEN the command SHALL fail before changing workflow revision or artifacts
+
+### Requirement: CLI handle use honors capped purpose-aware leases
+
+Implementation and review commands SHALL honor the claim-handle contract's
+purpose-aware fifteen-minute expiry measured from issue. A successful command
+MUST NOT renew the lease, and no CLI flow SHALL add heartbeat polling or
+background renewal.
 
 ### Requirement: Declarative actor metadata
 

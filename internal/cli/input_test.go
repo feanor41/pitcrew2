@@ -116,6 +116,47 @@ func TestExactFlagMatrixRejectsUnknownDuplicateShortAndMissing(t *testing.T) {
 	}
 }
 
+func TestWorkflowShowRejectsInvalidViewCombinationsBeforeStoreOpen(t *testing.T) {
+	for name, args := range map[string][]string{
+		"unknown view":         {"--workflow-id", "wf-000000000000000000000001", "--view", "summary"},
+		"unit missing id":      {"--workflow-id", "wf-000000000000000000000001", "--view", "unit"},
+		"unit id without view": {"--workflow-id", "wf-000000000000000000000001", "--unit-id", "wu-000000000000000000000001"},
+		"unit id for phase":    {"--workflow-id", "wf-000000000000000000000001", "--view", "phase", "--unit-id", "wu-000000000000000000000001"},
+		"unit id for audit":    {"--workflow-id", "wf-000000000000000000000001", "--view", "audit", "--unit-id", "wu-000000000000000000000001"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			result := runAt(t, root, append([]string{"workflow", "show"}, args...)...)
+			if result.code != 2 || result.stdout != "" || !strings.Contains(result.stderr, `"code":"usage"`) {
+				t.Fatalf("result=%#v", result)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".pitcrew")); !os.IsNotExist(err) {
+				t.Fatalf("store opened before view validation: %v", err)
+			}
+		})
+	}
+}
+
+func TestInvalidTypedStageInputFailsBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"missing entries":        `{"content":"x","schema_version":1}`,
+		"entries without schema": `{"content":"x","entries":[]}`,
+		"unsupported schema":     `{"content":"x","schema_version":2,"entries":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeInput(t, root, strings.ReplaceAll(name, " ", "-")+".json", body)
+			result := runAt(t, root, "workflow", "explore", "--workflow-id", "wf-000000000000000000000001", "--revision", "1", "--actor", "explorer", "--input-file", path)
+			if result.code != 2 || result.stdout != "" || !strings.Contains(result.stderr, `"code":"usage"`) {
+				t.Fatalf("result=%#v", result)
+			}
+		})
+	}
+	if _, err := os.Stat(filepath.Join(root, ".pitcrew")); !os.IsNotExist(err) {
+		t.Fatalf("store opened before typed input validation: %v", err)
+	}
+}
+
 func TestDTOsRequireEveryDeclaredFieldBeforeStoreOpen(t *testing.T) {
 	identity := []string{"--workflow-id", "wf-000000000000000000000001", "--unit-id", "wu-000000000000000000000001", "--revision", "1", "--actor", "actor", "--claim-handle", "/missing"}
 	tests := []struct {

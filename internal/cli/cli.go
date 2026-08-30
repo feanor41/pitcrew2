@@ -50,7 +50,9 @@ type Dependencies struct {
 }
 
 type stageArtifactInput struct {
-	Content string `json:"content"`
+	Content       string                     `json:"content"`
+	SchemaVersion *int                       `json:"schema_version,omitempty"`
+	Entries       *[]workflow.NormativeEntry `json:"entries,omitempty"`
 }
 type progressInput struct {
 	Status     string `json:"status"`
@@ -572,11 +574,26 @@ func runWorkflowNew(args []string, deps Dependencies) int {
 	})
 }
 func runWorkflowShow(args []string, deps Dependencies) int {
-	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id"}})
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id"}, optional: []string{"--view", "--unit-id"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	view, unitID, explicitView, err := workflowShowView(values)
 	if err != nil {
 		return fail(deps, err, err.Error())
 	}
 	return withReadStore(deps, func(s *store.Store) error {
+		if explicitView && view != history.ViewAudit {
+			projected, err := history.New(s).Project(context.Background(), values.one("--workflow-id"), view, unitID)
+			if err != nil {
+				return err
+			}
+			next := workflow.NextAction(workflow.State(projected.Workflow.State))
+			if projected.Coordination != nil {
+				next = projected.Coordination.NextAction
+			}
+			return writeSuccess(deps, projected, next)
+		}
 		svc := workflow.New(s, deps.Now)
 		current, err := svc.Get(context.Background(), values.one("--workflow-id"))
 		if err != nil {
@@ -593,6 +610,30 @@ func runWorkflowShow(args []string, deps Dependencies) int {
 		return writeSuccess(deps, map[string]any{"workflow": current, "synopsis": detail.Synopsis, "artifacts": artifacts, "records": detail.Records, "timeline": detail.Timeline}, detail.Synopsis.NextAction)
 	})
 }
+
+func workflowShowView(values flagValues) (history.View, string, bool, error) {
+	viewValue, unitID := values.one("--view"), values.one("--unit-id")
+	if viewValue == "" {
+		if unitID != "" {
+			return "", "", false, fmt.Errorf("%w: --unit-id requires --view unit", ErrUsage)
+		}
+		return history.ViewAudit, "", false, nil
+	}
+	view := history.View(viewValue)
+	switch view {
+	case history.ViewCoordination, history.ViewPhase, history.ViewAggregate, history.ViewAudit:
+		if unitID != "" {
+			return "", "", true, fmt.Errorf("%w: --unit-id is only valid with --view unit", ErrUsage)
+		}
+	case history.ViewUnit:
+		if unitID == "" {
+			return "", "", true, fmt.Errorf("%w: --view unit requires --unit-id", ErrUsage)
+		}
+	default:
+		return "", "", true, fmt.Errorf("%w: --view must be coordination, phase, unit, aggregate, or audit", ErrUsage)
+	}
+	return view, unitID, true, nil
+}
 func runStage(command string, args []string, deps Dependencies) int {
 	values, revision, input, err := workflowInput(args)
 	if err != nil {
@@ -603,13 +644,36 @@ func runStage(command string, args []string, deps Dependencies) int {
 	if strings.TrimSpace(input.Content) == "" {
 		return fail(deps, ErrState, "artifact content is required")
 	}
+	typed, err := input.normative()
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
 	return withStore(deps, func(s *store.Store) error {
-		current, err := workflow.New(s, deps.Now).RecordArtifact(context.Background(), values.one("--workflow-id"), revision, event, kind, input.Content, values.one("--actor"))
+		svc := workflow.New(s, deps.Now)
+		var current workflow.Workflow
+		if typed == nil {
+			current, err = svc.RecordArtifact(context.Background(), values.one("--workflow-id"), revision, event, kind, input.Content, values.one("--actor"))
+		} else {
+			current, err = svc.RecordNormativeArtifact(context.Background(), values.one("--workflow-id"), revision, event, kind, *typed, values.one("--actor"))
+		}
 		if err != nil {
 			return err
 		}
 		return writeSuccess(deps, map[string]any{"workflow": current}, nextAction(current.State))
 	})
+}
+
+func (input stageArtifactInput) normative() (*workflow.NormativeArtifact, error) {
+	if input.SchemaVersion == nil && input.Entries == nil {
+		return nil, nil
+	}
+	if input.SchemaVersion == nil || input.Entries == nil {
+		return nil, fmt.Errorf("%w: schema_version and entries must be supplied together", ErrUsage)
+	}
+	if *input.SchemaVersion != 1 {
+		return nil, fmt.Errorf("%w: schema_version must be 1", ErrUsage)
+	}
+	return &workflow.NormativeArtifact{Content: input.Content, SchemaVersion: *input.SchemaVersion, Entries: *input.Entries}, nil
 }
 func workflowInput(args []string) (flagValues, int64, stageArtifactInput, error) {
 	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--revision", "--actor", "--input-file"}})
@@ -1099,7 +1163,7 @@ func classify(err error) envelope.ExitCode {
 		return envelope.CAS
 	case errors.Is(err, handles.ErrInvalid), errors.Is(err, handles.ErrExpired), errors.Is(err, handles.ErrUnsafePath), errors.Is(err, handles.ErrUnsafePermissions), errors.Is(err, evidence.ErrInvalidHandle):
 		return envelope.Handle
-	case errors.Is(err, ErrState), errors.Is(err, correction.ErrAuthorizationForbidden), errors.Is(err, tui.ErrUninitialized), errors.Is(err, sql.ErrNoRows), errors.Is(err, project.ErrMigrationRequired), errors.Is(err, consolidate.ErrInvalidManifest), errors.Is(err, consolidate.ErrConflict), errors.Is(err, workflow.ErrInvalidName), errors.Is(err, workflow.ErrInvalidActor), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
+	case errors.Is(err, ErrState), errors.Is(err, correction.ErrAuthorizationForbidden), errors.Is(err, tui.ErrUninitialized), errors.Is(err, sql.ErrNoRows), errors.Is(err, project.ErrMigrationRequired), errors.Is(err, consolidate.ErrInvalidManifest), errors.Is(err, consolidate.ErrConflict), errors.Is(err, workflow.ErrInvalidName), errors.Is(err, workflow.ErrInvalidActor), errors.Is(err, workflow.ErrInvalidTransition), errors.Is(err, workflow.ErrInvalidNormativeArtifact), errors.Is(err, workflow.ErrNotFound), errors.Is(err, plan.ErrNotFound), errors.Is(err, plan.ErrInvalidApproval), errors.Is(err, evidence.ErrInvalidState), errors.Is(err, evidence.ErrReviewRequired), errors.Is(err, handles.ErrIdentityCollision), errors.Is(err, handles.ErrRecoveryForbidden), errors.Is(err, handles.ErrAlreadyClaimed), errors.Is(err, handles.ErrInvalidState), strings.Contains(strings.ToLower(err.Error()), "database is locked"), strings.Contains(err.Error(), "SQLITE_BUSY"):
 		return envelope.State
 	default:
 		return envelope.Internal
