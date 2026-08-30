@@ -52,7 +52,7 @@ func TestIssueWritesOpaqueIntentHandleWithStrictOwnershipAndModes(t *testing.T) 
 	if err := json.Unmarshal(data, &h); err != nil {
 		t.Fatal(err)
 	}
-	if h.State != Intent || h.WorkflowID != wfID || h.UnitID != unitID || h.ExpiresAt != clock.now.Add(5*time.Minute).Format(timestampLayout) || len(h.SecretHash) != 64 {
+	if h.State != Intent || h.WorkflowID != wfID || h.UnitID != unitID || h.ExpiresAt != clock.now.Add(15*time.Minute).Format(timestampLayout) || len(h.SecretHash) != 64 {
 		t.Fatalf("handle = %#v", h)
 	}
 	var hash, actor string
@@ -125,7 +125,7 @@ func TestUseRejectsSymlinksAndWrongModes(t *testing.T) {
 }
 
 func TestPurposeScopedHandlesKeepIndependentGenerationsAndUse(t *testing.T) {
-	m, db, _, wfID, unitID := testManager(t)
+	m, db, clock, wfID, unitID := testManager(t)
 	dir := filepath.Join(t.TempDir(), "handles")
 	implementation, err := m.IssueForPurpose(context.Background(), wfID, unitID, "implementer", dir, PurposeImplementation)
 	if err != nil {
@@ -143,6 +143,19 @@ func TestPurposeScopedHandlesKeepIndependentGenerationsAndUse(t *testing.T) {
 	review, err := m.IssueForPurpose(context.Background(), wfID, unitID, "reviewer", dir, PurposeReview)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for purpose, path := range map[Purpose]string{PurposeImplementation: implementation.Path, PurposeReview: review.Path} {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var handle Handle
+		if unmarshalErr := json.Unmarshal(data, &handle); unmarshalErr != nil {
+			t.Fatal(unmarshalErr)
+		}
+		if want := clock.now.Add(15 * time.Minute).Format(timestampLayout); handle.ExpiresAt != want {
+			t.Fatalf("%s lease expiry=%s want=%s", purpose, handle.ExpiresAt, want)
+		}
 	}
 	if implementation.Generation != 1 || review.Generation != 1 {
 		t.Fatalf("implementation generation=%d review generation=%d", implementation.Generation, review.Generation)
@@ -209,15 +222,16 @@ func TestIssueRejectsSymlinkHandleDirectory(t *testing.T) {
 	}
 }
 
-func TestUsePromotesRefreshesAndEnforcesActorSeparation(t *testing.T) {
+func TestLeasePromotesWithoutRenewalAndEnforcesActorSeparation(t *testing.T) {
 	m, _, clock, wfID, unitID := testManager(t)
 	result, _ := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "handles"))
+	issuedExpiry := clock.now.Add(15 * time.Minute).Format(timestampLayout)
 	clock.advance(time.Minute)
 	h, err := m.Use(context.Background(), result.Path, "implementer", TDD)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.State != Active || h.ExpiresAt != clock.now.Add(5*time.Minute).Format(timestampLayout) {
+	if h.State != Active || h.ExpiresAt != issuedExpiry {
 		t.Fatalf("promoted handle=%#v", h)
 	}
 	if _, err := m.Use(context.Background(), result.Path, "implementer", Review); !errors.Is(err, ErrIdentityCollision) {
@@ -231,8 +245,8 @@ func TestUsePromotesRefreshesAndEnforcesActorSeparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.ExpiresAt != clock.now.Add(5*time.Minute).Format(timestampLayout) {
-		t.Fatalf("review refresh=%#v", h)
+	if h.ExpiresAt != issuedExpiry {
+		t.Fatalf("review renewed lease=%#v", h)
 	}
 	if _, err := m.Use(context.Background(), result.Path, "reviewer", Complete); !errors.Is(err, ErrIdentityCollision) {
 		t.Fatalf("reviewer completion error=%v", err)
@@ -251,10 +265,26 @@ func TestUsePromotesRefreshesAndEnforcesActorSeparation(t *testing.T) {
 	}
 }
 
+func TestLeaseExpiresAtFifteenMinutesDespiteSuccessfulUse(t *testing.T) {
+	m, _, clock, wfID, unitID := testManager(t)
+	result, err := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "handles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(14 * time.Minute)
+	if _, err = m.Use(context.Background(), result.Path, "implementer", TDD); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(2 * time.Minute)
+	if _, err = m.Use(context.Background(), result.Path, "implementer", TDD); !errors.Is(err, ErrExpired) {
+		t.Fatalf("lease extended past issued cap: %v", err)
+	}
+}
+
 func TestExpiredHandleIsAtomicallyDeletedWithoutUnitMutation(t *testing.T) {
 	m, db, clock, wfID, unitID := testManager(t)
 	result, _ := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "handles"))
-	clock.advance(6 * time.Minute)
+	clock.advance(16 * time.Minute)
 	if _, err := m.Use(context.Background(), result.Path, "implementer", TDD); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expiry error=%v", err)
 	}
@@ -301,7 +331,7 @@ func TestRecoverIncrementsGenerationAndEnforcesEvidenceRules(t *testing.T) {
 	m, db, clock, wfID, unitID := testManager(t)
 	dir := filepath.Join(t.TempDir(), "handles")
 	first, _ := m.Issue(context.Background(), wfID, unitID, "implementer", dir)
-	clock.advance(6 * time.Minute)
+	clock.advance(16 * time.Minute)
 	if _, err := m.Use(context.Background(), first.Path, "implementer", TDD); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expire before recovery: %v", err)
 	}
@@ -377,6 +407,62 @@ func TestRecoverAggregateBatchCreatesOneBoundedTransactionAndRejectsLegacyAdapte
 	_ = db.DB().QueryRow(`SELECT content FROM artifacts WHERE workflow_id=? AND kind='aggregate_correction'`, wfID).Scan(&content)
 	if !strings.Contains(content, `"authority":"automatic"`) || strings.Contains(content, dir) || strings.Contains(content, "secret_hash") || strings.Contains(content, "claim") {
 		t.Fatalf("unsafe aggregate correction artifact: %s", content)
+	}
+}
+
+func TestAggregateRecoveryHandleExpiresAtExactIssuedBoundaryWithoutMutation(t *testing.T) {
+	m, db, clock, wfID, units := aggregateManager(t, 1)
+	dir := filepath.Join(t.TempDir(), "handles")
+	request := AggregateRecoveryRequest{
+		AggregateReviewRevision: 5,
+		Groups: []CorrectionGroup{{
+			CausalInvariant: "shared safety boundary",
+			Findings:        []string{"repair the selected unit"},
+			UnitIDs:         []string{units[0]},
+		}},
+		Assignments: []RecoveryAssignment{{UnitID: units[0], Actor: "repairer"}},
+	}
+	result, err := m.RecoverAggregateBatchAt(context.Background(), wfID, 5, "coordinator", dir, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Handles) != 1 {
+		t.Fatalf("handles = %#v", result.Handles)
+	}
+	handle := result.Handles[0]
+	data, err := os.ReadFile(handle.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document Handle
+	if err = json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	wantExpiry := clock.now.Add(15 * time.Minute).Format(timestampLayout)
+	if document.IssuedAt != clock.now.Format(timestampLayout) || document.ExpiresAt != wantExpiry {
+		t.Fatalf("aggregate recovery lease issued=%s expires=%s want expiry=%s", document.IssuedAt, document.ExpiresAt, wantExpiry)
+	}
+
+	clock.advance(15 * time.Minute)
+	if _, err = m.UseForAtPurpose(context.Background(), handle.Path, wfID, units[0], 2, "repairer", TDD, PurposeImplementation); !errors.Is(err, ErrExpired) {
+		t.Fatalf("exact-boundary use error = %v", err)
+	}
+	if _, err = os.Lstat(handle.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired aggregate recovery handle still exists: %v", err)
+	}
+	var handleState, unitState, workflowState string
+	var unitRevision, workflowRevision int64
+	if err = db.DB().QueryRow(`SELECT state FROM handles WHERE claim_id=?`, handle.ClaimID).Scan(&handleState); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.DB().QueryRow(`SELECT state,revision FROM work_units WHERE workflow_id=? AND id=?`, wfID, units[0]).Scan(&unitState, &unitRevision); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.DB().QueryRow(`SELECT state,revision FROM workflows WHERE id=?`, wfID).Scan(&workflowState, &workflowRevision); err != nil {
+		t.Fatal(err)
+	}
+	if handleState != "revoked" || unitState != "pending" || unitRevision != 2 || workflowState != "implementing" || workflowRevision != 6 {
+		t.Fatalf("handle=%s unit=%s@%d workflow=%s@%d", handleState, unitState, unitRevision, workflowState, workflowRevision)
 	}
 }
 
