@@ -14,7 +14,7 @@ Let's store all the TO-DO in a single place
   - Documentacion interna del repo
   - Cualquier cosa necesaria para poder trabajar en SDD en el repo.
 - Necesitamos un nuevo subagente especializado en inicializar el proceso de SDD y sea capaz de obtener toda la informacion anteriormente mencionada.  Este subagente es disparado por Aion cuando se detecta que la informacion no esta completa.
-- [ ] **P1 — Universal, economical delivery traceability.** Every harness-managed delivery MUST leave a durable, searchable trace in the Control Plane regardless of whether Aion selects direct inline, delegated direct, or full workflow execution. Today only the highest-complexity route reliably leaves that trace.
+- [x] **Delivered — Universal, economical delivery traceability.** Every harness-managed delivery leaves one durable, searchable Control Plane trace whether Aion selects direct inline, delegated direct, or full workflow execution.
   - Record the delivery goal, selected route, current or terminal status, timestamps, and only a small bounded set of useful searchable details.
   - Reuse the full workflow record when one already exists. Direct routes MUST use a lightweight representation rather than creating synthetic SDD phases, review artifacts, work units, or additional gates.
   - Make the trace visible through the existing Control Plane inspection surfaces and searchable by goal, status, route, and recorded detail.
@@ -30,11 +30,11 @@ Let's store all the TO-DO in a single place
 5. - [x] **P0 — Consolidate aggregate findings by causal invariant.** Findings that share one authority, rollback, or safety boundary must become one bounded correction transaction instead of serial unit recovery and repeated aggregate reviews.
 6. - [x] **P0 — Enforce an explicit final-review gate.** After the declared final review, approval completes the delivery; any newly discovered blocker stops automatic mutation and requires explicit user intervention rather than opening another correction cycle.
 7. - [ ] **Duplicate — Continuity cluster (2–3).** Distinguish expected escalation from avoidable user polling. A genuinely new blocker beyond the correction budget requires explicit authorization; routine continuation and status reporting do not. Close with the cluster rather than adding another state or mechanism.
-8. - [ ] **P0 — Enforce the implementation admission gate.** Enforce `workflow begin-implementation` before any unit claim. `list-ready-units` and `claim-unit` must not allow work while the workflow remains `plan_approved`, so a skipped transition cannot remain latent until final-unit completion.
+8. - [x] **Delivered in 0.17.1 via PR #76 — Enforce the implementation admission gate.** `workflow begin-implementation` is required before any unit claim. `list-ready-units` and `claim-unit` reject work while the workflow remains `plan_approved`, so a skipped transition cannot remain latent until final-unit completion.
 
 ## TUI
 
-- [ ] **Acceptance surface — Universal delivery traceability.** Viendo el detalle del Workflow, todos los agentes registran un trabajo recien cuando lo terminan. Me gustaria que cada tarea que el arnes comienza, se registre en estado Pending o In Progress y que cuando termina recien ahi se marque con el estado de ahora. Solve this through the universal delivery trace rather than with per-agent patches or a second representation of status.
+- [x] **Delivered acceptance surface — Universal delivery traceability.** The TUI lists unified Deliveries at start, renders direct work as a thin truthful status/detail, and retains the existing full-workflow cockpit without a second status representation.
 
 ## Installation / Upgrade
 

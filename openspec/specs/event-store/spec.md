@@ -6,6 +6,27 @@ Define central per-project SQLite persistence, durable records, migrations, and 
 
 ## Requirements
 
+### Requirement: Additive economical direct traces
+
+The central store SHALL persist direct inline and delegated direct deliveries in
+one additive `direct_delivery_traces` row with a distinct `dl-*` identity,
+stable operation key, immutable route/goal/rationale, status, bounded summary
+and next action, revision, actors, and timestamps. It SHALL reject
+`full_workflow`; the existing workflow graph remains that route's only physical
+truth. Direct updates SHALL use CAS, preserve terminal immutability, and set
+`finished_at` only for completed, cancelled, or failed outcomes. Silent provider
+loss SHALL leave the last observed status rather than invent terminal truth.
+Identical starts with the retained operation key SHALL return the same identity,
+so interrupted callers resume physical truth instead of creating replacements.
+
+#### Scenario: Equivalent routes remain mutually exclusive
+
+- GIVEN one direct, one delegated, and one full-workflow delivery
+- WHEN their physical records are inspected
+- THEN each SHALL have exactly one route-appropriate identity
+- AND neither direct trace SHALL own workflow lifecycle rows
+- AND the workflow SHALL have no direct trace
+
 
 ### Requirement: Canonical project identity and local single-process store
 

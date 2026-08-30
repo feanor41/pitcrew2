@@ -84,6 +84,26 @@ for required in \
   }
 done
 
+for required in \
+  'before repository mutation' \
+  'retain the stable operation key until start acknowledgement' \
+  'replay the identical start after a lost response' \
+  'inspect and resume the same delivery identity' \
+  'one delivery identity, not one fallible invocation' \
+  'retain the delivery ID and current revision' \
+  'meaningful observed fact' \
+  'last observed status' \
+  'MUST NOT create a direct delivery trace'; do
+  grep -Fq "$required" "$repo_root/AGENTS.md" || {
+    printf 'active Aion delivery-trace contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+  grep -Fq "$required" "$runtime_contract" || {
+    printf 'runtime Aion delivery-trace contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
 archive_snapshot "$archive_after"
 if ! cmp -s "$archive_before" "$archive_after"; then
   echo "archived OpenSpec content changed during active-contract validation" >&2

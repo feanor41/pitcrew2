@@ -9,13 +9,22 @@ Define the closed CLI, command inputs, envelopes, errors, and caller identity se
 
 ### Requirement: Closed command and input contract
 
-The CLI SHALL expose only `install`, `project`, `principles`, `tui`, global `--help`/`--version`, and the 23 `workflow` commands below. Flags SHALL be long-form. Each listed flag is required unless bracketed; `--input-file` SHALL name a readable regular file containing one JSON document and SHALL be the only transport for artifact, operational report, plan, evidence, review, and consolidation bodies.
+The CLI SHALL expose only `install`, `project`, `delivery`, `principles`, `tui`,
+global `--help`/`--version`, and the 23 `workflow` commands below. Flags SHALL be
+long-form. Each listed flag is required unless bracketed; `--input-file` SHALL
+name a readable regular file containing one JSON document and SHALL be the only
+transport for delivery mutations, artifacts, operational reports, plans,
+evidence, reviews, and consolidation bodies.
 
 | Command | Required inputs |
 |---|---|
 | `install` | exactly one of `codex`, `opencode`, `claude`, or `pi` |
 | `project inspect` | none |
 | `project consolidate` | `--input-file <path>` |
+| `delivery start` | `--actor <label> --input-file <path>` |
+| `delivery update` | `--delivery-id <dl-id> --revision <n> --actor <label> --input-file <path>` |
+| `delivery show` | `--delivery-id <dl-id|wf-id>` |
+| `delivery search` | `--query <nonblank-text>` |
 | `new` | `--name <text> --goal <text> --actor <label>` |
 | `continue` | `--from <terminal-wf-id> --actor <label>` |
 | `show` | `--workflow-id <wf-id>` |
@@ -72,6 +81,27 @@ Root help SHALL list `install codex|opencode|claude|pi` and `project inspect|con
 - THEN only an exact supported runtime SHALL invoke installation once with the original caller working directory
 - AND every rejected invocation SHALL leave runtime targets and `.pitcrew` unchanged
 
+### Requirement: Direct delivery command contract
+
+`delivery start` SHALL accept strict `{operation_key,route,goal,route_reason}`
+JSON, where route is only `direct_inline` or `delegated_direct`, and return one
+`dl-*` trace in `in_progress` at revision 1. Identical operation-key input SHALL
+return the same identity; this safe replay SHALL recover a lost response without
+creating another trace, while conflicting reuse SHALL fail without mutation.
+`delivery update` SHALL accept strict `{status,summary,next_action}` JSON and use
+revision CAS. Status SHALL be one of `in_progress`, `blocked`, `interrupted`,
+`completed`, `cancelled`, or `failed`; terminal traces SHALL be immutable.
+`delivery show` SHALL resolve either physical trace kind, and `delivery search`
+SHALL reuse the unified bounded literal projection.
+
+#### Scenario: Direct commands never synthesize workflow machinery
+
+- GIVEN an accepted direct or delegated delivery
+- WHEN Aion starts, updates, shows, and searches it
+- THEN exactly one direct row SHALL exist with no workflow lifecycle records
+- AND stale CAS SHALL exit 4 without mutation
+- AND full-workflow route input SHALL be rejected
+
 ### Requirement: Project inspection and consolidation surfaces
 
 `project inspect` SHALL resolve the canonical Git common directory without mutation and return `project_id`, `git_common_dir`, `checkout_root`, `initialized`, `repository_move_boundary`, central `paths` (`project_root`, `state_path`, `worktree_root`, `handle_root`), and `legacy` (`candidates`, `diagnostics`, `candidate_set_id`). `project consolidate` SHALL accept a strict manifest with `project_id`, exact `candidate_ids`, and zero or more whole-workflow `choices` containing `workflow_id` and `candidate_id`. Unknown fields, malformed IDs, stale or incomplete source sets, incomplete graphs, and unchosen divergence SHALL fail closed. Success SHALL return the acknowledged `project_id` and `candidate_set_id` only after the atomic import commits.
@@ -97,7 +127,7 @@ Each successful workflow command SHALL emit one JSON document:
 {"ok":true,"data":{},"warnings":[],"next_action":"..."}
 ```
 
-Workflow and install-argument failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. After valid install dispatch, the embedded POSIX installer SHALL stream actionable plain diagnostics directly to stderr, preserve its non-zero process status, and emit no success stdout on failure. Successful installation SHALL emit exactly `Installed PitCrew agents for <Runtime> in <registry>` followed by a newline; managed-update warnings MAY precede it on stderr. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.17.1` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
+Workflow and install-argument failures SHALL write one single-line error envelope to stderr, nothing to stdout, and use exactly: `1` internal, `2` usage, `3` state, `4` CAS, `5` handle. State errors SHALL name current and expected state. After valid install dispatch, the embedded POSIX installer SHALL stream actionable plain diagnostics directly to stderr, preserve its non-zero process status, and emit no success stdout on failure. Successful installation SHALL emit exactly `Installed PitCrew agents for <Runtime> in <registry>` followed by a newline; managed-update warnings MAY precede it on stderr. `principles` SHALL emit embedded `MAXIMS.md` bytes, or a raw array with `--json`; help/version are plain text. Every help output SHALL end with `Read the four maxims of the harness: pitcrew principles.` PitCrew's current canonical version SHALL be `0.18.0` and MUST conform to Semantic Versioning 2.0.0. Global `--version` and the TUI header MUST resolve the identical current version from one canonical version source.
 
 (Previously: Version output was plain text without a canonical baseline, SemVer policy, or shared CLI/TUI source.)
 

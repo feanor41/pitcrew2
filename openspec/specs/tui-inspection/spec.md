@@ -6,6 +6,22 @@ Define the central-state, read-only terminal experience for inspecting workflow 
 
 ## Requirements
 
+### Requirement: Unified delivery collection with discriminated detail
+
+The read-only TUI SHALL label the shared collection `Deliveries` and list/search
+both `dl-*` direct traces and `wf-*` workflows from the history projection. A
+direct detail SHALL show goal, route, truthful status, timestamps, bounded
+summary, and next action without workflow lifecycle stages or units. A workflow
+detail SHALL retain its existing cockpit and expose route `full_workflow`.
+
+#### Scenario: Direct detail stays lightweight
+
+- GIVEN a direct trace and a full workflow match the same literal query
+- WHEN the operator selects each result
+- THEN each SHALL appear once
+- AND the direct result SHALL show no synthetic Explore, Spec, Design, Plan,
+  Build, Review, or Units branches
+
 ### Requirement: Embedded read-only session
 
 `pitcrew tui` MUST inspect persisted state in the existing process. It MUST NOT invoke a subprocess, execute mutating workflow commands, record control-plane activity, run migrations, change schema objects, or insert, update, or delete persisted rows.

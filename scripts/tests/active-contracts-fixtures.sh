@@ -12,7 +12,18 @@ mkdir -p "$fixture_root/scripts/tests" "$fixture_root/docs" \
   "$fixture_root/openspec/specs/runtime-install"
 cp "$source_root/scripts/tests/active-contracts.sh" "$fixture_root/scripts/tests/"
 
-printf '%s\n' 'Daimon interviews the user and communicates Aion-acknowledged facts.' >"$fixture_root/AGENTS.md"
+printf '%s\n' \
+  'Daimon interviews the user and communicates Aion-acknowledged facts.' \
+  'before repository mutation' \
+  'retain the stable operation key until start acknowledgement' \
+  'replay the identical start after a lost response' \
+  'inspect and resume the same delivery identity' \
+  'one delivery identity, not one fallible invocation' \
+  'retain the delivery ID and current revision' \
+  'meaningful observed fact' \
+  'last observed status' \
+  'MUST NOT create a direct delivery trace' \
+  >"$fixture_root/AGENTS.md"
 mkdir -p "$fixture_root/openspec"
 printf '%s\n' 'Daimon preserves conversational continuity.' >"$fixture_root/openspec/AGENTS.md"
 printf '%s\n' 'Daimon documentation' 'pitcrew workflow show --actor master' \
@@ -22,6 +33,15 @@ printf '%s\n' 'Aion canonical specification' \
 printf '%s\n' 'active user-visible turn' 'host-native dual wait/select' 'requested state' \
   'terminal completion, a genuine blocker, or user cancellation' \
   'exactly one request-capability' 'polling, daemon, IPC, or durable inbox' \
+  'before repository mutation' \
+  'retain the stable operation key until start acknowledgement' \
+  'replay the identical start after a lost response' \
+  'inspect and resume the same delivery identity' \
+  'one delivery identity, not one fallible invocation' \
+  'retain the delivery ID and current revision' \
+  'meaningful observed fact' \
+  'last observed status' \
+  'MUST NOT create a direct delivery trace' \
   >"$fixture_root/openspec/specs/runtime-install/spec.md"
 printf '%s\n' 'immutable archive' \
   >"$fixture_root/openspec/changes/archive/spec.md"
@@ -51,7 +71,18 @@ if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
   echo "forbidden Daimon orchestration grant was not rejected" >&2
   exit 1
 fi
-printf '%s\n' 'Daimon interviews the user and communicates Aion-acknowledged facts.' >"$fixture_root/AGENTS.md"
+printf '%s\n' \
+  'Daimon interviews the user and communicates Aion-acknowledged facts.' \
+  'before repository mutation' \
+  'retain the stable operation key until start acknowledgement' \
+  'replay the identical start after a lost response' \
+  'inspect and resume the same delivery identity' \
+  'one delivery identity, not one fallible invocation' \
+  'retain the delivery ID and current revision' \
+  'meaningful observed fact' \
+  'last observed status' \
+  'MUST NOT create a direct delivery trace' \
+  >"$fixture_root/AGENTS.md"
 
 printf '%s\n' 'Forbidden Master documentation' >"$fixture_root/docs/guide.md"
 if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then

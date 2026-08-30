@@ -196,6 +196,25 @@ assert_authority_contract() {
   done
 }
 
+assert_delivery_trace_contract() {
+  destination=$1
+  aion=$(role_path "$destination" aion)
+  contract=$(contract_path "$destination")
+  for rule in \
+    'before repository mutation' \
+    'retain the stable operation key until start acknowledgement' \
+    'replay the identical start after a lost response' \
+    'inspect and resume the same delivery identity' \
+    'one delivery identity, not one fallible invocation' \
+    'retain the delivery ID and current revision' \
+    'meaningful observed fact' \
+    'last observed status' \
+    'must not create a direct delivery trace'; do
+    grep -F "$rule" "$aion" >/dev/null || fail "Aion delivery-trace contract omitted $rule in $destination"
+    grep -F "$rule" "$contract" >/dev/null || fail "shared delivery-trace contract omitted $rule in $destination"
+  done
+}
+
 assert_exact_maxims() {
   destination=$1
   maxim_lines=$(wc -l < "$ROOT/MAXIMS.md" | tr -d ' ')
@@ -483,6 +502,7 @@ target=$codex/agents
 assert_role_set "$target"
 assert_proportional_contract "$target"
 assert_authority_contract "$target"
+assert_delivery_trace_contract "$target"
 for role in $roles; do
   file=$(role_path "$target" "$role")
   assert_file "$file"
@@ -790,6 +810,7 @@ for runtime in opencode claude pi; do
   assert_role_set "$installed"
   assert_proportional_contract "$installed"
   assert_authority_contract "$installed"
+  assert_delivery_trace_contract "$installed"
   if [ "$runtime" = opencode ]; then
     assert_opencode_registry "$home"
     if command -v opencode >/dev/null 2>&1; then
