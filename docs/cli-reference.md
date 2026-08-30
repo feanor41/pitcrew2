@@ -99,7 +99,7 @@ install the extension, access the network, or modify Pi configuration.
 | `delivery search` | `--query <nonblank-text>` |
 | `workflow new` | `--name <text> --goal <text> --actor <label>` |
 | `workflow continue` | `--from <terminal-wf-id> --actor <label>` |
-| `workflow show` | `--workflow-id <wf-id>` |
+| `workflow show` | `--workflow-id <wf-id> [--view coordination|phase|unit|aggregate|audit] [--unit-id <wu-id>]`; `--unit-id` is required only for `unit` and rejected otherwise. |
 | `workflow progress` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow request-capability` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `workflow explore` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
@@ -121,6 +121,48 @@ install the extension, access the network, or modify Pi configuration.
 | `workflow unit-tdd` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
+
+## Stage artifact inputs
+
+`workflow explore`, `workflow spec`, and `workflow design` retain the strict
+legacy input `{"content":"technical prose"}` unchanged. They also accept the
+strict schema-v1 typed input
+`{"content":"technical prose","schema_version":1,"entries":[...]}`. Typed
+entries use `kind` (`requirement`, `scenario`, or `section`), a stable `id`, an
+optional `parent_id`, `operation` (`add`, `replace`, or `remove`), and JSON
+`body`. `schema_version` and `entries` must appear together; partial, unknown,
+or unsupported typed shapes fail before store mutation. Accepted entries are
+recorded atomically with the prose artifact and become reachable through the
+bounded `phase` and `aggregate` views. Legacy prose is never guessed or
+upgraded into typed entries.
+
+## Workflow inspection views
+
+`workflow show` without `--view` retains the legacy full-audit response byte
+and schema contract: `workflow`, `synopsis`, `artifacts`, `records`, and
+`timeline`. Explicit `--view audit` returns that same response. Audit is the
+intentional operator/debugging escape hatch and may be substantially larger
+than the coordination payload.
+
+The other views are bounded tagged projections with top-level `view` and
+`workflow` identity plus exactly one matching payload:
+
+- `coordination` — current/ready/blocking work, latest acknowledged progress,
+  correction authority, and contextual next action. Aion and Daimon use this
+  summary first when coordinating work or inspecting after exit `3` or `4`.
+- `phase` — accepted normative exploration, specification, and design for a
+  phase specialist.
+- `unit --unit-id <wu-id>` — one work-unit definition plus only its current
+  evidence and review, for an Implementer or selective Reviewer hand-off.
+- `aggregate` — normative inputs, accepted plan and unit results, correction,
+  verification, and checkpoint evidence for aggregate review.
+
+Bounded projections omit the audit record graph, timeline, unrelated unit
+evidence, and opaque claim material. After a failed unit CAS, inspect
+`coordination` first and request the selected `unit` view only when the summary
+shows that unit needs attention; never substitute repeated mutation attempts
+for inspection. `pitcrew tui` intentionally continues to load the full audit
+projection because its purpose is interactive historical inspection.
 
 ## Project context
 
@@ -358,6 +400,6 @@ Workflow mutations compare `--revision` with the aggregate revision. Unit comman
 
 ## Opaque claims
 
-Production claim and recovery (`claim-unit`, `recover-unit-claim`, `recover-review`, and `recover-aggregate`) return only opaque paths (`recover-aggregate` returns them inside `data.handles`). Handle files are caller-owned `0600` JSON inside a `0700` directory; they contain a secret hash, never the plaintext secret. The first successful unit command activates the handle, successful commands refresh its five-minute expiry, and completion revokes it. They are bound to their workflow, selected unit, revision, purpose, and declarative collision metadata; they cannot select another unit or survive expiry/revocation.
+Production claim and recovery (`claim-unit`, `recover-unit-claim`, `recover-review`, and `recover-aggregate`) return only opaque paths (`recover-aggregate` returns them inside `data.handles`). Handle files are caller-owned `0600` JSON inside a `0700` directory; they contain a secret hash, never the plaintext secret. Each implementation or review handle has a purpose-aware fifteen-minute lease measured from issue; successful use activates but never renews that capped lease. Completion or review consumption revokes the matching authority. Handles are bound to their workflow, selected unit, revision, purpose, and declarative collision metadata; they cannot select another unit or survive expiry/revocation. PitCrew uses no heartbeat polling or background renewal.
 
 The hidden `--print-claim-handle-secret-once` flag is for operators only. It never appears in help or agent templates. It commits revocation before returning the secret exactly once at `data.claim_secret`.

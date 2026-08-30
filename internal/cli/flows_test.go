@@ -459,7 +459,7 @@ func TestReviewHandoffRejectsInvalidAuthorityWithoutMutation(t *testing.T) {
 	wfID, unitID, _ = setupReviewingUnit(t, root, "implementer")
 	expiringPath := handoffReview(t, root, wfID, unitID, "reviewer")
 	reviewInput := writeInput(t, root, "expired-review.json", `{"verdict":"approved","summary":"good","findings":""}`)
-	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC), "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", expiringPath, "--input-file", reviewInput); expired.code != 5 {
+	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 16, 0, 0, time.UTC), "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", expiringPath, "--input-file", reviewInput); expired.code != 5 {
 		t.Fatalf("expired review=%#v", expired)
 	}
 	if replacement := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "other-reviewer", "--handle-dir", filepath.Join(root, "forbidden-replacement")); replacement.code != 3 {
@@ -510,7 +510,7 @@ func TestRecoverReviewRotatesOnlyReviewAuthorityAndRestoresCompletion(t *testing
 		t.Fatalf("stale recovery=%#v", failed)
 	}
 	reviewInput := writeInput(t, root, "recovery-review.json", `{"verdict":"approved","summary":"good","findings":""}`)
-	now := time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC)
+	now := time.Date(2026, 8, 20, 15, 16, 0, 0, time.UTC)
 	wrongActor := append([]string{}, args...)
 	wrongActor[9] = "other-reviewer"
 	if wrong := runAtTime(t, root, now, wrongActor...); wrong.code != 3 {
@@ -634,7 +634,7 @@ func TestRecoverAggregateRejectsInvalidSelectionsAndPreservesCorrectionRecord(t 
 	}
 	recovered := mustOK(t, runAt(t, root, "workflow", "recover-aggregate", "--workflow-id", wfID, "--input-file", recoveryInput, "--revision", itoa(revision), "--actor", "external-recovery", "--handle-dir", filepath.Join(root, "recovered")))
 	handlePath := aggregateHandlePath(t, recovered)
-	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC), "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", handlePath, "--input-file", writeInput(t, root, "expired-tdd.json", `{"red_command":"red","red_outcome":"exit 1","green_command":"green","green_outcome":"exit 0","refactor_summary":"","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)); expired.code != 5 {
+	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 16, 0, 0, time.UTC), "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "external-recovery", "--claim-handle", handlePath, "--input-file", writeInput(t, root, "expired-tdd.json", `{"red_command":"red","red_outcome":"exit 1","green_command":"green","green_outcome":"exit 0","refactor_summary":"","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)); expired.code != 5 {
 		t.Fatalf("aggregate recovery handle did not expire=%#v", expired)
 	}
 	s, err := store.Open(context.Background(), root)
@@ -766,6 +766,126 @@ func TestWorkflowShowUsesProjectedCorrectionSynopsisAndAction(t *testing.T) {
 	}
 	if projection.NextAction != "user authorization required" || projection.Data.Synopsis.NextAction != projection.NextAction || strings.Contains(string(shown), `"next_action":"workflow complete"`) {
 		t.Fatalf("contextual action=%q synopsis=%q response=%s", projection.NextAction, projection.Data.Synopsis.NextAction, shown)
+	}
+}
+
+func TestWorkflowShowCoordinationReturnsBoundedProjection(t *testing.T) {
+	root := t.TempDir()
+	wfID, _ := createWorkflow(t, root)
+
+	shown := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID, "--view", "coordination"))
+	var response struct {
+		Data struct {
+			View     string `json:"view"`
+			Workflow struct {
+				ID string `json:"id"`
+			} `json:"workflow"`
+			Coordination json.RawMessage `json:"coordination"`
+			Audit        json.RawMessage `json:"audit"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(shown, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Data.View != "coordination" || response.Data.Workflow.ID != wfID || len(response.Data.Coordination) == 0 || len(response.Data.Audit) != 0 {
+		t.Fatalf("coordination response = %s", shown)
+	}
+	for _, forbidden := range []string{`"records"`, `"timeline"`, `"artifacts"`, `"occurrences"`, `"content"`, `"handle_path"`, `"secret"`} {
+		if bytes.Contains(shown, []byte(forbidden)) {
+			t.Fatalf("coordination response exposed %s: %s", forbidden, shown)
+		}
+	}
+}
+
+func TestWorkflowShowOmittedAndExplicitAuditStayByteCompatible(t *testing.T) {
+	root := t.TempDir()
+	wfID, _ := createWorkflow(t, root)
+
+	legacy := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	explicit := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID, "--view", "audit"))
+	if !bytes.Equal(explicit, legacy) {
+		t.Fatalf("explicit audit changed legacy response\nlegacy: %s\naudit:  %s", legacy, explicit)
+	}
+	for _, required := range []string{`"workflow"`, `"synopsis"`, `"artifacts"`, `"records"`, `"timeline"`} {
+		if !bytes.Contains(legacy, []byte(required)) {
+			t.Fatalf("legacy audit lacks %s: %s", required, legacy)
+		}
+	}
+}
+
+func TestWorkflowShowPhaseUnitAndAggregateSelectExactlyOneBoundedView(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, _ := setupImplementingUnit(t, root)
+	views := []struct {
+		name string
+		args []string
+	}{
+		{"phase", []string{"--view", "phase"}},
+		{"unit", []string{"--view", "unit", "--unit-id", unitID}},
+		{"aggregate", []string{"--view", "aggregate"}},
+	}
+	for _, tt := range views {
+		t.Run(tt.name, func(t *testing.T) {
+			args := append([]string{"workflow", "show", "--workflow-id", wfID}, tt.args...)
+			shown := mustOK(t, runAt(t, root, args...))
+			var response struct {
+				Data map[string]json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(shown, &response); err != nil {
+				t.Fatal(err)
+			}
+			if string(response.Data["view"]) != `"`+tt.name+`"` || len(response.Data[tt.name]) == 0 {
+				t.Fatalf("%s response = %s", tt.name, shown)
+			}
+			for _, other := range []string{"coordination", "phase", "unit", "aggregate", "audit"} {
+				if other != tt.name && len(response.Data[other]) != 0 {
+					t.Fatalf("%s response populated %s: %s", tt.name, other, shown)
+				}
+			}
+			for _, forbidden := range []string{`"timeline"`, `"occurrences"`, `"handle_path"`, `"secret"`} {
+				if bytes.Contains(shown, []byte(forbidden)) {
+					t.Fatalf("%s response exposed %s: %s", tt.name, forbidden, shown)
+				}
+			}
+		})
+	}
+}
+
+func TestTypedAndLegacyStageInputsReachPhaseAndAggregateViews(t *testing.T) {
+	root := t.TempDir()
+	wfID, revision := createWorkflow(t, root)
+	typed := writeInput(t, root, "typed-exploration.json", `{"content":"typed exploration","schema_version":1,"entries":[{"kind":"requirement","id":"REQ-TYPED-INPUT","operation":"add","body":{"text":"typed stage input reaches projections"}}]}`)
+	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "explore", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "explorer", "--input-file", typed)))
+	for _, stage := range []string{"spec", "design"} {
+		legacy := writeInput(t, root, stage+"-legacy.json", `{"content":"legacy `+stage+`"}`)
+		revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", stage, "--workflow-id", wfID, "--revision", itoa(revision), "--actor", stage, "--input-file", legacy)))
+	}
+
+	for _, view := range []string{"phase", "aggregate"} {
+		shown := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID, "--view", view))
+		if !bytes.Contains(shown, []byte(`"structured":true`)) || !bytes.Contains(shown, []byte(`"id":"REQ-TYPED-INPUT"`)) || !bytes.Contains(shown, []byte(`"text":"typed stage input reaches projections"`)) {
+			t.Fatalf("%s view did not resolve typed stage input: %s", view, shown)
+		}
+	}
+	legacyAudit := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	for _, exact := range []string{`"content":"legacy spec"`, `"content":"legacy design"`} {
+		if !bytes.Contains(legacyAudit, []byte(exact)) {
+			t.Fatalf("legacy stage input changed shape; missing %s in %s", exact, legacyAudit)
+		}
+	}
+}
+
+func TestInvalidTypedStageEntryLeavesWorkflowUnchanged(t *testing.T) {
+	root := t.TempDir()
+	wfID, revision := createWorkflow(t, root)
+	invalid := writeInput(t, root, "invalid-typed-entry.json", `{"content":"invalid typed exploration","schema_version":1,"entries":[{"kind":"requirement","id":"not-stable","operation":"add","body":{"text":"invalid"}}]}`)
+	result := runAt(t, root, "workflow", "explore", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "explorer", "--input-file", invalid)
+	if result.code != 3 || result.stdout != "" || !strings.Contains(result.stderr, `"code":"state"`) {
+		t.Fatalf("invalid typed input result=%#v", result)
+	}
+	shown := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+	if workflowRevision(t, shown) != revision || bytes.Contains(shown, []byte(`"kind":"exploration"`)) || bytes.Contains(shown, []byte(`not-stable`)) {
+		t.Fatalf("invalid typed input mutated workflow: %s", shown)
 	}
 }
 
@@ -929,7 +1049,7 @@ func TestActivityFailureRollsBackDomainAndHandleMutations(t *testing.T) {
 	wfID, unitID, _ = setupReviewingUnit(t, root, "implementer")
 	reviewPath = handoffReview(t, root, wfID, unitID, "reviewer")
 	reviewInput = writeInput(t, root, "expire-before-recovery.json", `{"verdict":"approved","summary":"good","findings":""}`)
-	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC), "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewPath, "--input-file", reviewInput); expired.code != 5 {
+	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 16, 0, 0, time.UTC), "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewPath, "--input-file", reviewInput); expired.code != 5 {
 		t.Fatalf("review expiry=%#v", expired)
 	}
 	installFailingActivityTrigger(t, root)
@@ -1053,7 +1173,7 @@ func TestCASActorCorrectionsRecoveryAbandonAndDebugClaim(t *testing.T) {
 		t.Fatalf("later review generation=%d", reviewGeneration)
 	}
 	approval := writeInput(t, root, "expired-revision-2-review.json", `{"verdict":"approved","summary":"good","findings":""}`)
-	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 6, 0, 0, time.UTC), "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "reviewer", "--claim-handle", review2Path, "--input-file", approval); expired.code != 5 {
+	if expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 16, 0, 0, time.UTC), "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "reviewer", "--claim-handle", review2Path, "--input-file", approval); expired.code != 5 {
 		t.Fatalf("later review expiry=%#v", expired)
 	}
 	if bypass := runAt(t, root, "workflow", "handoff-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "other-reviewer", "--handle-dir", filepath.Join(root, "forbidden-revision-2-replacement")); bypass.code != 3 {
