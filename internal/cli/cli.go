@@ -101,6 +101,8 @@ func Run(args []string, deps Dependencies) int {
 		return runPrinciples(args[1:], deps)
 	case "project":
 		return runProject(args[1:], deps)
+	case "context":
+		return runContext(args[1:], deps)
 	case "delivery":
 		return runDelivery(args[1:], deps)
 	case "workflow":
@@ -1135,6 +1137,7 @@ const rootHelp = `Usage: pitcrew <command> [options]
 Commands:
   install codex|opencode|claude|pi
   project inspect|consolidate
+  context inspect|initialize|record
   delivery start|update|show|search
   tui
   principles

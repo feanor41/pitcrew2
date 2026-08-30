@@ -1,6 +1,6 @@
 # PitCrew CLI reference
 
-PitCrew exposes `install`, `project`, `tui`, `principles`, two global flags, and exactly 24 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `install`, `project`, `context`, `delivery`, `tui`, `principles`, two global flags, and exactly 24 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
 
 The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon interviews, clarifies intent, preserves conversational continuity, and reports only Aion-acknowledged facts or questions. Aion alone owns routing and workflow coordination. For each accepted delivery, Daimon and the addressable-agent host reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and authority throughout. Mid-flight input remains requested, not applied, until Aion admits it against current state; concurrent Daimon availability depends on host support for addressable agents, not a PitCrew daemon, service, IPC, polling, or inbox.
 
@@ -89,6 +89,9 @@ install the extension, access the network, or modify Pi configuration.
 | `install` | exactly one of `codex`, `opencode`, `claude`, or `pi` |
 | `project inspect` | None. |
 | `project consolidate` | `--input-file <path>` |
+| `context inspect` | None. |
+| `context initialize` | None. |
+| `context record` | `--actor <nonblank-bounded-label> --input-file <path>` |
 | `tui` | None; extra arguments are rejected. |
 | `delivery start` | `--actor <label> --input-file <path>` |
 | `delivery update` | `--delivery-id <dl-id> --revision <n> --actor <label> --input-file <path>` |
@@ -118,6 +121,23 @@ install the extension, access the network, or modify Pi configuration.
 | `workflow unit-tdd` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `workflow unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
+
+## Project context
+
+`context inspect` reads the central logical-project snapshot without creating
+state and returns `missing`, `incomplete`, or `complete`, six-category coverage,
+facts, gaps, update metadata, and the active checkout root. Main and linked
+worktrees share the snapshot, while file evidence remains confined to the
+active checkout. Its next action is `context initialize` unless complete.
+
+`context initialize` performs one fixed shallow local inventory only when
+context is missing or incomplete and reports `inspection` plus `persisted`.
+`context record` accepts exactly one strict schema-v1 JSON snapshot through a
+regular non-symlink input file. Validation, evidence confinement, and the exact
+legacy-consolidation gate run before the atomic snapshot/audit write. Transport
+and JSON failures exit 2; project, domain, consolidation, and store failures
+exit 3. Snapshots are bounded to 65,536 encoded bytes, six exact categories,
+and 32 ordered facts per category; semantic no-ops create no audit.
 
 `delivery start` accepts strict JSON
 `{"operation_key":"...","route":"direct_inline|delegated_direct","goal":"...","route_reason":"..."}`.
