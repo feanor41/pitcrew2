@@ -33,15 +33,23 @@ The caller-owned handle SHALL be one JSON document containing `version:1`, `stat
 - WHEN a unit command reads it
 - THEN exit code 5 SHALL result without mutation
 
-### Requirement: Lifecycle
+### Requirement: Capped purpose-aware lease (REQ-LEASE-001)
 
-A claim SHALL start as `intent`, become `active` on the first successful unit command, expire five minutes after issue, and refresh for five minutes after every successful unit command. An expired handle SHALL return exit code `5`, be atomically deleted, and cause no workflow mutation. Successful `unit-complete` SHALL revoke it.
+An implementation or review claim SHALL start as `intent`, become `active` on the first successful matching unit command, and expire fifteen minutes after issue. This includes fresh implementation claims issued by aggregate recovery. The issue path SHALL select the lease by claim purpose and cap every current purpose at fifteen minutes. Unit commands SHALL NOT renew the lease, and orchestration SHALL NOT use heartbeat polling or background renewal. An expired handle SHALL return exit code `5`, be atomically deleted, and cause no workflow mutation. Successful `unit-complete` and successful review consumption SHALL revoke their respective handles.
 
-#### Scenario: Expired claim is removed
+#### Scenario: Successful use does not renew a lease (SCN-LEASE-001)
 
-- GIVEN an expired active handle
-- WHEN a unit command uses it
-- THEN it SHALL be atomically deleted and exit code 5 SHALL result
+- GIVEN an implementation or review handle issued with its purpose-aware fifteen-minute expiry
+- WHEN one or more matching unit commands succeed before that expiry
+- THEN the persisted expiry SHALL remain capped at fifteen minutes after issue
+- AND use at or after that expiry SHALL atomically delete the handle and return exit code 5 without workflow mutation
+
+#### Scenario: Aggregate-recovery authority expires at the exact boundary (SCN-LEASE-002)
+
+- GIVEN aggregate recovery issued a fresh implementation handle fifteen minutes earlier
+- WHEN its assigned implementer attempts the first matching unit command exactly at `expires_at`
+- THEN the handle SHALL be atomically revoked and deleted
+- AND the unit and workflow SHALL remain unchanged
 
 ### Requirement: Actor collision metadata
 

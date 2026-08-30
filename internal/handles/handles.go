@@ -24,7 +24,7 @@ import (
 
 const (
 	timestampLayout = "2006-01-02T15:04:05.000Z"
-	handleLifetime  = 5 * time.Minute
+	maxHandleLease  = 15 * time.Minute
 )
 
 var (
@@ -254,7 +254,7 @@ func (m *Manager) RecoverAggregateBatchAt(ctx context.Context, workflowID string
 			return AggregateRecoveryResult{}, randomErr
 		}
 		digest := sha256.Sum256([]byte(secret))
-		h := Handle{Version: 1, State: Intent, WorkflowID: workflowID, UnitID: unitID, ClaimID: claimID, SecretHash: hex.EncodeToString(digest[:]), IssuedAt: ids.FormatTime(now), ExpiresAt: ids.FormatTime(now.Add(handleLifetime))}
+		h := Handle{Version: 1, State: Intent, WorkflowID: workflowID, UnitID: unitID, ClaimID: claimID, SecretHash: hex.EncodeToString(digest[:]), IssuedAt: ids.FormatTime(now), ExpiresAt: ids.FormatTime(now.Add(handleLease(PurposeImplementation)))}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES(?,?,?,?,?,?,?,?,?,'implementation')`, claimID, workflowID, unitID, Intent, h.SecretHash, actors[unitID], h.IssuedAt, h.ExpiresAt, generation); err != nil {
 			return AggregateRecoveryResult{}, err
 		}
@@ -538,7 +538,7 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	}
 	digest := sha256.Sum256([]byte(secret))
 	issued := m.now().UTC()
-	expires := issued.Add(handleLifetime)
+	expires := issued.Add(handleLease(purpose))
 	issuedState := Intent
 	if recovery && purpose == PurposeImplementation && unitState == "reviewing" {
 		issuedState = Active
@@ -594,7 +594,7 @@ func (m *Manager) UseForAtPurpose(ctx context.Context, path, workflowID, unitID 
 	return m.use(ctx, path, workflowID, unitID, revision, actor, operation, purpose)
 }
 
-// UseForMutation validates the claim and commits its promotion or refresh in
+// UseForMutation validates the claim and commits its promotion in
 // the same transaction as mutate. A failed mutation leaves both the database
 // claim and the on-disk handle unchanged.
 func (m *Manager) UseForMutation(ctx context.Context, path, workflowID, unitID string, revision int64, actor string, operation Operation, mutate func(*sql.Tx, Handle) error) (Handle, error) {
@@ -731,7 +731,6 @@ func (m *Manager) useForMutation(ctx context.Context, path, workflowID, unitID s
 		}
 	}
 	h.State = Active
-	h.ExpiresAt = ids.FormatTime(m.now().Add(handleLifetime))
 	result, err := tx.ExecContext(ctx, `UPDATE handles SET state=?,expires_at=? WHERE claim_id=? AND state!='revoked'`, h.State, h.ExpiresAt, h.ClaimID)
 	if err != nil {
 		return Handle{}, err
@@ -800,6 +799,17 @@ func (m *Manager) revoke(ctx context.Context, path, actor string, purpose Purpos
 }
 
 func (p Purpose) valid() bool { return p == PurposeImplementation || p == PurposeReview }
+
+// handleLease keeps lease selection purpose-aware while enforcing the same
+// hard cap for every current authority kind. Uses never extend this deadline.
+func handleLease(p Purpose) time.Duration {
+	switch p {
+	case PurposeImplementation, PurposeReview:
+		return maxHandleLease
+	default:
+		return 0
+	}
+}
 
 func (o Operation) purpose() Purpose {
 	if o == Review {
