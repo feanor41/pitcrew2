@@ -15,6 +15,7 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/activity"
 	"github.com/fmazzalomo/pitcrew/internal/consolidate"
 	"github.com/fmazzalomo/pitcrew/internal/correction"
+	"github.com/fmazzalomo/pitcrew/internal/delivery"
 	"github.com/fmazzalomo/pitcrew/internal/envelope"
 	"github.com/fmazzalomo/pitcrew/internal/evidence"
 	"github.com/fmazzalomo/pitcrew/internal/handles"
@@ -100,6 +101,8 @@ func Run(args []string, deps Dependencies) int {
 		return runPrinciples(args[1:], deps)
 	case "project":
 		return runProject(args[1:], deps)
+	case "delivery":
+		return runDelivery(args[1:], deps)
 	case "workflow":
 		return runWorkflow(args[1:], deps)
 	default:
@@ -277,6 +280,120 @@ func runPrinciples(args []string, deps Dependencies) int {
 
 var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "request-capability": true, "explore": true, "spec": true, "design": true, "plan": true, "amend-plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "authorize-correction": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "recover-aggregate": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
 var workflowIDPattern = regexp.MustCompile(`^wf-[0-9a-f]{24}$`)
+var deliveryIDPattern = regexp.MustCompile(`^(dl|wf)-[0-9a-f]{24}$`)
+
+func runDelivery(args []string, deps Dependencies) int {
+	if equalArgs(args, "--help") {
+		writeHelp(deps.Stdout, deliveryHelp)
+		return 0
+	}
+	if len(args) == 0 {
+		return fail(deps, ErrUsage, "delivery subcommand is required")
+	}
+	command, rest := args[0], args[1:]
+	if equalArgs(rest, "--help") {
+		if command == "start" || command == "update" || command == "show" || command == "search" {
+			writeHelp(deps.Stdout, "Usage: pitcrew delivery "+command+" [options]\n")
+			return 0
+		}
+	}
+	switch command {
+	case "start":
+		return runDeliveryStart(rest, deps)
+	case "update":
+		return runDeliveryUpdate(rest, deps)
+	case "show":
+		return runDeliveryShow(rest, deps)
+	case "search":
+		return runDeliverySearch(rest, deps)
+	default:
+		return fail(deps, ErrUsage, fmt.Sprintf("unknown delivery subcommand %q", command))
+	}
+}
+
+func runDeliveryStart(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--actor", "--input-file"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input, err := decodeInputFile[delivery.StartInput](values.one("--input-file"))
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		trace, err := delivery.NewService(s, deps.Now).Start(context.Background(), values.one("--actor"), input)
+		if err != nil {
+			return deliveryStateError(err)
+		}
+		return writeSuccess(deps, map[string]any{"delivery": trace}, "delivery show")
+	})
+}
+
+func runDeliveryUpdate(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--delivery-id", "--revision", "--actor", "--input-file"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if !strings.HasPrefix(values.one("--delivery-id"), "dl-") || !deliveryIDPattern.MatchString(values.one("--delivery-id")) {
+		return fail(deps, ErrUsage, "--delivery-id must be a direct delivery ID")
+	}
+	revision, err := values.int64("--revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	input, err := decodeInputFile[delivery.UpdateInput](values.one("--input-file"))
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		trace, err := delivery.NewService(s, deps.Now).Update(context.Background(), values.one("--delivery-id"), revision, values.one("--actor"), input)
+		if err != nil {
+			return deliveryStateError(err)
+		}
+		return writeSuccess(deps, map[string]any{"delivery": trace}, trace.NextAction)
+	})
+}
+
+func runDeliveryShow(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--delivery-id"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if !deliveryIDPattern.MatchString(values.one("--delivery-id")) {
+		return fail(deps, ErrUsage, "--delivery-id must be a delivery or workflow ID")
+	}
+	return withReadStore(deps, func(s *store.Store) error {
+		detail, err := history.New(s).GetDelivery(context.Background(), values.one("--delivery-id"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, detail, detail.Delivery.NextAction)
+	})
+}
+
+func runDeliverySearch(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--query"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	if strings.TrimSpace(values.one("--query")) == "" {
+		return fail(deps, ErrUsage, "--query must be nonblank")
+	}
+	return withReadStore(deps, func(s *store.Store) error {
+		results, err := history.New(s).SearchDeliveries(context.Background(), values.one("--query"))
+		if err != nil {
+			return err
+		}
+		return writeSuccess(deps, map[string]any{"deliveries": results}, "delivery show")
+	})
+}
+
+func deliveryStateError(err error) error {
+	if errors.Is(err, store.ErrCASMismatch) {
+		return err
+	}
+	return fmt.Errorf("%w: %v", ErrState, err)
+}
 
 func runWorkflow(args []string, deps Dependencies) int {
 	if equalArgs(args, "--help") {
@@ -1018,6 +1135,7 @@ const rootHelp = `Usage: pitcrew <command> [options]
 Commands:
   install codex|opencode|claude|pi
   project inspect|consolidate
+  delivery start|update|show|search
   tui
   principles
   workflow new|continue|show|progress|request-capability|explore|spec|design|plan|amend-plan|approve-plan
@@ -1033,6 +1151,10 @@ const workflowHelp = `Usage: pitcrew workflow <subcommand> [options]
 Commands: new, continue, show, progress, request-capability, explore, spec, design, plan, amend-plan, approve-plan, list-ready-units,
   begin-implementation, complete, authorize-correction, abandon, claim-unit, recover-unit-claim, recover-aggregate, handoff-review, recover-review,
   unit-tdd, unit-review, unit-complete
+`
+const deliveryHelp = `Usage: pitcrew delivery <subcommand> [options]
+
+Commands: start, update, show, search
 `
 const principlesHelp = `Usage: pitcrew principles [--json]
 `
