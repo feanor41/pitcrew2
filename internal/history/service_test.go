@@ -1,6 +1,7 @@
 package history
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"os"
@@ -155,6 +156,17 @@ func TestServiceProjectsBoundedCorrectionAuthorityAndContextualActivities(t *tes
 	}
 	if detail.Synopsis.Blocker == nil || detail.Synopsis.Blocker.Reason != "latest blocker" {
 		t.Fatalf("latest blocker = %#v", detail.Synopsis.Blocker)
+	}
+	delivery, err := New(s).GetDelivery(ctx, "wf-active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivery.Delivery.Status != "blocked" || delivery.Delivery.Summary != "latest blocker" || delivery.Delivery.NextAction != "workflow recover-aggregate" {
+		t.Fatalf("delivery correction truth = %#v", delivery.Delivery)
+	}
+	blocked, err := New(s).SearchDeliveries(ctx, "blocked")
+	if err != nil || len(blocked) != 1 || blocked[0].DeliveryID != "wf-active" {
+		t.Fatalf("blocked delivery search = %#v, %v", blocked, err)
 	}
 	for _, action := range []string{"aggregate_correction_started", "correction_authorized"} {
 		if timelineEntry(detail.Timeline, action).Action != action {
@@ -389,6 +401,11 @@ func occurrence(entries []Occurrence, action string) Occurrence {
 func TestServiceReadsLegacySchemaHonestlyWithoutMigration(t *testing.T) {
 	ctx := context.Background()
 	root := legacyHistoryRoot(t)
+	databasePath := filepath.Join(root, ".pitcrew", "state.db")
+	beforeBytes, err := os.ReadFile(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before := schemaSnapshot(t, root)
 	opened, err := store.OpenReadOnly(ctx, root)
 	if err != nil {
@@ -396,6 +413,14 @@ func TestServiceReadsLegacySchemaHonestlyWithoutMigration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = opened.Store.Close() })
 	service := New(opened.Store)
+	deliveries, err := service.ListDeliveries(ctx)
+	if err != nil || len(deliveries) != 1 || deliveries[0].ID != "wf-legacy" || deliveries[0].Route != FullWorkflow {
+		t.Fatalf("legacy ListDeliveries() = %#v, %v", deliveries, err)
+	}
+	results, err := service.SearchDeliveries(ctx, "legacy evidence")
+	if err != nil || len(results) != 1 || results[0].DeliveryID != "wf-legacy" {
+		t.Fatalf("legacy SearchDeliveries() = %#v, %v", results, err)
+	}
 	workflows, err := service.List(ctx)
 	if err != nil || len(workflows) != 1 || workflows[0].Name != "Legacy goal" || !workflows[0].NameDerived {
 		t.Fatalf("legacy List() = %#v, %v", workflows, err)
@@ -414,6 +439,10 @@ func TestServiceReadsLegacySchemaHonestlyWithoutMigration(t *testing.T) {
 	}
 	if got := schemaSnapshot(t, root); got != before {
 		t.Fatalf("read-only history changed schema\nbefore: %s\nafter:  %s", before, got)
+	}
+	afterBytes, err := os.ReadFile(databasePath)
+	if err != nil || !bytes.Equal(afterBytes, beforeBytes) {
+		t.Fatalf("read-only history changed legacy database bytes: %v", err)
 	}
 }
 
@@ -511,6 +540,88 @@ func TestServiceSearchIsLiteralBoundedAndResolvable(t *testing.T) {
 		if err != nil || result.Context != strings.TrimSpace(resolved.Record.Title+" "+resolved.Record.Content) {
 			t.Fatalf("collision Resolve() = %#v, %v", resolved, err)
 		}
+	}
+}
+
+func TestServiceListsDirectDelegatedAndFullDeliveriesExactlyOnce(t *testing.T) {
+	ctx, root := context.Background(), t.TempDir()
+	s, err := store.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-blocked',2,'implementing','Blocked workflow','workflow goal','2026-08-29T10:00:00Z','2026-08-29T12:00:00Z')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-blocked','progress','{"status":"blocked","summary":"waiting on input","next_action":"ask user"}','aion',2,'2026-08-29T12:00:00Z')`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000001','inline-key','direct_inline','inline goal','small change','completed','shipped inline','none',2,'aion','aion','2026-08-29T11:00:00Z','2026-08-29T11:30:00Z','2026-08-29T11:30:00Z')`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000002','delegated-key','delegated_direct','delegated goal','multiple files','in_progress','worker running','collect result',1,'aion','aion','2026-08-29T10:00:00Z','2026-08-29T12:30:00Z',NULL)`,
+	} {
+		if _, err = s.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deliveries, err := New(s).ListDeliveries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 3 {
+		t.Fatalf("deliveries = %#v", deliveries)
+	}
+	if got := strings.Join([]string{deliveries[0].ID, deliveries[1].ID, deliveries[2].ID}, ","); got != "dl-000000000000000000000001,dl-000000000000000000000002,wf-blocked" {
+		t.Fatalf("order = %s", got)
+	}
+	byID := map[string]Delivery{}
+	for _, item := range deliveries {
+		if _, duplicate := byID[item.ID]; duplicate {
+			t.Fatalf("duplicate delivery %q", item.ID)
+		}
+		byID[item.ID] = item
+	}
+	if got := byID["wf-blocked"]; got.Route != FullWorkflow || got.Status != "blocked" || got.Summary != "waiting on input" || got.NextAction != "ask user" {
+		t.Fatalf("workflow projection = %#v", got)
+	}
+	if got := byID["dl-000000000000000000000001"]; got.Route != "direct_inline" || got.Status != "completed" || got.FinishedAt == "" {
+		t.Fatalf("direct projection = %#v", got)
+	}
+}
+
+func TestServiceSearchesEveryDeliveryFieldOnceAndResolvesPhysicalTruth(t *testing.T) {
+	ctx, root := context.Background(), t.TempDir()
+	s, err := store.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-search',2,'designing','Search workflow','workflow needle','2026-08-29T10:00:00Z','2026-08-29T12:00:00Z')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-search','design','durable-record-needle','designer',2,'2026-08-29T11:00:00Z')`,
+		`INSERT INTO direct_delivery_traces VALUES('dl-000000000000000000000003','search-key','delegated_direct','direct-goal-needle','reason-needle','blocked','summary-needle','action-needle',2,'aion','aion','2026-08-29T11:00:00Z','2026-08-29T13:00:00Z',NULL)`,
+	} {
+		if _, err = s.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := New(s)
+	for _, tc := range []struct{ query, id string }{
+		{"DL-000000000000000000000003", "dl-000000000000000000000003"}, {"delegated_direct", "dl-000000000000000000000003"},
+		{"blocked", "dl-000000000000000000000003"}, {"direct-goal-needle", "dl-000000000000000000000003"},
+		{"reason-needle", "dl-000000000000000000000003"}, {"summary-needle", "dl-000000000000000000000003"},
+		{"action-needle", "dl-000000000000000000000003"}, {"full_workflow", "wf-search"},
+		{"designing", "wf-search"}, {"durable-record-needle", "wf-search"},
+	} {
+		got, err := service.SearchDeliveries(ctx, tc.query)
+		if err != nil || len(got) != 1 || got[0].DeliveryID != tc.id {
+			t.Fatalf("SearchDeliveries(%q) = %#v, %v", tc.query, got, err)
+		}
+	}
+	direct, err := service.GetDelivery(ctx, "dl-000000000000000000000003")
+	if err != nil || direct.Workflow != nil || direct.Delivery.RouteReason != "reason-needle" {
+		t.Fatalf("direct detail = %#v, %v", direct, err)
+	}
+	full, err := service.GetDelivery(ctx, "wf-search")
+	if err != nil || full.Workflow == nil || full.Delivery.Route != FullWorkflow || full.Workflow.Workflow.State != "designing" {
+		t.Fatalf("workflow detail = %#v, %v", full, err)
 	}
 }
 

@@ -25,6 +25,39 @@ type Workflow struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
+const FullWorkflow = "full_workflow"
+
+// Delivery is the shared read projection for one physical direct trace or one
+// existing workflow graph. Workflow-only APIs remain available below.
+type Delivery struct {
+	ID          string `json:"id"`
+	Revision    int64  `json:"revision"`
+	Route       string `json:"route"`
+	Status      string `json:"status"`
+	Name        string `json:"name"`
+	NameDerived bool   `json:"name_derived"`
+	Goal        string `json:"goal"`
+	RouteReason string `json:"route_reason,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	NextAction  string `json:"next_action,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	FinishedAt  string `json:"finished_at,omitempty"`
+}
+
+type DeliveryDetail struct {
+	Delivery Delivery `json:"delivery"`
+	Workflow *Detail  `json:"workflow,omitempty"`
+}
+
+type DeliverySearchResult struct {
+	DeliveryID string `json:"delivery_id"`
+	Route      string `json:"route"`
+	Status     string `json:"status"`
+	Context    string `json:"context"`
+	At         string `json:"at"`
+}
+
 type Record struct {
 	ID         string `json:"id"`
 	WorkflowID string `json:"workflow_id"`
@@ -83,6 +116,134 @@ func New(s *store.Store, clocks ...func() time.Time) *Service {
 		now = clocks[0]
 	}
 	return &Service{db: s.DB(), now: now}
+}
+
+func (s *Service) ListDeliveries(ctx context.Context) ([]Delivery, error) {
+	workflows, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	deliveries := make([]Delivery, 0, len(workflows))
+	for _, workflow := range workflows {
+		detail, err := s.Detail(ctx, workflow.ID)
+		if err != nil {
+			return nil, err
+		}
+		deliveries = append(deliveries, projectWorkflowDelivery(detail))
+	}
+	hasDirect, err := s.hasTable(ctx, "direct_delivery_traces")
+	if err != nil || !hasDirect {
+		return deliveries, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,revision,route,status,goal,route_reason,summary,next_action,created_at,updated_at,COALESCE(finished_at,'') FROM direct_delivery_traces`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item Delivery
+		if err := rows.Scan(&item.ID, &item.Revision, &item.Route, &item.Status, &item.Goal, &item.RouteReason, &item.Summary, &item.NextAction, &item.CreatedAt, &item.UpdatedAt, &item.FinishedAt); err != nil {
+			return nil, err
+		}
+		item.Name, item.NameDerived = workflowdomain.DisplayName(sql.NullString{}, item.Goal)
+		deliveries = append(deliveries, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(deliveries, func(i, j int) bool {
+		if deliveries[i].CreatedAt != deliveries[j].CreatedAt {
+			return deliveries[i].CreatedAt > deliveries[j].CreatedAt
+		}
+		return deliveries[i].ID < deliveries[j].ID
+	})
+	return deliveries, nil
+}
+
+func (s *Service) GetDelivery(ctx context.Context, id string) (DeliveryDetail, error) {
+	if strings.HasPrefix(id, "wf-") {
+		detail, err := s.Detail(ctx, id)
+		if err != nil {
+			return DeliveryDetail{}, err
+		}
+		return DeliveryDetail{Delivery: projectWorkflowDelivery(detail), Workflow: &detail}, nil
+	}
+	if !strings.HasPrefix(id, "dl-") {
+		return DeliveryDetail{}, fmt.Errorf("delivery id must start with dl- or wf-")
+	}
+	hasDirect, err := s.hasTable(ctx, "direct_delivery_traces")
+	if err != nil {
+		return DeliveryDetail{}, err
+	}
+	if !hasDirect {
+		return DeliveryDetail{}, sql.ErrNoRows
+	}
+	var item Delivery
+	err = s.db.QueryRowContext(ctx, `SELECT id,revision,route,status,goal,route_reason,summary,next_action,created_at,updated_at,COALESCE(finished_at,'') FROM direct_delivery_traces WHERE id=?`, id).
+		Scan(&item.ID, &item.Revision, &item.Route, &item.Status, &item.Goal, &item.RouteReason, &item.Summary, &item.NextAction, &item.CreatedAt, &item.UpdatedAt, &item.FinishedAt)
+	if err != nil {
+		return DeliveryDetail{}, err
+	}
+	item.Name, item.NameDerived = workflowdomain.DisplayName(sql.NullString{}, item.Goal)
+	return DeliveryDetail{Delivery: item}, nil
+}
+
+func (s *Service) SearchDeliveries(ctx context.Context, query string) ([]DeliverySearchResult, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	deliveries, err := s.ListDeliveries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var results []DeliverySearchResult
+	for _, item := range deliveries {
+		text := strings.Join([]string{item.ID, item.Goal, item.Route, item.Status, item.RouteReason, item.Summary, item.NextAction}, " ")
+		context, matched := matchContext(text, query)
+		if !matched && item.Route == FullWorkflow {
+			detail, detailErr := s.Detail(ctx, item.ID)
+			if detailErr != nil {
+				return nil, detailErr
+			}
+			for _, record := range detail.Records {
+				if context, matched = matchContext(strings.TrimSpace(record.Title+" "+record.Content), query); matched {
+					break
+				}
+			}
+		}
+		if matched {
+			results = append(results, DeliverySearchResult{DeliveryID: item.ID, Route: item.Route, Status: item.Status, Context: context, At: item.UpdatedAt})
+		}
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].At != results[j].At {
+			return results[i].At > results[j].At
+		}
+		return results[i].DeliveryID < results[j].DeliveryID
+	})
+	return results, nil
+}
+
+func projectWorkflowDelivery(detail Detail) Delivery {
+	workflow := detail.Workflow
+	status, summary, nextAction := workflow.State, "", detail.Synopsis.NextAction
+	if detail.Synopsis.Progress != nil {
+		summary, nextAction = detail.Synopsis.Progress.Summary, detail.Synopsis.Progress.NextAction
+		if detail.Synopsis.Progress.Status == "blocked" {
+			status = "blocked"
+		}
+	}
+	correction := detail.Synopsis.CorrectionPolicy
+	if correction != nil && correction.BlockerRevision != 0 && workflow.State != string(workflowdomain.Completed) && workflow.State != string(workflowdomain.Abandoned) {
+		status, summary = "blocked", correction.BlockerContent
+		if detail.Synopsis.Blocker != nil && detail.Synopsis.Blocker.Status == "Correction" {
+			summary = detail.Synopsis.Blocker.Reason
+		}
+	}
+	return Delivery{ID: workflow.ID, Revision: workflow.Revision, Route: FullWorkflow, Status: status,
+		Name: workflow.Name, NameDerived: workflow.NameDerived, Goal: workflow.Goal, Summary: summary,
+		NextAction: nextAction, CreatedAt: workflow.CreatedAt, UpdatedAt: workflow.UpdatedAt}
 }
 
 func (s *Service) List(ctx context.Context) ([]Workflow, error) {
@@ -345,6 +506,12 @@ func (s *Service) hasColumn(ctx context.Context, table, column string) (bool, er
 		}
 	}
 	return false, rows.Err()
+}
+
+func (s *Service) hasTable(ctx context.Context, table string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count)
+	return count != 0, err
 }
 
 func subjectRecordID(workflowID, kind, subject string) (string, bool) {
