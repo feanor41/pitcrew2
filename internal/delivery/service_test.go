@@ -48,6 +48,40 @@ func TestServiceStartsIdempotentlyAndRejectsConflictingOrUnboundedInput(t *testi
 	}
 }
 
+func TestServiceAdmissionAcknowledgementIsDurableAndReplayStable(t *testing.T) {
+	root := t.TempDir()
+	firstStore, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := StartInput{OperationKey: "stable-direct-admission", Route: DirectInline, Goal: "ship the bounded change", RouteReason: "well-understood local work"}
+	acknowledged, err := NewService(firstStore, func() time.Time {
+		return time.Date(2026, 8, 30, 1, 2, 3, 0, time.UTC)
+	}).Start(context.Background(), "aion", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	replayed, err := NewService(reopened, func() time.Time {
+		return time.Date(2026, 8, 30, 9, 9, 9, 0, time.UTC)
+	}).Start(context.Background(), "aion", input)
+	if err != nil || replayed != acknowledged {
+		t.Fatalf("lost-response replay = %#v, %v; want durable acknowledgement %#v", replayed, err, acknowledged)
+	}
+	var count int
+	if err := reopened.DB().QueryRow(`SELECT count(*) FROM direct_delivery_traces WHERE operation_key=?`, input.OperationKey).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("durable admission rows = %d, %v; want 1", count, err)
+	}
+}
+
 func TestServiceCASLifecycleTerminalTruthAndNoOpSafety(t *testing.T) {
 	clock := &steppingClock{at: time.Date(2026, 8, 29, 1, 0, 0, 0, time.UTC)}
 	svc, _ := testService(t, clock.Now())
