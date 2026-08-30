@@ -106,8 +106,10 @@ type Resolution struct {
 }
 
 type Service struct {
-	db  *sql.DB
-	now func() time.Time
+	db               *sql.DB
+	now              func() time.Time
+	resolveNormative func(context.Context, string) (workflowdomain.ResolvedNormative, error)
+	queryTrace       func(string, []any)
 }
 
 func New(s *store.Store, clocks ...func() time.Time) *Service {
@@ -115,7 +117,21 @@ func New(s *store.Store, clocks ...func() time.Time) *Service {
 	if len(clocks) != 0 {
 		now = clocks[0]
 	}
-	return &Service{db: s.DB(), now: now}
+	return &Service{db: s.DB(), now: now, resolveNormative: workflowdomain.New(s, now).ResolveNormative}
+}
+
+func (s *Service) queryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if s.queryTrace != nil {
+		s.queryTrace(query, args)
+	}
+	return s.db.QueryContext(ctx, query, args...)
+}
+
+func (s *Service) queryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	if s.queryTrace != nil {
+		s.queryTrace(query, args)
+	}
+	return s.db.QueryRowContext(ctx, query, args...)
 }
 
 func (s *Service) ListDeliveries(ctx context.Context) ([]Delivery, error) {
