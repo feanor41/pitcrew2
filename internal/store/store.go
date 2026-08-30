@@ -217,4 +217,21 @@ CREATE INDEX activities_workflow_time ON activities(workflow_id, at, id);
 CREATE INDEX activities_subject ON activities(subject_kind, subject_id);
 `}, {Version: 3, Name: "purpose scoped handles", SQL: `
 ALTER TABLE handles ADD COLUMN purpose TEXT NOT NULL DEFAULT 'implementation';
+`}, {Version: 4, Name: "direct delivery traces", SQL: `
+CREATE TABLE direct_delivery_traces (
+    id TEXT PRIMARY KEY CHECK(length(id) = 27 AND id GLOB 'dl-*' AND substr(id, 4) NOT GLOB '*[^0-9a-f]*'),
+    operation_key TEXT NOT NULL UNIQUE CHECK(length(operation_key) BETWEEN 1 AND 128),
+    route TEXT NOT NULL CHECK(route IN ('direct_inline', 'delegated_direct')),
+    goal TEXT NOT NULL CHECK(length(goal) BETWEEN 1 AND 4000),
+    route_reason TEXT NOT NULL CHECK(length(route_reason) <= 500),
+    status TEXT NOT NULL CHECK(status IN ('in_progress', 'blocked', 'interrupted', 'completed', 'cancelled', 'failed')),
+    summary TEXT NOT NULL CHECK(length(summary) <= 500),
+    next_action TEXT NOT NULL CHECK(length(next_action) <= 200),
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    creator_actor TEXT NOT NULL,
+    updater_actor TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT
+);
 `}}

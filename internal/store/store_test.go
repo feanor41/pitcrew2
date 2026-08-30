@@ -124,7 +124,7 @@ func TestOpenReadOnlyPreservesLogicalStateAndRejectsMutation(t *testing.T) {
 			t.Fatalf("read-only store accepted %q", statement)
 		}
 	}
-	if err := readOnly.ApplyMigrations(ctx, []Migration{{Version: 4, Name: "forbidden", SQL: `CREATE TABLE migrated (id TEXT)`}}); err == nil {
+	if err := readOnly.ApplyMigrations(ctx, []Migration{{Version: len(schemaMigrations) + 1, Name: "forbidden", SQL: `CREATE TABLE migrated (id TEXT)`}}); err == nil {
 		t.Fatal("read-only store accepted a migration")
 	}
 	if err := readOnly.Close(); err != nil {
@@ -258,7 +258,7 @@ func TestOpenCreatesLocalSchemaAndAppliesPragmas(t *testing.T) {
 			t.Fatalf("PRAGMA %s = %q, %v; want %q", name, got, err, want)
 		}
 	}
-	for _, table := range []string{"workflows", "events", "plans", "work_units", "evidence", "reviews", "handles"} {
+	for _, table := range []string{"workflows", "events", "plans", "work_units", "evidence", "reviews", "handles", "direct_delivery_traces"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("table %s count = %d, %v", table, count, err)
@@ -287,11 +287,12 @@ func TestMigrationsAreOrderedAndRejectDestructiveSQL(t *testing.T) {
 			t.Fatalf("destructive migration %q was accepted", sql)
 		}
 	}
-	if err := s.ApplyMigrations(ctx, []Migration{{Version: 2, Name: "safe", SQL: `CREATE TABLE safe (id TEXT)`}, {Version: 3, Name: "safer", SQL: `CREATE TABLE safer (id TEXT)`}}); err != nil {
+	nextVersion := len(schemaMigrations) + 1
+	if err := s.ApplyMigrations(ctx, []Migration{{Version: nextVersion, Name: "safe", SQL: `CREATE TABLE safe (id TEXT)`}, {Version: nextVersion + 1, Name: "safer", SQL: `CREATE TABLE safer (id TEXT)`}}); err != nil {
 		t.Fatalf("safe ordered migrations: %v", err)
 	}
 	var applied int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&applied); err != nil || applied != 3 {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&applied); err != nil || applied != len(schemaMigrations)+2 {
 		t.Fatalf("applied migrations = %d, %v", applied, err)
 	}
 }
@@ -343,8 +344,8 @@ func TestMigration2PreservesV1RowsAndAddsNameAndActivities(t *testing.T) {
 		t.Fatalf("historical activities = %d, %v; want none fabricated", activities, err)
 	}
 	var migrations int
-	if err := migrated.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != 3 {
-		t.Fatalf("migration count = %d, %v; want 3", migrations, err)
+	if err := migrated.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != len(schemaMigrations) {
+		t.Fatalf("migration count = %d, %v; want %d", migrations, err, len(schemaMigrations))
 	}
 }
 
@@ -388,6 +389,104 @@ func TestMigration3PreservesHandlesAsImplementationAuthority(t *testing.T) {
 	}
 	if purpose != "implementation" || generation != 4 {
 		t.Fatalf("legacy handle purpose=%q generation=%d", purpose, generation)
+	}
+}
+
+func TestDirectTraceMigrationIsAdditiveAndPreservesWorkflowGraphs(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dir := filepath.Join(root, ".pitcrew")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := &Store{db: db}
+	if err := legacy.ApplyMigrations(ctx, schemaMigrations[:3]); err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`INSERT INTO workflows(id,revision,state,goal,name,created_at,updated_at) VALUES('wf-legacy',7,'implementing','preserve me','Named','created','updated')`,
+		`INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES('wf-legacy','plan_approved','implementing','aion','begin',7,'event-time')`,
+		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-legacy','specification','spec bytes','specifier',3,'artifact-time')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var workflow, event, artifact string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT id || ':' || revision || ':' || state || ':' || goal || ':' || name || ':' || created_at || ':' || updated_at FROM workflows WHERE id='wf-legacy'`).Scan(&workflow); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT from_state || ':' || to_state || ':' || actor || ':' || reason || ':' || revision_after || ':' || at FROM events WHERE workflow_id='wf-legacy'`).Scan(&event); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT kind || ':' || content || ':' || actor || ':' || accepted_revision || ':' || recorded_at FROM artifacts WHERE workflow_id='wf-legacy'`).Scan(&artifact); err != nil {
+		t.Fatal(err)
+	}
+	if workflow != "wf-legacy:7:implementing:preserve me:Named:created:updated" || event != "plan_approved:implementing:aion:begin:7:event-time" || artifact != "specification:spec bytes:specifier:3:artifact-time" {
+		t.Fatalf("legacy graph changed: workflow=%q event=%q artifact=%q", workflow, event, artifact)
+	}
+	for _, check := range []struct {
+		query string
+		want  int
+	}{
+		{`SELECT count(*) FROM schema_migrations`, 4},
+		{`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='direct_delivery_traces'`, 1},
+		{`SELECT count(*) FROM direct_delivery_traces`, 0},
+	} {
+		var got int
+		if err := migrated.db.QueryRowContext(ctx, check.query).Scan(&got); err != nil || got != check.want {
+			t.Fatalf("%s = %d, %v; want %d", check.query, got, err, check.want)
+		}
+	}
+}
+
+func TestPreTraceSchemaOpensReadOnlyWithoutMigration(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dir := filepath.Join(root, ".pitcrew")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := &Store{db: db}
+	if err := legacy.ApplyMigrations(ctx, schemaMigrations[:3]); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	opened, err := OpenReadOnly(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Store.Close()
+	var migrations, directTables int
+	if err := opened.Store.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil {
+		t.Fatal(err)
+	}
+	if err := opened.Store.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='direct_delivery_traces'`).Scan(&directTables); err != nil {
+		t.Fatal(err)
+	}
+	if migrations != 3 || directTables != 0 {
+		t.Fatalf("read-only legacy schema migrated: migrations=%d direct_tables=%d", migrations, directTables)
 	}
 }
 
