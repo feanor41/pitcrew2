@@ -22,6 +22,42 @@ preservation.
 
 The shell suite uses temporary homes and must not modify your real runtime configuration.
 
+## Recoverable release operations
+
+Project-context deployment facts are the release map only when, before any
+release-target mutation, they record every reusable fact:
+
+- canonical repository and version source;
+- exact validation commands;
+- binary build command and install target;
+- persistent rollback procedure and PitCrew-owned backup location;
+- supported runtime set;
+- detected runtime subset selected for refresh;
+- each selected runtime exact installer-managed file set and deterministic expected digest evidence;
+- whether GitHub publication was selected.
+
+Repair an inadequate map with one bounded `context record` replacement while
+preserving unrelated facts. An already-decided bump-and-install is mechanical
+direct work regardless of how many mapped files it touches; use a stronger route
+only for a new decision, uncertainty, or material risk.
+
+Admit the operation before mutation, then reconcile from physical evidence:
+
+1. verify the expected Git revision, clean state, and committed version change;
+2. compare both the installed binary version and artifact digest with the build
+   from that revision. A matching version with a different digest is stale;
+3. verify the owned backup exists and preserves the displaced binary digest;
+4. refresh each selected runtime through the transactional installer and compare
+   only its exact managed role files and support contract; preserve unrelated
+   runtime files and application settings;
+5. publish GitHub artifacts only after local convergence and only if selected.
+
+Record a delivery checkpoint after each verified physical transition, never for
+an attempted command. After interruption, inspect the same delivery identity and
+repeat the physical checks; the last recorded checkpoint is not reconciliation
+authority. GitHub publication is optional and an unselected publication creates
+no publication action. Do not add a release command, release schema, parallel status store, daemon, polling, or IPC.
+
 ## Development loop
 
 1. Read the relevant OpenSpec requirement and scenario.

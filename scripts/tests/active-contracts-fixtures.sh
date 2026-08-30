@@ -23,6 +23,21 @@ printf '%s\n' \
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'existing project-context deployment facts as the release map' \
+  'before any repository, binary, backup, runtime, or publication mutation' \
+  'canonical repository and version source' \
+  'exact validation commands' \
+  'binary build command and install target' \
+  'persistent rollback procedure' \
+  'supported runtime set' \
+  'detected runtime subset selected for refresh' \
+  'each selected runtime exact installer-managed file set and deterministic expected digest evidence' \
+  'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
+  'Mechanical release execution remains direct inline regardless of mapped file count' \
+  'same-version digest mismatch is not convergence' \
+  'resume the same identity from observed physical state' \
+  'Publish only when the accepted release map selects publication' \
+  'release engine, command, schema, parallel status, daemon, polling, or IPC' \
   'first admission gate' \
   'acknowledged before any repository mutation' \
   'stop before mutation and surface the capability boundary' \
@@ -140,6 +155,21 @@ printf '%s\n' \
   'unit identity, attempt, and outcome' \
   'do not replay historical progress' \
   'direct-only delivery has no supported durable capability-request surface' \
+  'existing project-context deployment facts as the release map' \
+  'before any repository, binary, backup, runtime, or publication mutation' \
+  'canonical repository and version source' \
+  'exact validation commands' \
+  'binary build command and install target' \
+  'persistent rollback procedure' \
+  'supported runtime set' \
+  'detected runtime subset selected for refresh' \
+  'each selected runtime exact installer-managed file set and deterministic expected digest evidence' \
+  'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
+  'Mechanical release execution remains direct inline regardless of mapped file count' \
+  'same-version digest mismatch is not convergence' \
+  'resume the same identity from observed physical state' \
+  'Publish only when the accepted release map selects publication' \
+  'release engine, command, schema, parallel status, daemon, polling, or IPC' \
   >"$fixture_root/scripts/install-templates.sh"
 
 if ! sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
@@ -162,6 +192,23 @@ if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
   exit 1
 fi
 printf '%s\n' 'host-native dual wait/select' >>"$fixture_root/openspec/specs/runtime-install/spec.md"
+
+for required_release_fact in \
+  'canonical repository and version source' \
+  'exact validation commands' \
+  'binary build command and install target' \
+  'persistent rollback procedure' \
+  'supported runtime set' \
+  'detected runtime subset selected for refresh' \
+  'each selected runtime exact installer-managed file set and deterministic expected digest evidence'; do
+  cp "$fixture_root/scripts/install-templates.sh" "$fixture_root/installer.saved"
+  grep -Fv "$required_release_fact" "$fixture_root/installer.saved" >"$fixture_root/scripts/install-templates.sh"
+  if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
+    echo "missing generated release fact escaped validation: $required_release_fact" >&2
+    exit 1
+  fi
+  mv "$fixture_root/installer.saved" "$fixture_root/scripts/install-templates.sh"
+done
 
 printf '%s\n' 'Forbidden Master canonical specification' >"$fixture_root/openspec/specs/cli-surface/spec.md"
 if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
@@ -187,6 +234,21 @@ printf '%s\n' \
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'existing project-context deployment facts as the release map' \
+  'before any repository, binary, backup, runtime, or publication mutation' \
+  'canonical repository and version source' \
+  'exact validation commands' \
+  'binary build command and install target' \
+  'persistent rollback procedure' \
+  'supported runtime set' \
+  'detected runtime subset selected for refresh' \
+  'each selected runtime exact installer-managed file set and deterministic expected digest evidence' \
+  'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
+  'Mechanical release execution remains direct inline regardless of mapped file count' \
+  'same-version digest mismatch is not convergence' \
+  'resume the same identity from observed physical state' \
+  'Publish only when the accepted release map selects publication' \
+  'release engine, command, schema, parallel status, daemon, polling, or IPC' \
   'first admission gate' \
   'acknowledged before any repository mutation' \
   'stop before mutation and surface the capability boundary' \

@@ -70,6 +70,32 @@ for required in \
 done
 
 for required in \
+  'existing project-context deployment facts as the release map' \
+  'before any repository, binary, backup, runtime, or publication mutation' \
+  'canonical repository and version source' \
+  'exact validation commands' \
+  'binary build command and install target' \
+  'persistent rollback procedure' \
+  'supported runtime set' \
+  'detected runtime subset selected for refresh' \
+  'each selected runtime exact installer-managed file set and deterministic expected digest evidence' \
+  'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
+  'Mechanical release execution remains direct inline regardless of mapped file count' \
+  'same-version digest mismatch is not convergence' \
+  'resume the same identity from observed physical state' \
+  'Publish only when the accepted release map selects publication' \
+  'release engine, command, schema, parallel status, daemon, polling, or IPC'; do
+  grep -Fq "$required" "$repo_root/AGENTS.md" || {
+    printf 'canonical recoverable-release contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
+    printf 'generated recoverable-release contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for required in \
   '`delivery active`' \
   'zero active candidates' \
   'exactly one active candidate' \
