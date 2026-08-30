@@ -23,6 +23,20 @@ printf '%s\n' \
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'first admission gate' \
+  'acknowledged before any repository mutation' \
+  'stop before mutation and surface the capability boundary' \
+  'never backfill a trace after work has started' \
+  'does not interpose on or prevent host filesystem writes' \
+  'transcript-free composition' \
+  'workflow ID and current revision' \
+  'role or unit ID' \
+  'applicable opaque handle path' \
+  'workflow show --view coordination' \
+  'workflow show --view phase' \
+  'workflow show --view unit --unit-id' \
+  'workflow show --view aggregate' \
+  'never simulate it by replaying conversation history or transcript content' \
   'inspects project context once on demand' \
   'exactly one `pc2-sdd-initializer` attempt' \
   'bypasses it for `complete`' \
@@ -36,7 +50,7 @@ mkdir -p "$fixture_root/openspec"
 printf '%s\n' 'Daimon preserves conversational continuity.' >"$fixture_root/openspec/AGENTS.md"
 printf '%s\n' 'Daimon documentation' 'pitcrew workflow show --actor master' \
   >"$fixture_root/docs/guide.md"
-printf '%s\n' 'Aion canonical specification' \
+printf '%s\n' 'Aion canonical specification' 'Daimon SHALL NOT invoke workflow commands and receives only Aion-acknowledged facts or clarification requests.' \
   >"$fixture_root/openspec/specs/cli-surface/spec.md"
 printf '%s\n' 'active user-visible turn' 'host-native dual wait/select' 'requested state' \
   'terminal completion, a genuine blocker, or user cancellation' \
@@ -50,6 +64,20 @@ printf '%s\n' 'active user-visible turn' 'host-native dual wait/select' 'request
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'first admission gate' \
+  'acknowledged before any repository mutation' \
+  'stop before mutation and surface the capability boundary' \
+  'never backfill a trace after work has started' \
+  'does not interpose on or prevent host filesystem writes' \
+  'transcript-free composition' \
+  'workflow ID and current revision' \
+  'role or unit ID' \
+  'applicable opaque handle path' \
+  'workflow show --view coordination' \
+  'workflow show --view phase' \
+  'workflow show --view unit --unit-id' \
+  'workflow show --view aggregate' \
+  'never simulate it by replaying conversation history or transcript content' \
   'exactly all nine native definitions' \
   'target exactly the seven specialists' \
   'inspect project context once on demand' \
@@ -89,7 +117,7 @@ if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
   echo "active canonical specification escaped validation" >&2
   exit 1
 fi
-printf '%s\n' 'Aion canonical specification' >"$fixture_root/openspec/specs/cli-surface/spec.md"
+printf '%s\n' 'Aion canonical specification' 'Daimon SHALL NOT invoke workflow commands and receives only Aion-acknowledged facts or clarification requests.' >"$fixture_root/openspec/specs/cli-surface/spec.md"
 
 printf '%s\n' 'Daimon coordinates workflow recovery.' >"$fixture_root/AGENTS.md"
 if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
@@ -107,6 +135,20 @@ printf '%s\n' \
   'meaningful observed fact' \
   'last observed status' \
   'MUST NOT create a direct delivery trace' \
+  'first admission gate' \
+  'acknowledged before any repository mutation' \
+  'stop before mutation and surface the capability boundary' \
+  'never backfill a trace after work has started' \
+  'does not interpose on or prevent host filesystem writes' \
+  'transcript-free composition' \
+  'workflow ID and current revision' \
+  'role or unit ID' \
+  'applicable opaque handle path' \
+  'workflow show --view coordination' \
+  'workflow show --view phase' \
+  'workflow show --view unit --unit-id' \
+  'workflow show --view aggregate' \
+  'never simulate it by replaying conversation history or transcript content' \
   'inspects project context once on demand' \
   'exactly one `pc2-sdd-initializer` attempt' \
   'bypasses it for `complete`' \

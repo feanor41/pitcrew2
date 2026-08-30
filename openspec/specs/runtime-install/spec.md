@@ -136,6 +136,8 @@ compensate with polling, daemon, IPC, or durable inbox behavior.
 
 ### Requirement: Aion supplies economical delivery facts
 
+**REQ-TRACE-001**
+
 After selecting `direct_inline` or `delegated_direct`, generated Aion
 instructions SHALL establish one trace before repository mutation with `delivery start`,
 using the accepted goal, selected route, bounded route rationale, and
@@ -151,7 +153,17 @@ workflow SHALL use `workflow new` as its one durable trace and Aion MUST NOT cre
 in addition. Specialists SHALL NOT create or
 update a parallel trace.
 
+The generated contract SHALL identify `delivery start` for direct work and
+`workflow new` for full workflow work as the first admission gate. The gate
+SHALL be acknowledged before any repository mutation. When the selected gate
+cannot be acknowledged, Aion SHALL stop before mutation and surface the capability boundary;
+it SHALL never backfill a trace after work has started. This is an orchestration
+contract, not filesystem mediation: PitCrew records admission and reporting but
+does not interpose on or prevent host filesystem writes.
+
 #### Scenario: Every route has one provider-owned trace
+
+**SCN-TRACE-001**
 
 - GIVEN Aion accepts work and selects one proportional route
 - WHEN work starts and later changes meaningfully
@@ -159,6 +171,38 @@ update a parallel trace.
 - AND a lost start response SHALL be replayed with the retained operation key
 - AND a full workflow SHALL have one `wf-*` identity and zero direct traces
 - AND updates SHALL describe only facts Aion actually observed
+
+### Requirement: Transcript-minimal specialist handoffs
+
+**REQ-HANDOFF-001**
+
+When a host supports transcript-free composition, installed contracts SHALL
+require Aion to dispatch only the workflow ID and current revision, role or unit ID,
+and applicable opaque handle path. The recipient SHALL retrieve additional state
+from the narrowest bounded read-only Control Plane view: `workflow show --view coordination`
+for Aion, `workflow show --view phase` for phase roles,
+`workflow show --view unit --unit-id <wu-id>` for an Implementer or selective
+Reviewer, and `workflow show --view aggregate` for an aggregate Reviewer.
+The generated Allowed workflow commands SHALL include exactly that role-appropriate
+read-only view alongside each specialist's mutation commands. Daimon SHALL invoke
+no workflow commands and SHALL communicate only facts acknowledged by Aion.
+Handoffs SHALL NOT replay growing conversation history or duplicate persisted
+artifacts. If the host cannot provide transcript-free composition or bounded view
+retrieval, agents SHALL surface the capability boundary and never simulate it by replaying conversation history or transcript content.
+Actor separation, opaque-handle secrecy, the exact nine-role registry, and the
+seven-target Aion graph SHALL remain unchanged.
+
+#### Scenario: Supported composition passes only durable coordinates
+
+**SCN-HANDOFF-001**
+
+- GIVEN a host supports transcript-free composition and bounded view retrieval
+- WHEN Aion dispatches a phase, unit, or aggregate specialist
+- THEN the handoff SHALL contain only the workflow ID and current revision,
+  role or unit ID, and applicable opaque handle path
+- AND the specialist SHALL retrieve only its role-appropriate bounded view
+- AND an unsupported host SHALL surface the capability boundary without
+  replaying or simulating transcript context
 
 ### Requirement: Explicit selection and current registry paths
 
