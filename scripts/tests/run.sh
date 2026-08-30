@@ -678,12 +678,13 @@ done
 for reviewer_rule in 'declared correction policy' 'latest unresolved blocker' 'never implement'; do
   grep -F "$reviewer_rule" "$reviewer_file" >/dev/null || fail "Reviewer bounded-correction contract omitted $reviewer_rule"
 done
-for item in 4 5 6 8; do
-  grep -E "^$item\. - \[x\]" "$ROOT/docs/todo.md" >/dev/null || fail "retrospective TODO $item is not verified complete"
+grep -F 'GitHub Issues is the source of truth for PitCrew backlog work:' "$ROOT/docs/todo.md" >/dev/null || fail 'GitHub backlog source contract omitted'
+for issue in 132 133 134 135; do
+  grep -F "https://github.com/feanor41/pitcrew2/issues/$issue" "$ROOT/docs/todo.md" >/dev/null || fail "GitHub backlog issue $issue omitted"
 done
-for item in 1 2 3 7; do
-  grep -E "^$item\. - \[ \]" "$ROOT/docs/todo.md" >/dev/null || fail "retrospective TODO $item was closed without verification"
-done
+if grep -Eq '(^|[[:space:]])- \[ \]' "$ROOT/docs/todo.md"; then
+  fail 'docs/todo.md regained an unchecked local backlog item'
+fi
 grep -F 'reuse one addressable Aion instance across all phases until terminal completion or a genuine blocker' "$contract_file" >/dev/null || fail 'agent contract omitted Aion delivery continuity'
 assert_file "$contract_file"
 for prohibited in '--claim-token' '--emit-plain-token' '--print-claim-handle-secret-once' 'same identity' 'CAS'; do
