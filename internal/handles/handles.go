@@ -388,8 +388,8 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 		if err = json.Unmarshal([]byte(aggregateBody), &aggregate); err != nil || aggregate.Verdict != "corrections" {
 			return IssueResult{}, ErrRecoveryForbidden
 		}
-	} else if workflowState != "plan_approved" && workflowState != "implementing" {
-		return IssueResult{}, fmt.Errorf("%w: current state %s; expected plan_approved or implementing", ErrInvalidState, workflowState)
+	} else if workflowState != "implementing" {
+		return IssueResult{}, fmt.Errorf("%w: current state %s; expected implementing", ErrInvalidState, workflowState)
 	}
 	if (action == activity.UnitReviewHandedOff || action == activity.UnitReviewRecovered) && workflowState != "implementing" {
 		return IssueResult{}, fmt.Errorf("%w: current state %s; expected implementing", ErrInvalidState, workflowState)

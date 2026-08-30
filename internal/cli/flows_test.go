@@ -1195,15 +1195,29 @@ func TestPlanApprovalGatesReadinessClaimsAndPersistsExplicitExceptions(t *testin
 	if state := workflowState(t, approved); state != "plan_approved" {
 		t.Fatalf("approved state=%s", state)
 	}
+	revision = workflowRevision(t, approved)
 	firstApproved, secondApproved = storedExceptionApprovals(t, root, wfID, first, second)
 	if !firstApproved || secondApproved {
 		t.Fatalf("persisted approvals first=%t second=%t", firstApproved, secondApproved)
 	}
+	readyBeforeImplementation := runAt(t, root, "workflow", "list-ready-units", "--workflow-id", wfID)
+	if readyBeforeImplementation.code != 3 || readyBeforeImplementation.stdout != "" {
+		t.Fatalf("preimplementation readiness=%#v", readyBeforeImplementation)
+	}
+	approvedHandleDir := filepath.Join(root, "approved-handles")
+	claimBeforeImplementation := runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", first, "--revision", "1", "--actor", "implementer", "--handle-dir", approvedHandleDir)
+	if claimBeforeImplementation.code != 3 || claimBeforeImplementation.stdout != "" {
+		t.Fatalf("preimplementation claim=%#v", claimBeforeImplementation)
+	}
+	if _, err := os.Stat(approvedHandleDir); !os.IsNotExist(err) {
+		t.Fatalf("preimplementation claim created handle directory: %v", err)
+	}
+	revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "begin-implementation", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "daimon")))
 	readyAfter := mustOK(t, runAt(t, root, "workflow", "list-ready-units", "--workflow-id", wfID))
 	if !strings.Contains(string(readyAfter), first) || !strings.Contains(string(readyAfter), second) {
 		t.Fatalf("approved readiness=%s", readyAfter)
 	}
-	claimAfter := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", first, "--revision", "1", "--actor", "implementer", "--handle-dir", filepath.Join(root, "approved-handles")))
+	claimAfter := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", first, "--revision", "1", "--actor", "implementer", "--handle-dir", approvedHandleDir))
 	if path := stringField(t, claimAfter, "handle_path"); path == "" {
 		t.Fatal("approved claim omitted handle path")
 	}

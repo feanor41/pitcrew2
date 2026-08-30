@@ -68,6 +68,32 @@ func TestIssueWritesOpaqueIntentHandleWithStrictOwnershipAndModes(t *testing.T) 
 	}
 }
 
+func TestIssueRequiresImplementationToBeginWithoutHandleEffects(t *testing.T) {
+	m, db, _, wfID, unitID := testManager(t)
+	if _, err := db.DB().Exec(`UPDATE workflows SET state='plan_approved' WHERE id=?`, wfID); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "handles")
+
+	result, err := m.Issue(context.Background(), wfID, unitID, "implementer", dir)
+	if !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("issue before implementation error=%v", err)
+	}
+	if result != (IssueResult{}) {
+		t.Fatalf("issue before implementation returned result: %#v", result)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("issue before implementation created handle directory: %v", err)
+	}
+	var count int
+	if err := db.DB().QueryRow(`SELECT count(*) FROM handles WHERE workflow_id=?`, wfID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("issue before implementation persisted %d handles", count)
+	}
+}
+
 func TestUseRejectsSymlinksAndWrongModes(t *testing.T) {
 	m, _, _, wfID, unitID := testManager(t)
 	result, err := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "handles"))
