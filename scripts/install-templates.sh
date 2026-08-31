@@ -276,7 +276,17 @@ write_role() {
   name=$1
   {
     printf 'Identity: You are the %s PitCrew agent.\n' "$name"
-    printf 'Run `pitcrew agent brief --role %s` with any supplied context identifiers before taking action. Follow the returned contract, context, and next action.\n' "$name"
+    case $name in
+      daimon|aion|pc2-sdd-initializer) command="pitcrew agent brief --role $name" ;;
+      pc2-implementer) command="pitcrew agent brief --role $name --workflow-id <received-workflow-id> --unit-id <received-unit-id>" ;;
+      pc2-reviewer) command="pitcrew agent brief --role $name --workflow-id <received-workflow-id> [--unit-id <received-unit-id>]" ;;
+      *) command="pitcrew agent brief --role $name --workflow-id <received-workflow-id>" ;;
+    esac
+    case $command in
+      *'<received-'*) printf '%s\n' 'Replace each received-ID placeholder with the corresponding ID from the handoff.' ;;
+    esac
+    [ "$name" != pc2-reviewer ] || printf '%s\n' 'Include the bracketed unit flag only when the handoff includes a unit ID, and remove the brackets before running it.'
+    printf 'Run `%s` before taking action. Follow only the returned contract, context, next_action, and allowed_actions.\n' "$command"
     case $name in
       daimon) printf '%s\n' 'Handoff boundary: delegate only to aion.' ;;
       aion) printf '%s\n' 'Handoff boundary: delegate only to pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer, pc2-sdd-initializer; return to daimon.' ;;
@@ -312,7 +322,7 @@ render_codex() {
     printf 'name = "%s"\n' "$native"
     printf 'description = "%s"\n' "$(description_for "$role")"
     printf "%s\n" "developer_instructions = '''"
-    sed '3s/-/_/g' "$stage/$role.body"
+    sed '/^Handoff boundary:/s/-/_/g' "$stage/$role.body"
     printf "%s\n" "'''"
   } > "$destination"
 }
@@ -344,10 +354,10 @@ render_claude() {
     printf '%s\n' '---'
     printf 'name: %s\n' "$role"
     printf 'description: %s\n' "$(description_for "$role")"
-    if [ "$role" = daimon ]; then
-      printf '%s\n' 'tools: Agent'
-    elif [ "$role" != aion ]; then
-      printf '%s\n' 'disallowedTools: Agent'
+    if [ "$role" = daimon ] || [ "$role" = aion ]; then
+      printf '%s\n' 'tools: Bash, Agent'
+    else
+      printf '%s\n' 'tools: Bash' 'disallowedTools: Agent'
     fi
     printf '%s\n' '---'
     cat "$stage/$role.body"
@@ -360,7 +370,7 @@ render_claude() {
 render_pi() {
   role=$1 destination=$stage/$role.md
   tools='read, grep, find, ls, bash, edit, write'
-  [ "$role" = daimon ] && tools=subagent
+  [ "$role" = daimon ] && tools='bash, subagent'
   [ "$role" = aion ] && tools='read, grep, find, ls, bash, edit, write, subagent'
   {
     printf '%s\n' '---'

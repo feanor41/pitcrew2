@@ -75,12 +75,14 @@ assert_claude_registry() {
   assert_absent "$1/pitcrew/agent-contract.md"
   assert_absent "$registry/agent-contract.md"
   grep -F 'name: daimon' "$registry/daimon.md" >/dev/null || fail 'Claude Daimon metadata is invalid'
-  grep -F 'tools: Agent' "$registry/daimon.md" >/dev/null || fail 'Claude Daimon cannot hand off to Aion'
+  grep -F 'tools: Bash, Agent' "$registry/daimon.md" >/dev/null || fail 'Claude Daimon cannot execute bootstrap and hand off to Aion'
   grep -F 'name: aion' "$registry/aion.md" >/dev/null || fail 'Claude Aion metadata is invalid'
+  grep -F 'tools: Bash, Agent' "$registry/aion.md" >/dev/null || fail 'Claude Aion cannot execute bootstrap and delegate'
   grep -F 'Claude delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer, pc2-sdd-initializer.' "$registry/aion.md" >/dev/null || fail 'Claude Aion cannot resolve specialist targets'
   for graph_target in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer; do
     grep -F "name: $graph_target" "$registry/$graph_target.md" >/dev/null || fail "$graph_target missing Claude metadata"
     grep -F 'disallowedTools: Agent' "$registry/$graph_target.md" >/dev/null || fail "$graph_target can unexpectedly delegate in Claude"
+    grep -F 'tools: Bash' "$registry/$graph_target.md" >/dev/null || fail "$graph_target cannot execute its Claude bootstrap"
   done
 }
 seed_pi_subagents() {
@@ -392,11 +394,18 @@ assert_minimal_bootstrap() {
   for role in $roles; do
     file=$(role_path "$destination" "$role")
     assert_file "$file"
-    command="pitcrew agent brief --role $role"
+    case $role in
+      daimon|aion|pc2-sdd-initializer) command="pitcrew agent brief --role $role" ;;
+      pc2-implementer) command="pitcrew agent brief --role $role --workflow-id <received-workflow-id> --unit-id <received-unit-id>" ;;
+      pc2-reviewer) command="pitcrew agent brief --role $role --workflow-id <received-workflow-id> [--unit-id <received-unit-id>]" ;;
+      *) command="pitcrew agent brief --role $role --workflow-id <received-workflow-id>" ;;
+    esac
     command_line=$(grep -nF "$command" "$file" | head -1 | cut -d: -f1)
     action_line=$(grep -nF 'before taking action' "$file" | head -1 | cut -d: -f1)
     [ -n "$command_line" ] && [ -n "$action_line" ] && [ "$command_line" -le "$action_line" ] || fail "$role bootstrap does not precede action"
     grep -F "Identity: You are the $role PitCrew agent." "$file" >/dev/null || fail "$role identity drifted"
+    case $command in *'<received-'*) grep -F 'Replace each received-ID placeholder with the corresponding ID from the handoff' "$file" >/dev/null || fail "$role does not require received-ID substitution" ;; esac
+    [ "$role" != pc2-reviewer ] || grep -F 'Include the bracketed unit flag only when the handoff includes a unit ID' "$file" >/dev/null || fail 'reviewer optional unit syntax is ambiguous'
     for forbidden in 'THE FOUR MAXIMS' 'Allowed workflow commands:' 'correction budget' 'release map' 'Shared orchestration contract'; do
       grep -F "$forbidden" "$file" >/dev/null && fail "$role embeds obsolete manual content: $forbidden" || :
     done

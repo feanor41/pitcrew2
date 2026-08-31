@@ -16,11 +16,18 @@ roles='daimon aion pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-
 for role in $roles; do
   prompt=$BOOTSTRAP_HOME/agents/$role.md
   [ -f "$prompt" ] || fail "missing Pi role $role"
-  command="pitcrew agent brief --role $role"
+  case $role in
+    daimon|aion|pc2-sdd-initializer) command="pitcrew agent brief --role $role" ;;
+    pc2-implementer) command="pitcrew agent brief --role $role --workflow-id <received-workflow-id> --unit-id <received-unit-id>" ;;
+    pc2-reviewer) command="pitcrew agent brief --role $role --workflow-id <received-workflow-id> [--unit-id <received-unit-id>]" ;;
+    *) command="pitcrew agent brief --role $role --workflow-id <received-workflow-id>" ;;
+  esac
   command_line=$(grep -nF "$command" "$prompt" | head -1 | cut -d: -f1)
   action_line=$(grep -nF 'before taking action' "$prompt" | head -1 | cut -d: -f1)
   [ -n "$command_line" ] && [ -n "$action_line" ] && [ "$command_line" -le "$action_line" ] || fail "$role bootstrap does not precede action"
   grep -F "Identity: You are the $role PitCrew agent." "$prompt" >/dev/null || fail "$role identity drifted"
+  case $command in *'<received-'*) grep -F 'Replace each received-ID placeholder with the corresponding ID from the handoff' "$prompt" >/dev/null || fail "$role does not require received-ID substitution" ;; esac
+  [ "$role" != pc2-reviewer ] || grep -F 'Include the bracketed unit flag only when the handoff includes a unit ID' "$prompt" >/dev/null || fail 'reviewer optional unit syntax is ambiguous'
   for forbidden in 'THE FOUR MAXIMS' 'Allowed workflow commands:' 'correction budget' 'release map' 'Shared orchestration contract'; do
     grep -F "$forbidden" "$prompt" >/dev/null && fail "$role embeds obsolete manual content: $forbidden" || :
   done
@@ -28,7 +35,7 @@ done
 
 daimon=$BOOTSTRAP_HOME/agents/daimon.md
 aion=$BOOTSTRAP_HOME/agents/aion.md
-grep -Fx 'tools: subagent' "$daimon" >/dev/null || fail 'Pi Daimon delegation tool drifted'
+grep -Fx 'tools: bash, subagent' "$daimon" >/dev/null || fail 'Pi Daimon bootstrap/delegation tools drifted'
 grep -Fx 'maxSubagentDepth: 3' "$daimon" >/dev/null || fail 'Pi Daimon nesting depth drifted'
 grep -F 'Handoff boundary: delegate only to aion.' "$daimon" >/dev/null || fail 'Pi Daimon target boundary drifted'
 grep -F 'accept progress_update only from aion' "$daimon" >/dev/null || fail 'Pi Daimon supervisor wiring drifted'

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -11,12 +13,89 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestRunDelegatesGlobalVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--version"}, strings.NewReader(""), &stdout, &stderr, t.TempDir()); code != 0 || stdout.String() != "pitcrew 0.20.2\n" || stderr.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestScopedAgentBriefCommandsActivateAgainstAcceptedWorkflow(t *testing.T) {
+	binary, project, dataHome := filepath.Join(t.TempDir(), "pitcrew"), t.TempDir(), filepath.Join(t.TempDir(), "data")
+	if output, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build pitcrew: %v\n%s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", project, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("initialize project: %v: %s", err, output)
+	}
+	run := func(args ...string) ([]byte, error) {
+		command := exec.Command(binary, args...)
+		command.Dir = project
+		command.Env = append(os.Environ(), "XDG_DATA_HOME="+dataHome)
+		return command.CombinedOutput()
+	}
+	created, err := run("workflow", "new", "--name", "Scoped", "--goal", "activate scoped briefs", "--actor", "aion")
+	if err != nil {
+		t.Fatalf("create workflow: %v\n%s", err, created)
+	}
+	var envelope struct {
+		Data struct {
+			Workflow struct {
+				ID string `json:"id"`
+			} `json:"workflow"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(created, &envelope) != nil || envelope.Data.Workflow.ID == "" {
+		t.Fatalf("workflow envelope=%s", created)
+	}
+	var databasePath string
+	_ = filepath.Walk(dataHome, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr == nil && info != nil && info.Name() == "state.db" {
+			databasePath = path
+		}
+		return nil
+	})
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	wfID, unitID := envelope.Data.Workflow.ID, "wu-scoped"
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{query: `UPDATE workflows SET state='implementing',revision=7 WHERE id=?`, args: []any{wfID}},
+		{query: `INSERT INTO plans VALUES(?,'summary','internal',1,'{}')`, args: []any{wfID}},
+		{query: `INSERT INTO work_units VALUES(?,?,'scoped unit','internal/scoped','[]','[]',1,1,'reviewing',NULL,0,1)`, args: []any{unitID, wfID}},
+	} {
+		if _, err = database.Exec(statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{
+		{"agent", "brief", "--role", "pc2-explorer", "--workflow-id", wfID, "--json"},
+		{"agent", "brief", "--role", "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID, "--json"},
+		{"agent", "brief", "--role", "pc2-reviewer", "--workflow-id", wfID, "--unit-id", unitID, "--json"},
+		{"agent", "brief", "--role", "pc2-reviewer", "--workflow-id", wfID, "--json"},
+	} {
+		if output, runErr := run(args...); runErr != nil || !bytes.Contains(output, []byte(`"ok":true`)) {
+			t.Fatalf("valid scoped brief %v: %v\n%s", args, runErr, output)
+		}
+	}
+	for _, args := range [][]string{
+		{"agent", "brief", "--role", "pc2-explorer", "--json"},
+		{"agent", "brief", "--role", "pc2-implementer", "--workflow-id", wfID, "--json"},
+		{"agent", "brief", "--role", "pc2-reviewer", "--json"},
+		{"agent", "brief", "--role", "pc2-explorer", "--workflow-id", "wf-missing", "--json"},
+	} {
+		if output, runErr := run(args...); runErr == nil || bytes.Contains(output, []byte(`"ok":true`)) {
+			t.Fatalf("invalid scoped brief %v succeeded: %s", args, output)
+		}
 	}
 }
 

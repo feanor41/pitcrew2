@@ -163,15 +163,18 @@ func contracts() map[string]StableContract {
 		return StableContract{Role: role, Identity: identity, Responsibilities: responsibilities, AllowedHandoffs: handoffs, AllowedCommands: commands, Invariants: invariants, BriefRequirement: requirement}
 	}
 	aionHandoffs := []string{"daimon", "pc2-explorer", "pc2-specifier", "pc2-designer", "pc2-task-planner", "pc2-implementer", "pc2-reviewer", "pc2-sdd-initializer"}
+	specialist := func(role, identity, requirement, responsibility string, commands []string) StableContract {
+		return c(role, identity, requirement, []string{responsibility, "retrieve the scoped brief before action", "act only within dynamic allowed_actions", "return to Aion", "never delegate"}, []string{"aion"}, commands)
+	}
 	return map[string]StableContract{
-		"daimon":              c("daimon", "Daimon", "no workflow or unit context", []string{"own the user conversation", "relay only Aion-acknowledged facts"}, []string{"aion"}, []string{}),
-		"aion":                c("aion", "Aion", "optional workflow context; no unit context", []string{"own routing, admission, continuity, and orchestration authority"}, aionHandoffs, []string{"delivery", "workflow"}),
-		"pc2-sdd-initializer": c("pc2-sdd-initializer", "SDD Initializer", "no workflow or unit context", []string{"initialize missing project context once when Aion requests it"}, []string{"aion"}, []string{"context inspect", "context initialize", "context record"}),
-		"pc2-explorer":        c("pc2-explorer", "Explorer", "workflow context required; no unit context", []string{"explore the accepted workflow scope and return repository evidence"}, []string{"aion"}, []string{"workflow show", "workflow explore"}),
-		"pc2-specifier":       c("pc2-specifier", "Specifier", "workflow context required; no unit context", []string{"write executable requirements and scenarios for the accepted workflow"}, []string{"aion"}, []string{"workflow show", "workflow spec"}),
-		"pc2-designer":        c("pc2-designer", "Designer", "workflow context required; no unit context", []string{"design the accepted workflow proportionally from repository evidence"}, []string{"aion"}, []string{"workflow show", "workflow design"}),
-		"pc2-task-planner":    c("pc2-task-planner", "Task Planner", "workflow context required; no unit context", []string{"create short dependency-ordered work units with explicit coverage"}, []string{"aion"}, []string{"workflow show", "workflow plan"}),
-		"pc2-implementer":     c("pc2-implementer", "Implementer", "workflow and unit context required", []string{"implement one claimed unit with current TDD evidence"}, []string{"aion"}, []string{"workflow show", "workflow list-ready-units", "workflow claim-unit", "workflow unit-tdd", "workflow unit-complete"}),
-		"pc2-reviewer":        c("pc2-reviewer", "Reviewer", "workflow context required; optional unit context", []string{"independently review one unit or the aggregate result"}, []string{"aion"}, []string{"workflow show", "workflow unit-review", "workflow complete"}),
+		"daimon":              c("daimon", "Daimon", "no workflow or unit context", []string{"stay addressable for the user turn", "hand intent to exactly one Aion", "mutate no workflow or repository state", "relay only Aion-acknowledged facts"}, []string{"aion"}, []string{}),
+		"aion":                c("aion", "Aion", "optional workflow context; no unit context", []string{"inspect active continuity first", "admit exactly once before mutation", "retain and resume one delivery identity on interruption or CAS", "delegate only the seven specialists", "never invent status or authority"}, aionHandoffs, []string{"delivery", "workflow"}),
+		"pc2-sdd-initializer": specialist("pc2-sdd-initializer", "SDD Initializer", "no workflow or unit context", "initialize missing project context once when Aion requests it", []string{"context inspect", "context initialize", "context record"}),
+		"pc2-explorer":        specialist("pc2-explorer", "Explorer", "workflow context required; no unit context", "explore the accepted workflow scope and return repository evidence", []string{"workflow show", "workflow explore"}),
+		"pc2-specifier":       specialist("pc2-specifier", "Specifier", "workflow context required; no unit context", "write executable requirements and scenarios for the accepted workflow", []string{"workflow show", "workflow spec"}),
+		"pc2-designer":        specialist("pc2-designer", "Designer", "workflow context required; no unit context", "design the accepted workflow proportionally from repository evidence", []string{"workflow show", "workflow design"}),
+		"pc2-task-planner":    specialist("pc2-task-planner", "Task Planner", "workflow context required; no unit context", "create short dependency-ordered work units with explicit coverage", []string{"workflow show", "workflow plan"}),
+		"pc2-implementer":     specialist("pc2-implementer", "Implementer", "workflow and unit context required", "implement one claimed unit with current TDD evidence", []string{"workflow show", "workflow list-ready-units", "workflow claim-unit", "workflow unit-tdd", "workflow unit-complete"}),
+		"pc2-reviewer":        specialist("pc2-reviewer", "Reviewer", "workflow context required; optional unit context", "independently review one unit or the aggregate result", []string{"workflow show", "workflow unit-review", "workflow complete"}),
 	}
 }
