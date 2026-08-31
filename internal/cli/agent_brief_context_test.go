@@ -20,7 +20,7 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 	for _, statement := range []string{
 		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-context',8,'ready_to_complete','Context','goal','now','now')`,
 		`INSERT INTO plans VALUES('wf-context','summary /tmp/pc2 aggregate-token','scope',1,'{"secret_plan":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}')`,
-		`INSERT INTO work_units VALUES('wu-selected','wf-context','Implement account behavior at /tmp/pc2 unit-secret=alpha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','internal/selected','["internal/selected/a.go"]','[]',20,10,'reviewing',NULL,0,3)`,
+		`INSERT INTO work_units VALUES('wu-selected','wf-context','Static safe brief + digest. Red→green: GOCACHE=/tmp/pc2 go test ./internal/agentbrief -run TestBrief. Review: safety/identity gate.','internal/selected','["internal/selected/a.go"]','[]',20,10,'reviewing',NULL,0,3)`,
 		`INSERT INTO work_units VALUES('wu-unrelated','wf-context','secret sibling','internal/secret','[]','[]',20,10,'done',NULL,0,1)`,
 		`INSERT INTO unit_coverage VALUES('wf-context','wu-selected','REQ-CTX-001','SCN-CTX-001')`,
 		`INSERT INTO evidence VALUES('wf-context','wu-selected',3,'implementer','red /tmp/pc2 token command','exit 1: expected failure secret=red-value','green internal/pkg command','exit 0: focused passed password=green-value','No code refactor; token=refactor-value','secret validation command','exit 0: package passed /tmp/pc2','/secret/path','now')`,
@@ -39,7 +39,7 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 			t.Fatal(insertErr)
 		}
 		id, _ := result.LastInsertId()
-		if _, insertErr = s.DB().Exec(`INSERT INTO normative_entries VALUES('wf-context',?,?, 'requirement',?,NULL,'add',?)`, id, phase, "REQ-"+strings.ToUpper(phase), `{"text":"Preserve account behavior for `+phase+` at /tmp/pc2 and internal/pkg; token=phase-value cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","nested":{"password":"phase-object-value","internal/pkg/key":"kept meaning"}}`); insertErr != nil {
+		if _, insertErr = s.DB().Exec(`INSERT INTO normative_entries VALUES('wf-context',?,?, 'requirement',?,NULL,'add',?)`, id, phase, "REQ-"+strings.ToUpper(phase), `{"text":"Preserve account behavior for `+phase+` at /tmp/pc2 and ./internal/pkg; token=phase-value cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","nested":{"password":"phase-object-value","internal/pkg/key":"kept meaning"}}`); insertErr != nil {
 			t.Fatal(insertErr)
 		}
 	}
@@ -99,7 +99,7 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 	if !strings.Contains(string(unitJSON), "SCN-CTX-001") || !strings.Contains(string(reviewerJSON), "SCN-CTX-001") || !strings.Contains(string(aggregateJSON), "wu-unrelated") {
 		t.Fatalf("required summaries missing: %s / %s / %s", unitJSON, reviewerJSON, aggregateJSON)
 	}
-	if !strings.Contains(string(unitJSON), "Implement account behavior") || !strings.Contains(string(unitJSON), `"evidence_required":["red","green","validation","scenario_results"]`) {
+	if !strings.Contains(string(unitJSON), "Static safe brief + digest") || !strings.Contains(string(unitJSON), "Review: safety/identity gate") || !strings.Contains(string(unitJSON), `"evidence_required":["red","green","validation","scenario_results"]`) {
 		t.Fatalf("implementer brief lacks bounded work/evidence guidance: %s", unitJSON)
 	}
 	for _, required := range []string{`"red_status":"failed"`, `"green_status":"passed"`, `"validation_status":"passed"`, `"summary":"Account behavior is complete`, `"findings":"No remaining behavior gaps`, `"plan_impact":"inside"`} {
@@ -107,7 +107,7 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 			t.Fatalf("reviewer brief lacks %s: %s", required, reviewerJSON)
 		}
 	}
-	if !strings.Contains(string(aggregateJSON), "Implement account behavior") || !strings.Contains(string(aggregateJSON), `"green_status":"passed"`) {
+	if !strings.Contains(string(aggregateJSON), "Static safe brief + digest") || !strings.Contains(string(aggregateJSON), "Review: safety/identity gate") || !strings.Contains(string(aggregateJSON), `"green_status":"passed"`) {
 		t.Fatalf("aggregate brief lacks bounded work/evidence summary: %s", aggregateJSON)
 	}
 	fullCases := map[string]map[string]any{
@@ -119,7 +119,7 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 	for name, value := range fullCases {
 		data, _ := json.Marshal(value)
 		text := strings.ToLower(string(data))
-		for _, forbidden := range []string{`"scope":`, `"areas":`, `"path":`, `"handle":`, `"secret":`, `"hash":`, `"audit":`, `"history":`, `"siblings":`, "/tmp/pc2", "internal/", "phase-token", "unit-secret", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"} {
+		for _, forbidden := range []string{`"scope":`, `"areas":`, `"path":`, `"handle":`, `"secret":`, `"hash":`, `"audit":`, `"history":`, `"siblings":`, "/tmp/pc2", "./internal", "go test", "gocache=", "-run", "red→green", "internal/", "phase-token", "unit-secret", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"} {
 			if strings.Contains(text, forbidden) {
 				t.Fatalf("full %s brief leaked %q: %s", name, forbidden, data)
 			}
@@ -131,7 +131,10 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 			"aggregate": {"pc2-reviewer", "--workflow-id", "wf-context"},
 		}[name]
 		result := runAt(t, root, append([]string{"agent", "brief", "--role"}, roleArgs...)...)
-		for _, forbidden := range []string{"/tmp/pc2", "internal/", "phase-token", "unit-secret", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"} {
+		if (name == "unit" || name == "aggregate") && (!strings.Contains(result.stdout, "Static safe brief + digest") || !strings.Contains(result.stdout, "Review: safety/identity gate")) {
+			t.Fatalf("text %s brief lost semantic work intent: %s", name, result.stdout)
+		}
+		for _, forbidden := range []string{"/tmp/pc2", "./internal", "go test", "GOCACHE=", "-run", "Red→green", "internal/", "phase-token", "unit-secret", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"} {
 			if strings.Contains(strings.ToLower(result.stdout), forbidden) {
 				t.Fatalf("text %s brief leaked %q: %s", name, forbidden, result.stdout)
 			}

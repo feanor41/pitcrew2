@@ -131,7 +131,7 @@ func (b Brief) WithPhase(projection history.Projection) Brief {
 
 func (b Brief) WithUnit(unitProjection, coordination, aggregate history.Projection, reviewer bool) Brief {
 	definition := unitProjection.Unit.Definition
-	unit := &UnitContext{WorkflowID: unitProjection.Workflow.ID, WorkflowRevision: unitProjection.Workflow.Revision, UnitID: definition.ID, UnitRevision: definition.Revision, State: definition.State, WorkSummary: sanitizeNarrative(definition.Description), DependsOn: definition.DependsOn, Coverage: coverage(definition.Coverage), EvidenceRequired: []string{"red", "green", "validation", "scenario_results"}}
+	unit := &UnitContext{WorkflowID: unitProjection.Workflow.ID, WorkflowRevision: unitProjection.Workflow.Revision, UnitID: definition.ID, UnitRevision: definition.Revision, State: definition.State, WorkSummary: workSummary(definition.Description), DependsOn: definition.DependsOn, Coverage: coverage(definition.Coverage), EvidenceRequired: []string{"red", "green", "validation", "scenario_results"}}
 	unit.ScenarioResults = scenarioResults(aggregate, definition.ID, definition.Revision)
 	if reviewer {
 		if evidence := unitProjection.Unit.Evidence; evidence != nil {
@@ -167,7 +167,7 @@ func (b Brief) WithAggregate(projection history.Projection) Brief {
 	result := &AggregateContext{WorkflowID: projection.Workflow.ID, Revision: projection.Workflow.Revision, State: projection.Workflow.State, Units: []AggregateUnit{}}
 	for _, projected := range projection.Aggregate.Units {
 		d := projected.Definition
-		result.Units = append(result.Units, AggregateUnit{UnitID: d.ID, UnitRevision: d.Revision, State: d.State, WorkSummary: sanitizeNarrative(d.Description), Coverage: coverage(d.Coverage), Evidence: evidenceSummary(projected.Evidence), ScenarioResults: scenarioResults(projection, d.ID, d.Revision)})
+		result.Units = append(result.Units, AggregateUnit{UnitID: d.ID, UnitRevision: d.Revision, State: d.State, WorkSummary: workSummary(d.Description), Coverage: coverage(d.Coverage), Evidence: evidenceSummary(projected.Evidence), ScenarioResults: scenarioResults(projection, d.ID, d.Revision)})
 	}
 	if projection.Aggregate.Correction != nil {
 		result.CorrectionAuthority = &CorrectionAuthority{Allowed: projection.Aggregate.Correction.Allowed, Used: projection.Aggregate.Correction.Used, Authority: projection.Aggregate.Correction.Authority}
