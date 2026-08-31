@@ -1,46 +1,61 @@
 # PitCrew CLI reference
 
-PitCrew exposes `agent`, `install`, `project`, `context`, `delivery`, `tui`,
-`principles`, and `workflow` command groups. Every flag is long-form. Commands
-not listed here do not exist.
+This reference is derived from the public command dispatch, validation, state
+machines, and response types in the Go implementation. PitCrew accepts only
+long-form flags. Commands that accept structured data read one strict UTF-8 JSON
+document from a regular, non-symlink file of at most 4 MiB; unknown JSON fields,
+extra documents, missing required flags, duplicate non-repeatable flags, and
+blank flag values are rejected.
 
-The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon interviews, clarifies intent, preserves conversational continuity, and reports only Aion-acknowledged facts or questions. Aion alone owns routing and workflow coordination. For each accepted delivery, Daimon and the addressable-agent host reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and authority throughout. Mid-flight input remains requested, not applied, until Aion admits it against current state; concurrent Daimon availability depends on host support for addressable agents, not a PitCrew daemon, service, IPC, polling, or inbox.
+<!-- cli-docs:navigation:start -->
+<a id="choose-a-path"></a>
+## Choose a path
 
-Every route leaves one Control Plane delivery. Full workflows keep their existing
-`wf-*` record. Direct inline and delegated direct use one lightweight `dl-*`
-trace started by Aion before repository mutation; they create no synthetic SDD
-phases, work units, or review artifacts. `delivery active`, `delivery show`, and
-`delivery search` inspect both kinds through the same projection.
+- [Install PitCrew agents](#runtime-installation)
+- [Read a role brief](#agent-briefs)
+- [Inspect a project](#project-inspection-and-consolidation)
+- [Run a direct delivery](#delivery-routing-and-admission)
+- [Run a full workflow](#full-workflow-lifecycle)
+- [Look up every command](#command-catalog)
+<!-- cli-docs:navigation:end -->
 
-## Quick path
+## Process contract
 
-```sh
-pitcrew workflow new --name "Ship the change" --goal "Deliver the accepted behavior" --actor aion
-pitcrew workflow show --workflow-id wf-<24hex>
-pitcrew tui
-pitcrew principles
+Success is one JSON object on stdout:
+
+```json
+{"ok":true,"data":{},"warnings":[],"next_action":"..."}
 ```
 
-A full workflow progresses through exploration, specification, design, planning, approval, implementation, and independent aggregate review/completion. Unit review is selective. Use the `next_action` returned by each successful envelope rather than guessing the next transition.
+Failures are one JSON object on stderr with `ok: false` and an error containing
+`code` and `message`. Exit `0` is success, `1` is an internal failure, `2` is
+usage, `3` is invalid state, `4` is a compare-and-swap revision conflict, and
+`5` is invalid handle authority. Inspect once after exit `3` or `4`; never
+blindly replay a mutation. Help and version output are plain text.
+
+| Exit | Classification |
+|---|---|
+| `0 — ok` | Successful command. |
+| `1 — internal` | Internal or I/O failure. |
+| `2 — usage` | Invalid command, flag, identifier, or input transport. |
+| `3 — state` | Domain precondition or lifecycle state rejected the command. |
+| `4 — CAS` | The supplied revision is stale; inspect the identity once. |
+| `5 — handle` | Opaque authority is invalid, expired, unsafe, or mismatched. |
 
 ## Runtime installation
 
-Install or update the native PitCrew integration for exactly one agentic app:
+`pitcrew install <codex|opencode|claude|pi>` extracts the embedded installer to
+a private temporary directory, runs it for the selected runtime, removes the
+extraction, and preserves the installer's exit status. The canonical install
+set is nine minimal native role bootstraps. Installation updates agent
+integration only; it does not install a support-policy file, the `pitcrew`
+executable, another runtime, packages, a daemon, or project state. A prior
+managed `pitcrew/agent-contract.md` is removed only when its bytes match a
+recognized checksum; modified or non-regular legacy files are preserved and
+reported.
 
-```sh
-pitcrew install codex
-pitcrew install opencode
-pitcrew install claude
-pitcrew install pi
-```
-
-Tokens are exact, lowercase, and alias-free. The command installs nine minimal
-native role bootstraps, but not a support-policy file, the binary, another runtime,
-packages, a daemon, or workflow state. Success prints exactly `Installed
-PitCrew agents for <Runtime> in <registry>`.
-
-The selected token overrides cross-runtime detection and uses only its override
-or default root:
+The runtime token is exact, lowercase, and alias-free. It overrides
+cross-runtime detection and uses only its override or default root:
 
 | Runtime | Override / default root | Native registry | Legacy registry |
 |---|---|---|---|
@@ -49,428 +64,996 @@ or default root:
 | Claude Code | `CLAUDE_CONFIG_DIR` / `~/.claude` | `agents/*.md` | `prompts/*.md` |
 | Pi | `PI_AGENT_HOME` / `~/.pi/agent` | `agents/*.md` | prior PitCrew entries in `agents/` |
 
-The public command transactionally refreshes current PitCrew-managed role files and
-warns exactly: `pitcrew installer: WARNING: PitCrew-managed definitions are
-being refreshed; custom content must live outside managed role files.` This is
-the public-command warning. The legacy `pitcrew installer: WARNING: replacing
-prompts or legacy names; preserve desired custom text before continuing.` is
-reserved for direct `scripts/install-templates.sh --overwrite` invocation.
+The public command transactionally refreshes current PitCrew-managed role
+files and warns that custom content must live outside managed definitions.
 Unrelated files and application configuration are never rewritten; identical
-reruns are write no-ops, and failures roll back. A prior managed
-`pitcrew/agent-contract.md` is removed only when its bytes match a recognized
-checksum. Modified or non-regular legacy files are preserved and reported.
+reruns are write no-ops, and a failed refresh rolls back.
 
-OpenCode additionally requires OpenCode 1.18.23 or newer, `jq`, `timeout`, and
-effective top-level `"subagent_depth": 2` (or greater) in the caller's target
-project. From that project, inspect the resolved configuration with:
+OpenCode requires OpenCode 1.18.23 or newer, `jq`, `timeout`, and an effective
+top-level `"subagent_depth": 2` or greater in the target project. Inspect its
+resolved configuration with `opencode --pure debug config`. PitCrew validates
+the resolved result before target writes and never rewrites user JSON or JSONC.
 
-```sh
-opencode --pure debug config
-```
-
-Upgrade older installations to at least 1.18.23. Set the value in global
-configuration or the higher-precedence project configuration that controls the
-resolved result, then use the exact verification and `pitcrew install opencode`
-rerun commands
-printed by a failure. Fix malformed or incompatible resolved output at the
-reported configuration source. PitCrew fails before target writes when the
-prerequisite is absent or invalid; it does not rewrite user JSON or JSONC.
-Depth two enables the existing `Daimon -> Aion -> specialist` call chain
-without broadening permissions: Daimon still targets only Aion, Aion only the
-seven specialists, and specialists cannot delegate.
-
-Pi additionally requires Node.js, an installed and active `pi-subagents`
-version 0.25.0 or newer, and `maxSubagentDepth: 3` (or greater) in
-`<pi-agent-home>/extensions/subagent/config.json`. Depth three is required for
-the bounded `Daimon -> Aion -> specialist` chain. PitCrew validates exact
-package identity and accepts a non-empty version/range suffix; it does not
-install the extension, access the network, or modify Pi configuration.
-
-## Closed command matrix
-
-| Command | Required inputs |
-|---|---|
-| `agent brief` | `--role <role> [--workflow-id <id>] [--unit-id <id>]`; context flags are role-validated. |
-| `install` | exactly one of `codex`, `opencode`, `claude`, or `pi` |
-| `project inspect` | None. |
-| `project consolidate` | `--input-file <path>` |
-| `context inspect` | None. |
-| `context initialize` | None. |
-| `context record` | `--actor <nonblank-bounded-label> --input-file <path>` |
-| `tui` | None; extra arguments are rejected. |
-| `delivery start` | `--actor <label> --input-file <path>` |
-| `delivery update` | `--delivery-id <dl-id> --revision <n> --actor <label> --input-file <path>` |
-| `delivery show` | `--delivery-id <dl-id|wf-id>` |
-| `delivery search` | `--query <nonblank-text>` |
-| `delivery active` | None; extra arguments are rejected. |
-| `workflow new` | `--name <text> --goal <text> --actor <label>` |
-| `workflow continue` | `--from <terminal-wf-id> --actor <label>` |
-| `workflow show` | `--workflow-id <wf-id> [--view coordination|phase|unit|aggregate|audit] [--unit-id <wu-id>]`; `--unit-id` is required only for `unit` and rejected otherwise. |
-| `workflow progress` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `workflow request-capability` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `workflow explore` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `workflow spec` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `workflow design` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `workflow plan` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `workflow amend-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `workflow approve-plan` | `--workflow-id <wf-id> --revision <n> --actor <label> [--approve-exception <wu-id> ...]` |
-| `workflow list-ready-units` | `--workflow-id <wf-id>` |
-| `workflow begin-implementation` | `--workflow-id <wf-id> --revision <n> --actor <label>` |
-| `workflow complete` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `workflow authorize-correction` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
-| `workflow abandon` | `--workflow-id <wf-id> --revision <n> --actor <label> --reason <text>` |
-| `workflow claim-unit` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
-| `workflow recover-unit-claim` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
-| `workflow recover-aggregate` | `--workflow-id <wf-id> --revision <n> --actor <label> --handle-dir <dir>` plus `--input-file <path>`, or historical `--unit-id <wu-id>` |
-| `workflow handoff-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <reviewer-label> --handle-dir <dir>` |
-| `workflow recover-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <reviewer-label> --handle-dir <dir>` |
-| `workflow unit-tdd` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
-| `workflow unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
-| `workflow unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
-
-`delivery active` is read-only and succeeds with `data.deliveries: []` when the
-project has no state. It returns only active direct traces (`in_progress`,
-`blocked`, or `interrupted`) and non-terminal workflows, including each ID,
-route, status, revision, and `next_action`. Its envelope action is `aion admit new delivery`
-for zero candidates, `delivery show --delivery-id <id>` for one,
-and `aion clarify delivery identity` for many. Ordering never authorizes a
-selection; among multiple candidates, accepted user intent must name a returned
-ID. Linked worktrees share the project result, while independent clones do not.
-Direct-only capability gaps remain truthful blockers: there is no direct
-capability-request ledger, and Aion does not invent a workflow or parallel
-lifecycle to record one.
+Pi requires Node.js, an installed and active `pi-subagents` version 0.25.0 or
+newer, and `maxSubagentDepth: 3` or greater in
+`<pi-agent-home>/extensions/subagent/config.json`. PitCrew validates the exact
+package identity and configuration locally; it does not install the extension,
+access the network, or modify Pi configuration.
 
 ## Agent briefs
 
-`pitcrew agent brief` is the read-only, versioned source of role instructions
-and current authority. Daimon and `pc2-sdd-initializer` accept no context. Aion
-accepts an optional workflow ID. Phase specialists require a workflow ID;
-`pc2-implementer` requires both workflow and unit IDs; `pc2-reviewer` requires a
-workflow ID and accepts an optional unit ID. Unsupported roles and invalid
-context combinations fail before project inspection and create no state.
+`pitcrew agent brief` is the read-only, versioned source of stable role
+instructions and bounded current authority. It accepts exactly one supported
+`--role`; `--workflow-id` and `--unit-id` are validated for that role before
+project inspection, and `--json` selects a standard success envelope instead
+of the default text rendering.
 
-Text and `--json` responses expose the same stable `contract_version` and
-deterministic `contract_digest`. The digest covers only the stable role contract;
-bounded dynamic context, `allowed_actions`, and `next_action` do not change it.
-Callers must use the returned dynamic authority rather than infer an action from
-the stable command interface.
+Daimon and `pc2-sdd-initializer` accept no context. Aion accepts an optional
+workflow ID; without one it receives active-delivery continuity and also works
+for an uninitialized project, while a workflow ID selects its coordination
+projection. Phase specialists require a workflow ID. `pc2-implementer`
+requires workflow and unit IDs. `pc2-reviewer` requires a workflow ID and uses
+an optional unit ID to select unit rather than aggregate review context.
 
-## Stage artifact inputs
-
-`workflow explore`, `workflow spec`, and `workflow design` retain the strict
-legacy input `{"content":"technical prose"}` unchanged. They also accept the
-strict schema-v1 typed input
-`{"content":"technical prose","schema_version":1,"entries":[...]}`. Typed
-entries use `kind` (`requirement`, `scenario`, or `section`), a stable `id`, an
-optional `parent_id`, `operation` (`add`, `replace`, or `remove`), and JSON
-`body`. `schema_version` and `entries` must appear together; partial, unknown,
-or unsupported typed shapes fail before store mutation. Accepted entries are
-recorded atomically with the prose artifact and become reachable through the
-bounded `phase` and `aggregate` views. Legacy prose is never guessed or
-upgraded into typed entries.
-
-## Workflow inspection views
-
-`workflow show` without `--view` retains the legacy full-audit response byte
-and schema contract: `workflow`, `synopsis`, `artifacts`, `records`, and
-`timeline`. Explicit `--view audit` returns that same response. Audit is the
-intentional operator/debugging escape hatch and may be substantially larger
-than the coordination payload.
-
-The other views are bounded tagged projections with top-level `view` and
-`workflow` identity plus exactly one matching payload:
-
-- `coordination` — current/ready/blocking work, latest acknowledged progress,
-  correction authority, and contextual next action. Aion and Daimon use this
-  summary first when coordinating work or inspecting after exit `3` or `4`.
-- `phase` — accepted normative exploration, specification, and design for a
-  phase specialist.
-- `unit --unit-id <wu-id>` — one work-unit definition plus only its current
-  evidence and review, for an Implementer or selective Reviewer hand-off.
-- `aggregate` — normative inputs, accepted plan and unit results, correction,
-  verification, and checkpoint evidence for aggregate review.
-
-Bounded projections omit the audit record graph, timeline, unrelated unit
-evidence, and opaque claim material. After a failed unit CAS, inspect
-`coordination` first and request the selected `unit` view only when the summary
-shows that unit needs attention; never substitute repeated mutation attempts
-for inspection. `pitcrew tui` intentionally continues to load the full audit
-projection because its purpose is interactive historical inspection.
-
-## Project context
-
-`context inspect` reads the central logical-project snapshot without creating
-state and returns `missing`, `incomplete`, or `complete`, six-category coverage,
-facts, gaps, update metadata, and the active checkout root. Main and linked
-worktrees share the snapshot, while file evidence remains confined to the
-active checkout. Its next action is `context initialize` unless complete.
-
-`context initialize` performs one fixed shallow local inventory only when
-context is missing or incomplete and reports `inspection` plus `persisted`.
-`context record` accepts exactly one strict schema-v1 JSON snapshot through a
-regular non-symlink input file. Validation, evidence confinement, and the exact
-legacy-consolidation gate run before the atomic snapshot/audit write. Transport
-and JSON failures exit 2; project, domain, consolidation, and store failures
-exit 3. Snapshots are bounded to 65,536 encoded bytes, six exact categories,
-and 32 ordered facts per category; semantic no-ops create no audit.
-
-`delivery start` accepts strict JSON
-`{"operation_key":"...","route":"direct_inline|delegated_direct","goal":"...","route_reason":"..."}`.
-The stable operation key makes an identical retry idempotent. Aion retains it
-until start acknowledgement and replays the same logical start after a lost
-response, producing one delivery identity rather than trusting one fallible
-invocation. Interrupted or CAS re-entry inspects and resumes that identity; it
-never mints a replacement operation key or trace. Goal is bounded to 4,000
-runes, operation key and actor to 128, and route reason to 500. Start returns
-status `in_progress` at revision 1. `delivery update` accepts strict JSON
-`{"status":"in_progress|blocked|interrupted|completed|cancelled|failed","summary":"...","next_action":"..."}`,
-with summary bounded to 500 runes and next action to 200. Updates use revision
-CAS, permit transitions among non-terminal states or to a terminal state, and
-make terminal traces immutable. `interrupted` records an observed interruption;
-silent provider loss leaves the last observed status unchanged.
+Text and JSON outputs expose the same stable `contract_version` and
+deterministic `contract_digest`. The digest covers only the stable role
+contract; dynamic context, `allowed_actions`, and `next_action` do not change
+it. Callers must obey the returned authority rather than infer permission from
+the stable CLI surface.
 
 ## Project inspection and consolidation
 
-The project ID is the lowercase SHA-256 of the canonical Git common-directory
-path. A main checkout and its linked worktrees share one ID. An independent
-clone or a repository moved to another canonical path receives a different ID
-and therefore a different central root.
+Run `pitcrew project inspect` before a mutation. Inspection is read-only: it
+derives project identity from the canonical Git common directory, reports the
+central state and handle paths, and discovers only bounded checkout-local legacy
+candidates belonging to that common directory.
 
-`pitcrew project inspect` is read-only and non-initializing. Its success
-envelope contains:
-
-```json
-{
-  "project_id": "<64hex>",
-  "git_common_dir": "/canonical/repo/.git",
-  "checkout_root": "/current/checkout",
-  "initialized": false,
-  "repository_move_boundary": false,
-  "paths": {
-    "project_root": "<data-home>/pitcrew/projects/<project-id>",
-    "state_path": ".../state.db",
-    "worktree_root": ".../worktrees",
-    "handle_root": ".../handles"
-  },
-  "legacy": {
-    "candidates": [{"id":"<64hex>","checkout_root":"...","state_path":".../.pitcrew/state.db"}],
-    "diagnostics": [],
-    "candidate_set_id": "<64hex>"
-  }
-}
-```
-
-If candidates exist, workflow mutation fails closed until their exact set is
-acknowledged by a successful consolidation. Submit one strict JSON document:
+When candidates exist, pass a strict manifest to
+`pitcrew project consolidate --input-file <path>`:
 
 ```json
 {
-  "project_id": "<64hex>",
-  "candidate_ids": ["<64hex>"],
-  "choices": [{"workflow_id":"wf-<24hex>","candidate_id":"<64hex>"}]
+  "project_id": "<64 lowercase hex>",
+  "candidate_ids": ["<64 lowercase hex>"],
+  "choices": [
+    {"workflow_id": "wf-<24 lowercase hex>", "candidate_id": "<64 lowercase hex>"}
+  ]
 }
 ```
 
-`choices` is required only for divergent copies of the same complete workflow;
-it selects one whole graph, never individual rows. Run
-`pitcrew project consolidate --input-file <path>`. Success atomically writes
-all selected graphs and returns `project_id` plus `candidate_set_id`. Equal
-copies deduplicate deterministically. Conflicts or incomplete graphs roll back
-the central transaction. Source databases and WAL files are never deleted or rewritten.
+The candidate set must exactly equal the latest inspection. Each duplicate
+workflow ID must be assigned at most once to one listed candidate. Consolidation
+copies complete workflow graphs atomically. Source databases and WAL files are never deleted or rewritten.
 
-If inspection changes before import, inspect again and generate a new manifest;
-do not edit candidate IDs or retry unchanged input. A successful repeat is
-idempotent. The central root is private and defaults to
-`${XDG_DATA_HOME:-$HOME/.local/share}/pitcrew/projects/<project-id>/`.
+## Delivery routing and admission
 
-Global `--help` and `--version` are flags, not commands. `principles [--json]` prints the embedded maxims as exact text or a raw structured JSON array.
-
-`pitcrew install --help` exits 0 without installation and prints:
-
-```text
-Usage: pitcrew install <codex|opencode|claude|pi>
-
-Installs or updates PitCrew agents for one runtime.
-
-Runtimes: codex, opencode, claude, pi
-Read the four maxims of the harness: pitcrew principles.
+<!-- cli-docs:diagram:admission-routing:start -->
+```mermaid
+flowchart TD
+    A[Requested outcome] --> B{Small, understood, low risk?}
+    B -->|yes, one actor| C[direct_inline]
+    B -->|yes, bounded hand-off| D[delegated_direct]
+    B -->|no: durable reasoning needed| E[full workflow]
+    C --> F[delivery start]
+    D --> F
+    E --> G[workflow new]
+    F --> H[delivery update]
 ```
+**Text fallback.** Direct and delegated-direct work share one delivery trace;
+the full route owns the staged aggregate and work units. A direct capability gap
+is reported through the surrounding coordinator and never creates a separate persisted state.
+<!-- cli-docs:diagram:admission-routing:end -->
 
-Missing, unknown, mixed-case, or extra install arguments exit 2 before opening
-the project store or invoking the embedded installer. Their usage envelope has
-message `usage: pitcrew install <codex|opencode|claude|pi>`.
+`delivery start` accepts `direct_inline` or `delegated_direct`. Its
+`operation_key` is idempotent: Identical replay returns the same delivery identity;
+reusing the key with different route, goal, reason, or creator is rejected.
 
-`workflow continue` accepts only a completed or abandoned predecessor. It atomically creates a fresh revision-1 draft with the same name and exact goal, plus a child-owned `continuation` artifact that records the predecessor ID, terminal state, and revision. The predecessor receives no row, event, artifact, or activity writes, and one predecessor may have multiple independent successors. Success returns `data.workflow`, `data.predecessor`, and `next_action: "workflow explore"`.
+<!-- cli-docs:diagram:direct-delivery:start -->
+```mermaid
+stateDiagram-v2
+    [*] --> in_progress: start
+    in_progress --> in_progress: changed fact
+    in_progress --> blocked: observed blocker
+    in_progress --> interrupted: observed interruption
+    in_progress --> completed: observed completion
+    in_progress --> cancelled: observed cancellation
+    in_progress --> failed: observed failure
+    blocked --> in_progress: observed resumption
+    blocked --> blocked: changed blocked fact
+    blocked --> interrupted: observed interruption
+    blocked --> completed: observed completion
+    blocked --> cancelled: observed cancellation
+    blocked --> failed: observed failure
+    interrupted --> in_progress: observed resumption
+    interrupted --> blocked: observed blocker
+    interrupted --> interrupted: changed interrupted fact
+    interrupted --> completed: observed completion
+    interrupted --> cancelled: observed cancellation
+    interrupted --> failed: observed failure
+```
+**Text fallback.** Any non-terminal persisted status may change to any
+non-terminal or terminal status. No-change updates are rejected. Completed,
+cancelled, and failed deliveries are immutable. A stale CAS requires one identity-specific inspection
+with `delivery show` before deciding what to do.
+<!-- cli-docs:diagram:direct-delivery:end -->
 
-## Read-only terminal inspection
+## Full workflow lifecycle
 
-`pitcrew tui` runs the embedded visual inspector in the current process. Workflow detail is a four-pane operations cockpit: **Tree** preserves stable workflow, stage, unit, and durable-record identity; **Status** keeps lifecycle facts and the executable next action separate from acknowledged progress; **Units** follows accepted plan order with textual status and reasons; **Activity** shows chronological human-readable actions and opens their exact durable evidence without exposing claim handles or secrets. Exact planned-work percentages appear only when a valid accepted plan reconciles with its work units; otherwise Status explains why precision is unavailable.
+<!-- cli-docs:diagram:aggregate:start -->
+```mermaid
+stateDiagram-v2
+    [*] --> draft: workflow new
+    draft --> exploring: explore
+    exploring --> exploring: explore amendment
+    exploring --> specifying: spec
+    exploring --> designing: design shortcut
+    specifying --> specifying: spec amendment
+    specifying --> designing: design
+    designing --> designing: design amendment
+    designing --> planning: plan
+    planning --> plan_approved: approve-plan
+    plan_approved --> implementing: begin-implementation
+    implementing --> ready_to_complete: last unit completed
+    ready_to_complete --> completed: complete approved
+    ready_to_complete --> ready_to_complete: complete corrections; persist blocker only
+    ready_to_complete --> ready_to_complete: authorize-correction; authority only
+    ready_to_complete --> implementing: recover-aggregate; reopen units at next revisions
+```
+**Text fallback.** Every non-terminal aggregate state can transition to `abandoned`.
+Completed and abandoned predecessors remain immutable. The operational rule is
+`workflow continue --from; predecessor immutable`: the command creates an
+independent revision-1 draft child with pinned normative lineage.
+A corrections verdict persists only the review and leaves unit revisions unchanged. Only
+`recover-aggregate` advances reopened units to their next revisions and returns fresh handles.
+<!-- cli-docs:diagram:aggregate:end -->
 
-At `120x30` or larger the panes render as an exact-height 2x2 grid. Smaller supported terminals, including `80x24`, `60x24`, and the `60x16` minimum, render one focused pane with a tab strip rather than squeezing columns. `Tab` and `Shift+Tab` cycle panes in reading order and reverse order. Arrow and Vim keys move within the focused pane; Tree uses Left/`h` and Right/`l` to collapse, ascend, expand, or descend; Activity additionally supports Page Up/Page Down/Home/End. `Enter` expands Tree branches or opens the selected record/activity evidence. Left/`h` or `Esc` returns from drill-down. `/` opens a visible focused search row, where `Enter` submits and `Esc` cancels. `r` refreshes without losing semantic focus, except while search owns text input, and `q` exits outside text entry.
+The normal next-action chain is explore, spec, design, plan, approve-plan,
+begin-implementation, list-ready-units, and complete. Amendments are permitted
+where shown, and exploration may go directly to design. Operational `progress`
+and `request-capability` records increment the aggregate revision without
+changing its lifecycle state. `amend-plan` validates its input, but no success
+path exists in this control-plane revision because no unforgeable amendment
+authority is implemented.
 
-Color never carries meaning alone. `NO_COLOR` disables ANSI color while retaining selection and focused-pane cues. `PITCREW_ASCII=1` replaces Unicode state, tree, selection, and border glyphs with ASCII equivalents while retaining color when supported. `TERM=dumb` selects both ASCII and monochrome fallbacks. Refresh errors retain the prior data for retry. Home and Workflows retain their established compositions. All views resolve Git identity and read only the central state database; the TUI does not initialize a repository, run migrations, mutate workflow state, or invoke another executable. An uninitialized project shows `No PitCrew repository is initialized for this project.` and remains unchanged.
+## Work units and opaque authority
 
-## JSON input files
+<!-- cli-docs:diagram:unit-authority:start -->
+```mermaid
+stateDiagram-v2
+    state "Persisted: pending" as pending
+    state "Persisted: reviewing" as reviewing
+    state "Persisted: done" as done
+    pending --> reviewing: unit-tdd with implementation handle
+    reviewing --> pending: unit-review corrections; next revision
+    reviewing --> reviewing: unit-review approved
+    reviewing --> done: unit-complete with implementation handle
+    done --> pending: recover-aggregate with fresh authority
+```
+**Text fallback.** Persisted unit state is only pending, reviewing, or done.
+Effective handle/activity status is projected separately. `claim-unit` grants
+short-lived implementation authority; `handoff-review` grants review authority
+to a different actor. `recover-review` is identity-bound to the original reviewer.
+An approved review does not complete a unit: `unit-complete` consumes the
+implementation handle. The last unit atomically advances the workflow to `ready_to_complete`.
+<!-- cli-docs:diagram:unit-authority:end -->
 
-`--input-file` is the only payload transport for stage artifacts, operational reports, plans, TDD evidence, and reviews. PitCrew rejects symlinks, non-regular files, invalid UTF-8, unknown fields, malformed JSON, trailing data, and multiple documents before opening the project store.
+<a id="command-catalog"></a>
+## Command catalog
 
-### Stage artifact
+<!-- cli-docs:command-catalog:start -->
+
+### Root and non-workflow commands
+
+| Command | Required or accepted input | Result |
+|---|---|---|
+| `--help` | none | root help |
+| `--version` | none | version text |
+| `agent brief` | `--role [--workflow-id] [--unit-id] [--json]` | versioned role contract and bounded authority |
+| `install` | runtime name | managed runtime files |
+| `project inspect` | none | identity, paths, legacy discovery |
+| `project consolidate` | `--input-file` | copied workflow graphs |
+| `context inspect` | none | bounded project-context inspection |
+| `context initialize` | none | inferred/persisted context bootstrap |
+| `context record` | `--actor --input-file` | validated context snapshot |
+| `delivery start` | `--actor --input-file` | direct delivery trace |
+| `delivery update` | `--delivery-id --revision --actor --input-file` | revised trace |
+| `delivery show` | `--delivery-id` | direct or workflow delivery detail |
+| `delivery search` | `--query` | matching deliveries |
+| `delivery active` | none | active deliveries |
+| `tui` | none | read-only terminal cockpit |
+| `principles` | optional `--json` | embedded maxims |
+
+### Workflow commands
+
+| Command | Required or accepted input | Main effect |
+|---|---|---|
+| `workflow new` | `--name --goal --actor` | create draft |
+| `workflow continue` | `--from --actor` | create child draft |
+| `workflow show` | `--workflow-id [--view] [--unit-id]` | read projection |
+| `workflow progress` | `--workflow-id --revision --actor --input-file` | append operational fact |
+| `workflow request-capability` | `--workflow-id --revision --actor --input-file` | append capability request |
+| `workflow explore` | `--workflow-id --revision --actor --input-file` | accept exploration |
+| `workflow spec` | `--workflow-id --revision --actor --input-file` | accept specification |
+| `workflow design` | `--workflow-id --revision --actor --input-file` | accept design |
+| `workflow plan` | `--workflow-id --revision --actor --input-file` | submit plan |
+| `workflow amend-plan` | `--workflow-id --revision --actor --input-file` | validate then reject |
+| `workflow approve-plan` | `--workflow-id --revision --actor [--approve-exception ...]` | approve plan |
+| `workflow list-ready-units` | `--workflow-id` | read schedulable units |
+| `workflow begin-implementation` | `--workflow-id --revision --actor` | enter implementation |
+| `workflow complete` | `--workflow-id --revision --actor --input-file` | record aggregate review |
+| `workflow authorize-correction` | `--workflow-id --revision --actor --input-file` | persist user authority |
+| `workflow abandon` | `--workflow-id --revision --actor --reason` | terminate workflow |
+| `workflow claim-unit` | `--workflow-id --unit-id --revision --actor --handle-dir` | issue implementation handle |
+| `workflow recover-unit-claim` | `--workflow-id --unit-id --revision --actor --handle-dir` | recover implementation handle |
+| `workflow recover-aggregate` | aggregate flags plus exactly one selection form | reopen corrected units |
+| `workflow handoff-review` | `--workflow-id --unit-id --revision --actor --handle-dir` | issue review handle |
+| `workflow recover-review` | `--workflow-id --unit-id --revision --actor --handle-dir` | recover review handle |
+| `workflow unit-tdd` | unit flags plus `--input-file` | persist TDD evidence |
+| `workflow unit-review` | unit flags plus `--input-file` | persist independent review |
+| `workflow unit-complete` | unit flags | complete approved unit |
+<!-- cli-docs:command-catalog:end -->
+
+## JSON payloads
+
+Every payload is the one strict JSON document described by the process contract.
+The following shapes name every accepted top-level field; omitted fields shown
+as empty strings are still present unless explicitly called optional.
+
+### Direct delivery and operational facts
+
+- `delivery start`:
+  `{"operation_key":"stable-key","route":"direct_inline|delegated_direct","goal":"...","route_reason":"..."}`.
+  Actor and operation key are required and at most 128 runes, goal is required
+  and at most 4,000, and the optional route reason is at most 500. An identical
+  operation-key replay is idempotent; changing route, goal, reason, or creator
+  for that key is a state error.
+- `delivery update`:
+  `{"status":"in_progress|blocked|interrupted|completed|cancelled|failed","summary":"...","next_action":"..."}`.
+  Summary is optional up to 500 runes and next action up to 200. The update must
+  change at least one persisted fact.
+- `workflow progress`:
+  `{"status":"advanced|blocked","summary":"...","next_action":"..."}`;
+  every field is required and the strings are trimmed before storage.
+- `workflow request-capability`:
+  `{"capability":"...","reason":"...","blocked_action":"..."}`;
+  all three values must be nonblank. Both operational commands append an
+  artifact and activity without changing lifecycle state.
+
+### Context and normative stages
+
+`context record` accepts schema version 1 with exactly the six categories `stack`, `runtime`, `deployment`, `architecture`, `documentation`, and `sdd`:
 
 ```json
-{"content":"non-empty artifact content"}
+{"schema_version":1,"facts":{"stack":[],"runtime":[],"deployment":[],"architecture":[],"documentation":[],"sdd":[{"assertion":"...","observed_at":"2026-08-31T12:00:00Z","evidence":{"path":"go.mod","line_range":"1-10"}}]}}
 ```
 
-The command infers `exploration`, `specification`, or `design`. While a workflow remains in `exploring`, `specifying`, or `designing`, its corresponding stage command may be repeated to append an amendment. The amendment increments the revision without advancing the state, and the response keeps the forward `next_action`. `workflow show` returns all accepted artifacts ordered by revision and insertion order. Later and terminal states still reject stage amendments.
+There are at most 32 facts per category and 65,536 encoded bytes. Each fact has
+a nonblank bounded assertion, an RFC3339 timestamp, and exactly one evidence
+mode: a normalized repository-relative `path` with optional `line_range`, or
+both `command` and `summary`.
 
-### Progress report
+`explore`, `spec`, and `design` accept either legacy prose
+`{"content":"..."}` or a typed normative artifact:
 
 ```json
-{"status":"advanced","summary":"Unit tests pass","next_action":"workflow handoff-review"}
+{"content":"...","schema_version":1,"entries":[{"kind":"requirement","id":"REQ-CLI-001","operation":"add","body":{"text":"..."}},{"kind":"scenario","id":"SCN-CLI-001","parent_id":"REQ-CLI-001","operation":"add","body":{"text":"..."}}]}
 ```
 
-`status` is exactly `advanced` or `blocked`; every field is required and trimmed before canonical storage. Progress observes the supplied non-terminal workflow revision and appends an artifact plus linked activity without changing state, revision, timestamp, or events. Repeated reports remain ordered. Success returns the typed report and uses its submitted `next_action`.
+`schema_version` and `entries` must be supplied together. Entry kind is
+`requirement`, `scenario`, or `section`; operation is `add`, `replace`, or `remove`.
+IDs are stable uppercase hyphenated identifiers, requirement and
+scenario IDs use their `REQ-` and `SCN-` prefixes, IDs are unique within the
+artifact, scenario `add` requires `parent_id`, and every non-remove entry needs
+a valid JSON `body`. Typed entries and prose are stored atomically; legacy
+prose is never inferred into typed entries.
 
-The TUI synopsis shows only the latest valid progress report, with a non-color advanced or blocked marker, its summary, and its report-specific next action. Lifecycle/unit facts and their executable next action remain separate. Every progress artifact remains available in chronological history and drill-down. Refresh reads the latest report without polling or writing. Daimon reports concise status only for a real transition, completed unit, resolved correction, achieved small objective, or observed blocker; otherwise it stays silent rather than fabricating movement or repeating encouragement.
+### Plan, evidence, review, and correction
 
-### Capability request
+For `workflow plan` and the always-rejected `workflow amend-plan`, `summary`,
+`scope`, `work_units`, and `max_parallel_units` are required:
 
 ```json
-{"capability":"browser tool","reason":"UI behavior needs verification","blocked_action":"inspect the running page"}
+{"summary":"...","scope":"docs","max_parallel_units":1,"aggregate_correction_policy":{"automatic_rounds":1,"on_exhaustion":"require_user_authorization"},"work_units":[{"id":"wu-<24hex>","description":"...","scope":"docs/file.md","areas":["docs"],"depends_on":[],"estimated_changed_lines":100,"estimated_review_minutes":30,"coverage":[{"requirement_id":"REQ-CLI-001","scenario_ids":["SCN-CLI-001"]}]}]}
 ```
 
-Every field is required, trimmed, and stored canonically. The command observes an exact non-terminal revision, appends `capability_request` plus `capability_requested`, and returns `next_action: "aion coordinate requested capability"` without changing lifecycle state. Repeated requests remain ordered and generically inspectable. A request records a missing tool, command, or transition; it has no fulfillment, ownership, resolution, or status lifecycle and does not imply the capability exists.
+Scope and areas are normalized repository-relative prefixes. IDs and coverage
+are unique and well formed, dependencies name known units and are acyclic, and
+overlapping units require an optional `overlap_approvals` pair with a nonblank
+justification. Estimates are nonnegative; over 400 changed lines or 60 review
+minutes requires `admission_exception.justification` and the same unit ID must
+be named once with `--approve-exception`. The correction policy defaults to one
+automatic round; when supplied, rounds are `0` or `1` and `on_exhaustion` is
+`require_user_authorization`.
 
-### Plan
+`workflow unit-tdd` requires `red_command`, `red_outcome`, `green_command`,
+`green_outcome`, `refactor_summary`, `validation_command`,
+`validation_outcome`, and `changed_paths`. Red must record a nonzero `exit N`;
+green and validation must record `exit 0`. Changed paths are normalized,
+repository-relative, comma-separated prefixes without globs. Structured units
+also require current `focused` and `affected_package` verification runs and one
+successful scenario result for every covered scenario; results reference a
+current run that names that scenario.
+
+`workflow unit-review` accepts
+`{"verdict":"approved|corrections","summary":"...","findings":"...","plan_impact":"inside|outside"}`.
+All first three fields are required. Approved review omits `plan_impact`;
+corrections require nonblank `findings` and `plan_impact` and advance the unit
+revision. An `outside` impact asks Aion to revise the plan.
+
+`workflow complete` uses the same required verdict, summary, and findings plus
+optional `verification_runs` and `checkpoint`. Aggregate corrections require
+nonblank findings. Approval of a structured plan requires current successful
+aggregate verification covering all scenarios and a matching reviewed
+checkpoint.
+
+`workflow authorize-correction` accepts
+`{"aggregate_review_revision":1,"reason":"...","user_direction_confirmed":true}`.
+The revision is positive, reason is nonblank and at most 1,024 runes, and
+`user_direction_confirmed` must be `true` for the current unresolved blocker.
+
+Batch `workflow recover-aggregate` accepts:
 
 ```json
-{
-  "summary": "One reviewable unit",
-  "scope": "internal/example",
-  "max_parallel_units": 1,
-  "work_units": [{
-    "id": "wu-000000000000000000000001",
-    "description": "Implement the example",
-    "scope": "internal/example",
-    "areas": ["internal/example"],
-    "depends_on": [],
-    "estimated_changed_lines": 200,
-    "estimated_review_minutes": 30
-  }]
-}
+{"aggregate_review_revision":1,"groups":[{"causal_invariant":"...","findings":["..."],"unit_ids":["wu-<24hex>"]}],"assignments":[{"unit_id":"wu-<24hex>","actor":"implementer"}]}
 ```
 
-Units over 400 changed lines or 60 review minutes require a non-empty `admission_exception.justification` and a matching repeatable `--approve-exception` during approval. Explicit `overlap_approvals` may name one exact unit pair with justification.
+There are 1-16 nonempty causal groups, each selected unit occurs once, and the
+request has exactly one assignment for every selected unit. Recovery requires
+current automatic or user-authorized correction authority and atomically
+reopens the selected done units at their next revisions.
 
-### Amend plan
+## Parser, storage, handle, and output invariants
 
-`workflow amend-plan` requires `--workflow-id`, syntactically valid `--revision`, non-empty declarative `--actor`, and the same strictly validated plan JSON file as `plan`. This control-plane revision has no opaque structural plan-amendment authority, so it always exits `3` with `amend-plan requires structural plan amendment authority; no such authority exists`. Neither `--actor aion` nor any other flag value can authorize, bypass, or change that outcome. The command does not inspect or mutate planning state, plan rows, work units, artifacts, events, or CAS; the revision is parsed only because the closed input matrix requires it. Submit corrected scope through the applicable new or continued workflow. A future authorized amendment must use non-forgeable authority, preserve the replaced plan as durable history, atomically replace pending units, and use CAS.
+Only long-form `--flag value` or `--flag=value` forms are accepted. Values are
+nonblank. Unknown flags, missing values, and duplicate non-repeatable flags are
+usage errors. Only `--approve-exception` is repeatable. The claim debug switch
+is a value-less boolean. Positive decimal revisions are compare-and-swap
+expectations; workflow, unit, and delivery IDs must match the command-specific
+lowercase hexadecimal form.
 
-### TDD evidence
+Mutations open central project storage only after flag, transport, and payload
+validation. Read operations open it read-only. A detected unacknowledged legacy
+candidate blocks storage use until consolidation; among delivery commands,
+`delivery active` alone treats an uninitialized project as an empty list. Successful workflow mutations commit
+their state, artifact/evidence, event/activity, and handle changes atomically.
+`project inspect` and `context inspect` are explicitly non-initializing. The
+central database is `<data-home>/pitcrew/projects/<project-id>/state.db`, where
+the project ID is the SHA-256 of the canonical Git common-directory path, so
+linked worktrees share state while independent clones do not.
 
-```json
-{
-  "red_command": "go test ./internal/example -run TestBehavior",
-  "red_outcome": "exit 1: behavior missing",
-  "green_command": "go test ./internal/example -run TestBehavior",
-  "green_outcome": "exit 0",
-  "refactor_summary": "Removed duplication",
-  "validation_command": "go test ./...",
-  "validation_outcome": "exit 0",
-  "changed_paths": "internal/example"
-}
-```
+Normal claim, recovery, and review handoff success returns `data.handle_path`.
+`--print-claim-handle-secret-once` returns `data.claim_secret` instead and is
+accepted only by `claim-unit`; never log either authority value. Handles are
+actor-, workflow-, unit-, revision-, and purpose-bound, short-lived, stored as
+private regular files, consumed for their permitted mutation, and rejected with
+exit 5 when invalid, expired, unsafe, or used for the wrong identity or purpose.
+`recover-review` preserves the original reviewer identity; implementation and
+review identities must differ. Every current handle lease is capped at 15
+minutes and use never extends it. The debug-secret form deletes its staged file
+and revokes the database claim before returning the secret.
 
-### Unit review
+`recover-aggregate` returns `data.handles[]` entries with `unit_id`,
+`unit_revision`, `actor`, and `handle_path`. `unit-tdd` returns
+`state: reviewing`; `unit-review` returns the resulting `unit_revision` and
+`plan_revision_required`; `unit-complete` returns `state: done` plus the current
+workflow. Read and mutation commands otherwise return the domain object named
+by their profile (`workflow`, `plan`, `delivery`, `deliveries`, context
+inspection, or project inspection) and the executable `next_action`.
 
-Approved:
+### Success data by command family
 
-```json
-{"verdict":"approved","summary":"Evidence and implementation match","findings":""}
-```
+| Command family | `data` on success |
+|---|---|
+| `project inspect` | project identity, Git/checkout paths, initialization and move flags, central paths, and legacy discovery |
+| `project consolidate` | `project_id` and accepted `candidate_set_id` |
+| `context inspect` / `record` | status, schema/facts/coverage/gaps, update time, and checkout root |
+| `context initialize` | `inspection` plus boolean `persisted` |
+| `delivery start` / `update` | `delivery` trace |
+| `delivery show` | direct or workflow delivery detail |
+| `delivery search` / `active` | `deliveries` array |
+| Aggregate mutations (`workflow new`, stages, plan, approval, begin, complete, authorization, abandon) | current `workflow`, plus the command-specific plan/review/authorization result where applicable |
+| Inspection (`workflow show`) | full audit fields, or the explicitly tagged bounded projection |
+| Scheduling (`workflow list-ready-units`) | schedulable `units` array |
+| claim/recovery/handoff | one `handle_path`, one debug `claim_secret`, or recovery `handles` array as described above |
+| unit TDD/review/complete | unit identity/revision and resulting state or plan-impact flag; completion also returns current workflow |
 
-Corrections:
+`install`, TUI success, help, version, and plain `principles` are intentionally
+not success envelopes: they stream installer/interactive/plain-text output.
+`principles --json` emits the structured maxim array directly.
 
-```json
-{"verdict":"corrections","summary":"Boundary missing","findings":"Add the expiry case","plan_impact":"inside"}
-```
+## Command profiles
 
-Outside-plan corrections use `"plan_impact":"outside"` and return `aion revise plan`, requiring Aion to revise the plan through a new OpenSpec change.
+Every profile uses the same eight fields.
+<!-- cli-docs:profiles:start -->
 
-Unit review is optional: current TDD evidence plus the active implementation handle can complete a unit without an approval. When selected, Aion uses `handoff-review` to issue independent reviewer-owned authority and passes only its opaque path to the Reviewer; `unit-review` consumes that handle atomically with the verdict. If it expires before a verdict, `recover-review` rotates only review authority for the same reviewer. A corrections verdict reopens the unit, returns `recover-unit-claim`, and requires fresh evidence. During reviewing, that recovery command is restricted to the current evidence actor and yields completion-ready implementation authority.
+<!-- cli-docs:profile:global-help:start -->
+<a id="profile-global-help"></a>
+#### `pitcrew --help`
+**Purpose:** Show root command inventory.
+**Syntax:** `pitcrew --help`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** None.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Plain root help and maxim pointer.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew --help`
+<!-- cli-docs:profile:global-help:end -->
 
-### Aggregate review
+<!-- cli-docs:profile:global-version:start -->
+<a id="profile-global-version"></a>
+#### `pitcrew --version`
+**Purpose:** Show the compiled version.
+**Syntax:** `pitcrew --version`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** None.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Plain `pitcrew <version>` text.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew --version`
+<!-- cli-docs:profile:global-version:end -->
 
-`workflow complete` uses the approved review shape above, or a corrections payload without `plan_impact`. The independent reviewer compares the repository result and tests with requirements, every specification/design amendment, the approved plan and tasks, current implementation evidence, unit reviews, and the declared `aggregate_correction_policy`. Approval with no blocker records the review and completes atomically. Corrections record one review, advance workflow CAS, remain `ready_to_complete`, and consume no round. Repeating `complete` while that blocker is unresolved fails without mutation.
+<!-- cli-docs:profile:agent:start -->
+<a id="profile-agent"></a>
+#### `pitcrew agent brief [options]`
+**Purpose:** Select the read-only role-brief interface.
+**Syntax:** `pitcrew agent brief --role <role> [--workflow-id wf-<24hex>] [--unit-id wu-<24hex>] [--json]`
+**Caller and behavior:** A native role invokes the command during activation; the command validates role-scoped context before any project read and never creates or mutates state.
+**Preconditions:** A supported role and a context combination permitted for that role.
+**Inputs:** `--role` is required; workflow and unit identity are role-scoped, and `--json` switches from text to the standard JSON envelope.
+**Success:** A stable versioned role contract plus bounded dynamic context, allowed actions, and next action.
+**Failures and recovery:** Invalid role/context combinations exit `2`; a required project or projection that cannot be read exits through the standard state envelope. Correct the identity once rather than retrying blindly.
+**Example:** `pitcrew agent brief --role aion --json`
+<!-- cli-docs:profile:agent:end -->
 
-For a workflow whose accepted plan has structured scenario coverage, approval
-transports the existing aggregate evidence types in one strict input document:
+<!-- cli-docs:profile:agent-brief:start -->
+<a id="profile-agent-brief"></a>
+#### `pitcrew agent brief --role <role> [options]`
+**Purpose:** Return the selected role's current contract and authority.
+**Syntax:** `pitcrew agent brief --role <role> [--workflow-id wf-<24hex>] [--unit-id wu-<24hex>] [--json]`
+**Caller and behavior:** Daimon, Aion, or a named specialist reads its own brief; the command selects no-context, continuity, coordination, phase, unit, or aggregate data strictly from the role/context combination.
+**Preconditions:** Daimon and the initializer use no IDs; Aion optionally uses a workflow; phase roles require a workflow; implementer requires workflow and unit; reviewer requires workflow and optionally unit.
+**Inputs:** Supported roles are `daimon`, `aion`, `pc2-explorer`, `pc2-specifier`, `pc2-designer`, `pc2-task-planner`, `pc2-implementer`, `pc2-reviewer`, and `pc2-sdd-initializer`.
+**Success:** Text by default, or `data.brief` with `--json`; both include identical `contract_version` and `contract_digest` and the same effective authority.
+**Failures and recovery:** Unsupported roles, malformed IDs, and forbidden context combinations fail before project inspection; missing required state or projections fail without mutation.
+**Example:** `pitcrew agent brief --role pc2-reviewer --workflow-id wf-<24hex> --json`
+<!-- cli-docs:profile:agent-brief:end -->
 
-```json
-{
-  "verdict": "approved",
-  "summary": "requirements satisfied",
-  "findings": "",
-  "verification_runs": [{
-    "id": "vr-aggregate",
-    "tier": "aggregate_full",
-    "command": "go test ./...",
-    "outcome": "exit 0",
-    "repository_fingerprint": "observed-fingerprint",
-    "scenario_ids": ["SCN-EXAMPLE-001"]
-  }],
-  "checkpoint": {
-    "project_id": "64-hex-project-id",
-    "checkout_root": "/absolute/checkout",
-    "base_revision": "40-hex-base-revision",
-    "head_revision": "40-hex-head-revision",
-    "result_digest": "64-hex-result-digest",
-    "dirty": false
-  }
-}
-```
+<!-- cli-docs:profile:install:start -->
+<a id="profile-install"></a>
+#### `pitcrew install <codex|opencode|claude|pi>`
+**Purpose:** Install native definitions for one runtime.
+**Syntax:** `pitcrew install <codex|opencode|claude|pi>`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** Supported runtime and writable runtime configuration.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Installer output after private extraction is removed.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew install <codex|opencode|claude|pi>`
+<!-- cli-docs:profile:install:end -->
 
-Each verification run also accepts optional `reused_from_id`; the checkpoint
-accepts optional `commit_ref` and `delivery_id`. Unknown fields at any level
-fail strict decoding before the store opens. The CLI maps both fields
-one-for-one into the aggregate review; the evidence service remains
-authoritative for current successful `aggregate_full` verification, current
-focused and affected-package unit evidence, identifiable checkpoint, actor,
-CAS, blocker, and terminal-state validation. Any failed validation rolls back
-the review, verification records, checkpoint, events, activities, and workflow
-transition together. Legacy unstructured approval and every corrections
-payload retain the three-field `verdict`, `summary`, and `findings` shape.
+<!-- cli-docs:profile:project:start -->
+<a id="profile-project"></a>
+#### `pitcrew project <inspect|consolidate> [options]`
+**Purpose:** Select project identity operations.
+**Syntax:** `pitcrew project <inspect|consolidate> [options]`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** A Git repository.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Delegates to the selected subcommand.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew project <inspect|consolidate> [options]`
+<!-- cli-docs:profile:project:end -->
 
-New plans normalize an omitted correction policy to `{"automatic_rounds":1,"on_exhaustion":"require_user_authorization"}`; only zero or one automatic round is accepted. Historical stored plans missing the field project the same default without rewriting and retain their legacy distinction. The shared projection reports rounds used/allowed, latest unresolved blocker, `automatic|authorized|none` authority, and one next action. A successful grouped recovery or grandfathered historical single-unit recovery consumes one round; review attempts, findings, selected-unit count, and failures do not.
+<!-- cli-docs:profile:project-inspect:start -->
+<a id="profile-project-inspect"></a>
+#### `pitcrew project inspect`
+**Purpose:** Inspect identity, central paths, and bounded legacy candidates without mutation.
+**Syntax:** `pitcrew project inspect`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** A safely resolvable Git common directory.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** A JSON inspection and next action.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew project inspect`
+<!-- cli-docs:profile:project-inspect:end -->
 
-Policy-aware `workflow recover-aggregate` requires strict input `{"aggregate_review_revision":7,"groups":[{"causal_invariant":"one boundary","findings":["finding"],"unit_ids":["wu-..."]}],"assignments":[{"unit_id":"wu-...","actor":"implementer"}]}`. Groups are bounded, unit ids form one unique union of existing done units, and assignments cover it exactly once. Authority is derived. One transaction appends one aggregate-correction artifact/activity, reopens every selected unit once, revokes superseded handles, moves to `implementing`, and returns only `data.handles` entries containing `unit_id`, `unit_revision`, `actor`, and `handle_path`. Historical plans may instead use exactly one `--unit-id`; policy-aware plans reject it, and no request accepts both forms. Files and database mutation roll back together on ordinary failure. No artifact, activity, or output exposes a secret or hash.
+<!-- cli-docs:profile:project-consolidate:start -->
+<a id="profile-project-consolidate"></a>
+#### `pitcrew project consolidate --input-file <path>`
+**Purpose:** Copy selected legacy workflow graphs into central state.
+**Syntax:** `pitcrew project consolidate --input-file <path>`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** A manifest matching the latest candidate set.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Project and candidate-set identity.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew project consolidate --input-file <path>`
+<!-- cli-docs:profile:project-consolidate:end -->
 
-When the projection returns `user authorization required`, Aion must obtain explicit user direction before invoking `workflow authorize-correction` with strict `{"aggregate_review_revision":7,"reason":"user direction","user_direction_confirmed":true}`. Only the exact current exhausted blocker accepts one unconsumed authorization; success appends an artifact/activity and same-state CAS event. It grants one authorized grouped recovery. Premature, repeated, mismatched, or terminal requests exit `3`; stale CAS exits `4`; malformed, mixed, or unknown fields exit `2`. Actor and confirmation are audited assertions, not authentication.
+<!-- cli-docs:profile:context:start -->
+<a id="profile-context"></a>
+#### `pitcrew context <inspect|initialize|record> [options]`
+**Purpose:** Select bounded project-context operations.
+**Syntax:** `pitcrew context <inspect|initialize|record> [options]`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** A resolvable project.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Delegates to the selected subcommand.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew context <inspect|initialize|record> [options]`
+<!-- cli-docs:profile:context:end -->
 
-## Envelopes and exit codes
+<!-- cli-docs:profile:context-inspect:start -->
+<a id="profile-context-inspect"></a>
+#### `pitcrew context inspect`
+**Purpose:** Read evidence-backed context completeness.
+**Syntax:** `pitcrew context inspect`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** A resolvable project; no store creation is performed.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Inspection and `workflow new` or `context initialize`.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew context inspect`
+<!-- cli-docs:profile:context-inspect:end -->
 
-Successful workflow commands write one JSON document to stdout:
+<!-- cli-docs:profile:context-initialize:start -->
+<a id="profile-context-initialize"></a>
+#### `pitcrew context initialize`
+**Purpose:** Bootstrap context from repository evidence.
+**Syntax:** `pitcrew context initialize`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** Legacy history must not block persistence.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Inspection plus whether a snapshot was persisted.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew context initialize`
+<!-- cli-docs:profile:context-initialize:end -->
 
-```json
-{"ok":true,"data":{},"warnings":[],"next_action":"workflow show"}
-```
+<!-- cli-docs:profile:context-record:start -->
+<a id="profile-context-record"></a>
+#### `pitcrew context record --actor <actor> --input-file <path>`
+**Purpose:** Replace the bounded context snapshot.
+**Syntax:** `pitcrew context record --actor <actor> --input-file <path>`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** Schema version 1, all six categories, valid repository evidence.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Updated inspection and next action.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew context record --actor <actor> --input-file <path>`
+<!-- cli-docs:profile:context-record:end -->
 
-Workflow failures and install argument failures write one single-line JSON
-error to stderr and nothing to stdout. After valid install dispatch, runtime
-prerequisite, validation, write, rollback, and wrapper failures retain their
-actionable plain stderr and non-zero child/wrapper status; they are not wrapped
-as workflow JSON and never emit the success line.
+<!-- cli-docs:profile:delivery:start -->
+<a id="profile-delivery"></a>
+#### `pitcrew delivery <start|update|show|search|active> [options]`
+**Purpose:** Select direct-delivery operations.
+**Syntax:** `pitcrew delivery <start|update|show|search|active> [options]`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** A valid subcommand.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Delegates to the selected subcommand.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew delivery <start|update|show|search|active> [options]`
+<!-- cli-docs:profile:delivery:end -->
 
-- `0 — ok`
-- `1 — internal`
-- `2 — usage`
-- `3 — state`
-- `4 — CAS`
-- `5 — handle`
+<!-- cli-docs:profile:delivery-start:start -->
+<a id="profile-delivery-start"></a>
+#### `pitcrew delivery start --actor <actor> --input-file <path>`
+**Purpose:** Create or idempotently replay a direct trace.
+**Syntax:** `pitcrew delivery start --actor <actor> --input-file <path>`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** Valid start payload and writable initialized project.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** The delivery at revision 1 or the identical existing trace.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew delivery start --actor <actor> --input-file <path>`
+<!-- cli-docs:profile:delivery-start:end -->
 
-Workflow mutations compare `--revision` with the aggregate revision. Unit commands compare it with the unit revision. `amend-plan` is the explicit no-authority exception: it parses but never uses its revision because it always rejects before a mutation. On exit `3` or `4`, inspect current state once. If the attempted work is legitimate but the harness blocks it, surface the obstruction; never repeat an identical command.
+<!-- cli-docs:profile:delivery-update:start -->
+<a id="profile-delivery-update"></a>
+#### `pitcrew delivery update --delivery-id dl-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Purpose:** Record a changed delivery fact.
+**Syntax:** `pitcrew delivery update --delivery-id dl-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** Non-terminal direct trace at the expected revision.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Revised trace and its requested next action.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew delivery update --delivery-id dl-<24hex> --revision <n> --actor <actor> --input-file <path>`
+<!-- cli-docs:profile:delivery-update:end -->
 
-## Opaque claims
+<!-- cli-docs:profile:delivery-show:start -->
+<a id="profile-delivery-show"></a>
+#### `pitcrew delivery show --delivery-id <dl-or-wf-id>`
+**Purpose:** Read one direct or workflow delivery projection.
+**Syntax:** `pitcrew delivery show --delivery-id <dl-or-wf-id>`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** Initialized project and valid delivery identity.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Delivery detail without mutation.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew delivery show --delivery-id <dl-or-wf-id>`
+<!-- cli-docs:profile:delivery-show:end -->
 
-Production claim and recovery (`claim-unit`, `recover-unit-claim`, `recover-review`, and `recover-aggregate`) return only opaque paths (`recover-aggregate` returns them inside `data.handles`). Handle files are caller-owned `0600` JSON inside a `0700` directory; they contain a secret hash, never the plaintext secret. Each implementation or review handle has a purpose-aware fifteen-minute lease measured from issue; successful use activates but never renews that capped lease. Completion or review consumption revokes the matching authority. Handles are bound to their workflow, selected unit, revision, purpose, and declarative collision metadata; they cannot select another unit or survive expiry/revocation. PitCrew uses no heartbeat polling or background renewal.
+<!-- cli-docs:profile:delivery-search:start -->
+<a id="profile-delivery-search"></a>
+#### `pitcrew delivery search --query <text>`
+**Purpose:** Search delivery history.
+**Syntax:** `pitcrew delivery search --query <text>`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** Initialized project and nonblank query.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Matching deliveries.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew delivery search --query <text>`
+<!-- cli-docs:profile:delivery-search:end -->
 
-The hidden `--print-claim-handle-secret-once` flag is for operators only. It never appears in help or agent templates. It commits revocation before returning the secret exactly once at `data.claim_secret`.
+<!-- cli-docs:profile:delivery-active:start -->
+<a id="profile-delivery-active"></a>
+#### `pitcrew delivery active`
+**Purpose:** List non-terminal deliveries.
+**Syntax:** `pitcrew delivery active`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** No options; uninitialized projects are treated as empty.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Zero, one, or many active deliveries with identity-aware next action.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew delivery active`
+<!-- cli-docs:profile:delivery-active:end -->
+
+<!-- cli-docs:profile:tui:start -->
+<a id="profile-tui"></a>
+#### `pitcrew tui`
+**Purpose:** Open the read-only terminal cockpit.
+**Syntax:** `pitcrew tui`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** A resolvable initialized project and usable terminal.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Interactive history view; no JSON envelope on success.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew tui`
+<!-- cli-docs:profile:tui:end -->
+
+<!-- cli-docs:profile:principles:start -->
+<a id="profile-principles"></a>
+#### `pitcrew principles [--json]`
+**Purpose:** Print the four embedded maxims.
+**Syntax:** `pitcrew principles [--json]`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** No other flags.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Markdown text or structured JSON.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew principles [--json]`
+<!-- cli-docs:profile:principles:end -->
+
+<!-- cli-docs:profile:workflow:start -->
+<a id="profile-workflow"></a>
+#### `pitcrew workflow <subcommand> [options]`
+**Purpose:** Select one of the 24 workflow commands.
+**Syntax:** `pitcrew workflow <subcommand> [options]`
+**Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
+**Preconditions:** A valid subcommand.
+**Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
+**Success:** Delegates to that command.
+**Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
+**Example:** `pitcrew workflow <subcommand> [options]`
+<!-- cli-docs:profile:workflow:end -->
+
+<!-- cli-docs:aggregate-workflow-profiles:start -->
+<!-- cli-docs:profile:workflow-new:start -->
+<a id="workflow-new"></a>
+#### `pitcrew workflow new`
+**Purpose:** Create a revision-1 draft.
+**Syntax:** `pitcrew workflow new --name <name> --goal <goal> --actor <actor>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** No existing workflow is required.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** A new workflow; next is explore.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow new --help`
+<!-- cli-docs:profile:workflow-new:end -->
+
+<!-- cli-docs:profile:workflow-continue:start -->
+<a id="workflow-continue"></a>
+#### `pitcrew workflow continue`
+**Purpose:** Continue terminal normative lineage in a new child.
+**Syntax:** `pitcrew workflow continue --from wf-<24hex> --actor <actor>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Only a `completed` or `abandoned` predecessor can continue.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** A revision-1 draft child and immutable predecessor summary.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow continue --help`
+<!-- cli-docs:profile:workflow-continue:end -->
+
+<!-- cli-docs:profile:workflow-show:start -->
+<a id="workflow-show"></a>
+#### `pitcrew workflow show`
+**Purpose:** Read audit detail or a bounded projection.
+**Syntax:** `pitcrew workflow show --workflow-id wf-<24hex> [--view <coordination|phase|unit|aggregate|audit>] [--unit-id wu-<24hex>]`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Unit ID is required only for the unit view.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Workflow detail or selected projection.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow show --help`
+<!-- cli-docs:profile:workflow-show:end -->
+
+<!-- cli-docs:profile:workflow-progress:start -->
+<a id="workflow-progress"></a>
+#### `pitcrew workflow progress`
+**Purpose:** Append an operational progress fact without lifecycle transition.
+**Syntax:** `pitcrew workflow progress --workflow-id wf-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Status is advanced or blocked; summary and next_action are nonblank.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Recorded fact; next action comes from the input.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow progress --help`
+<!-- cli-docs:profile:workflow-progress:end -->
+
+<!-- cli-docs:profile:workflow-request-capability:start -->
+<a id="workflow-request-capability"></a>
+#### `pitcrew workflow request-capability`
+**Purpose:** Append a capability request without lifecycle transition.
+**Syntax:** `pitcrew workflow request-capability --workflow-id wf-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Capability, reason, and blocked_action are nonblank.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Recorded request; next is coordinator action.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow request-capability --help`
+<!-- cli-docs:profile:workflow-request-capability:end -->
+
+<!-- cli-docs:profile:workflow-explore:start -->
+<a id="workflow-explore"></a>
+#### `pitcrew workflow explore`
+**Purpose:** Record exploration content.
+**Syntax:** `pitcrew workflow explore --workflow-id wf-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Draft or exploring state and nonblank content.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Exploring workflow; repeated calls are amendments.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow explore --help`
+<!-- cli-docs:profile:workflow-explore:end -->
+
+<!-- cli-docs:profile:workflow-spec:start -->
+<a id="workflow-spec"></a>
+#### `pitcrew workflow spec`
+**Purpose:** Record specification content and optional normative entries.
+**Syntax:** `pitcrew workflow spec --workflow-id wf-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Exploring or specifying state; typed fields appear together.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Specifying workflow; repeated calls are amendments.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow spec --help`
+<!-- cli-docs:profile:workflow-spec:end -->
+
+<!-- cli-docs:profile:workflow-design:start -->
+<a id="workflow-design"></a>
+#### `pitcrew workflow design`
+**Purpose:** Record design content and optional normative entries.
+**Syntax:** `pitcrew workflow design --workflow-id wf-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Exploring, specifying, or designing state.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Designing workflow; repeated calls are amendments.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow design --help`
+<!-- cli-docs:profile:workflow-design:end -->
+
+<!-- cli-docs:profile:workflow-plan:start -->
+<a id="workflow-plan"></a>
+#### `pitcrew workflow plan`
+**Purpose:** Submit a bounded dependency-ordered plan.
+**Syntax:** `pitcrew workflow plan --workflow-id wf-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Designing state and a valid non-overlapping plan.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Planning workflow and persisted plan.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow plan --help`
+<!-- cli-docs:profile:workflow-plan:end -->
+
+<!-- cli-docs:profile:workflow-amend-plan:start -->
+<a id="workflow-amend-plan"></a>
+#### `pitcrew workflow amend-plan`
+**Purpose:** Validate a proposed plan amendment.
+**Syntax:** `pitcrew workflow amend-plan --workflow-id wf-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Valid plan input.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** No success path exists in this control-plane revision.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow amend-plan --help`
+<!-- cli-docs:profile:workflow-amend-plan:end -->
+
+<!-- cli-docs:profile:workflow-approve-plan:start -->
+<a id="workflow-approve-plan"></a>
+#### `pitcrew workflow approve-plan`
+**Purpose:** Approve the submitted plan and named oversize exceptions.
+**Syntax:** `pitcrew workflow approve-plan --workflow-id wf-<24hex> --revision <n> --actor <actor> [--approve-exception <unit-id> ...]`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Planning state; every admission exception is named exactly once.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Plan-approved workflow.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow approve-plan --help`
+<!-- cli-docs:profile:workflow-approve-plan:end -->
+
+<!-- cli-docs:profile:workflow-list-ready-units:start -->
+<a id="workflow-list-ready-units"></a>
+#### `pitcrew workflow list-ready-units`
+**Purpose:** Read pending dependency-ready units within the parallel limit.
+**Syntax:** `pitcrew workflow list-ready-units --workflow-id wf-<24hex>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** An accepted plan exists.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Schedulable units; no mutation.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow list-ready-units --help`
+<!-- cli-docs:profile:workflow-list-ready-units:end -->
+
+<!-- cli-docs:profile:workflow-begin-implementation:start -->
+<a id="workflow-begin-implementation"></a>
+#### `pitcrew workflow begin-implementation`
+**Purpose:** Enter implementation after plan approval.
+**Syntax:** `pitcrew workflow begin-implementation --workflow-id wf-<24hex> --revision <n> --actor <actor>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Plan-approved state at expected revision.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Implementing workflow.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow begin-implementation --help`
+<!-- cli-docs:profile:workflow-begin-implementation:end -->
+
+<!-- cli-docs:profile:workflow-complete:start -->
+<a id="workflow-complete"></a>
+#### `pitcrew workflow complete`
+**Purpose:** Record independent aggregate review.
+**Syntax:** `pitcrew workflow complete --workflow-id wf-<24hex> --revision <n> --actor <reviewer> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Ready-to-complete state, all units done, reviewer differs from implementers.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Approval completes; corrections preserve `ready_to_complete`.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow complete --help`
+<!-- cli-docs:profile:workflow-complete:end -->
+
+<!-- cli-docs:profile:workflow-authorize-correction:start -->
+<a id="workflow-authorize-correction"></a>
+#### `pitcrew workflow authorize-correction`
+**Purpose:** Persist confirmed user authority after automatic correction is exhausted.
+**Syntax:** `pitcrew workflow authorize-correction --workflow-id wf-<24hex> --revision <n> --actor <actor> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Current unresolved review revision, user_direction_confirmed true, no current authority.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Ready-to-complete revision advances; next is recovery.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow authorize-correction --help`
+<!-- cli-docs:profile:workflow-authorize-correction:end -->
+
+<!-- cli-docs:profile:workflow-abandon:start -->
+<a id="workflow-abandon"></a>
+#### `pitcrew workflow abandon`
+**Purpose:** Terminate any non-terminal workflow.
+**Syntax:** `pitcrew workflow abandon --workflow-id wf-<24hex> --revision <n> --actor <actor> --reason <text>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Expected revision and nonblank reason.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Abandoned workflow; next is none.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow abandon --help`
+<!-- cli-docs:profile:workflow-abandon:end -->
+
+<!-- cli-docs:profile:workflow-recover-aggregate:start -->
+<a id="workflow-recover-aggregate"></a>
+#### `pitcrew workflow recover-aggregate`
+**Purpose:** Reopen one or a causal batch after aggregate corrections.
+**Syntax:** `pitcrew workflow recover-aggregate --workflow-id wf-<24hex> --revision <n> --actor <actor> --handle-dir <dir> (--unit-id <id>|--input-file <path>)`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Ready-to-complete blocker with automatic or confirmed authority.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Implementing workflow, next unit revisions, and fresh handles.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow recover-aggregate --help`
+<!-- cli-docs:profile:workflow-recover-aggregate:end -->
+
+<!-- cli-docs:profile:workflow-claim-unit:start -->
+<a id="workflow-claim-unit"></a>
+#### `pitcrew workflow claim-unit`
+**Purpose:** Claim a ready unit for implementation.
+**Syntax:** `pitcrew workflow claim-unit --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <actor> --handle-dir <dir> [--print-claim-handle-secret-once]`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Pending unit, dependencies done, capacity available.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Opaque implementation handle path, or a one-time debug secret only when the explicit boolean switch is present.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow claim-unit --help`
+<!-- cli-docs:profile:workflow-claim-unit:end -->
+
+<!-- cli-docs:profile:workflow-recover-unit-claim:start -->
+<a id="workflow-recover-unit-claim"></a>
+#### `pitcrew workflow recover-unit-claim`
+**Purpose:** Recover expired/revoked implementation authority for corrections.
+**Syntax:** `pitcrew workflow recover-unit-claim --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <actor> --handle-dir <dir>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Recoverable pending unit and identity constraints.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Fresh implementation handle path.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow recover-unit-claim --help`
+<!-- cli-docs:profile:workflow-recover-unit-claim:end -->
+
+<!-- cli-docs:profile:workflow-handoff-review:start -->
+<a id="workflow-handoff-review"></a>
+#### `pitcrew workflow handoff-review`
+**Purpose:** Issue review authority after TDD evidence.
+**Syntax:** `pitcrew workflow handoff-review --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <reviewer> --handle-dir <dir>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Reviewing unit; reviewer differs from implementer.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Opaque review handle path.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow handoff-review --help`
+<!-- cli-docs:profile:workflow-handoff-review:end -->
+
+<!-- cli-docs:profile:workflow-recover-review:start -->
+<a id="workflow-recover-review"></a>
+#### `pitcrew workflow recover-review`
+**Purpose:** Recover review authority for the same reviewer.
+**Syntax:** `pitcrew workflow recover-review --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <reviewer> --handle-dir <dir>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Reviewing unit and original reviewer identity.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Fresh review handle path.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow recover-review --help`
+<!-- cli-docs:profile:workflow-recover-review:end -->
+
+<!-- cli-docs:profile:workflow-unit-tdd:start -->
+<a id="workflow-unit-tdd"></a>
+#### `pitcrew workflow unit-tdd`
+**Purpose:** Consume implementation authority to record valid TDD evidence.
+**Syntax:** `pitcrew workflow unit-tdd --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <actor> --claim-handle <path> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Active matching implementation handle and pending unit revision.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Persisted: reviewing; next is review handoff.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow unit-tdd --help`
+<!-- cli-docs:profile:workflow-unit-tdd:end -->
+
+<!-- cli-docs:profile:workflow-unit-review:start -->
+<a id="workflow-unit-review"></a>
+#### `pitcrew workflow unit-review`
+**Purpose:** Consume review authority to record an independent verdict.
+**Syntax:** `pitcrew workflow unit-review --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <reviewer> --claim-handle <path> --input-file <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Matching review handle, reviewing state, different actor.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Approved stays reviewing; corrections return pending at next revision.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow unit-review --help`
+<!-- cli-docs:profile:workflow-unit-review:end -->
+
+<!-- cli-docs:profile:workflow-unit-complete:start -->
+<a id="workflow-unit-complete"></a>
+#### `pitcrew workflow unit-complete`
+**Purpose:** Consume implementation authority after approval and mark done.
+**Syntax:** `pitcrew workflow unit-complete --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <actor> --claim-handle <path>`
+**Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
+**Preconditions:** Reviewing unit with an approved review at the same revision.
+**Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
+**Success:** Done unit; the last unit also advances the aggregate.
+**Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
+**Example:** `pitcrew workflow unit-complete --help`
+<!-- cli-docs:profile:workflow-unit-complete:end -->
+
+<!-- cli-docs:work-unit-profiles:start -->
+The work-unit profiles above cover claims, recovery, handoff, TDD, review, and completion. Opaque handle paths are returned by PitCrew and must not be invented or logged as secrets.
+<!-- cli-docs:work-unit-profiles:end -->
+<!-- cli-docs:aggregate-workflow-profiles:end -->
+<!-- cli-docs:profiles:end -->
