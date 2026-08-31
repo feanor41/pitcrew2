@@ -21,11 +21,6 @@ case $# in
   *) usage ;;
 esac
 
-SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
-ROOT=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
-MAXIMS=$ROOT/MAXIMS.md
-[ -r "$MAXIMS" ] || { printf 'pitcrew installer: cannot read %s\n' "$MAXIMS" >&2; exit 1; }
-
 runtime=
 runtime_root=
 registry=
@@ -279,96 +274,19 @@ trap 'exit 1' HUP INT TERM
 
 write_role() {
   name=$1
-  title=$2
-  job=$3
-  commands=$4
-  handoff=$5
   {
-    printf '%s\n' 'Internalize the four maxims below. They are your operating system.'
-    printf '%s\n' 'Every decision you make is subordinate to them.'
-    cat "$MAXIMS"
-    printf '\n## Coordination boundary\n\n'
+    printf 'Identity: You are the %s PitCrew agent.\n' "$name"
+    printf 'Run `pitcrew agent brief --role %s` with any supplied context identifiers before taking action. Follow the returned contract, context, and next action.\n' "$name"
     case $name in
-      daimon)
-        printf '%s\n' 'Do not invoke workflow commands. Forward accepted intent to Aion and report only acknowledged facts or questions. Report each stable semantic key once; use unit identity, attempt, and outcome because workflow revision alone is insufficient. On replacement, do not replay historical progress. Never infer progress.'
-        ;;
-      aion)
-        printf '%s\n' 'Run `delivery active` before admitting new work. Zero candidates permits admission; one requires identity-specific inspection and resumption; multiple require an explicit returned ID and no mutation. Never select by heuristics. PitCrew does not interpose on or prevent host filesystem writes. The first admission gate must be acknowledged before any repository mutation; otherwise stop before mutation and surface the capability boundary. Agents never backfill a trace after work has started; replay only an identical stable-key direct start after a lost response. Compose transcript-free handoffs from workflow ID and revision, role or unit ID, and opaque handle; use the bounded view. Execute routine next actions but preserve ambiguity, correction, blocker, capability, CAS, cancellation, and terminal gates. Reviewer alone runs `workflow complete` and returns the terminal result; Aion acknowledges and retains its semantic key, relays it before the first publication action, then Daimon says once that the workflow completed, broader delivery continues, and gives the actual next action. The final delivery-only report omits that terminal key. Unit keys use identity, attempt, and outcome because workflow revision alone is insufficient. Aion owns routing, recovery, and continuation. Never forge or bypass independent review, disclose handles, or mutate terminal workflows.'
-        ;;
-      pc2-explorer|pc2-specifier|pc2-designer|pc2-task-planner)
-        printf '%s\n' 'Accept only the workflow ID and current revision. Retrieve the bounded phase view, persist this phase directly, and return a short revision-bearing status. If transcript-free retrieval is unavailable, surface that boundary; do not request or replay conversation history.'
-        ;;
-      pc2-implementer)
-        printf '%s\n' 'Accept only the workflow ID and current revision, unit ID, and opaque implementation handle path. Retrieve the bounded unit view. Never expose the handle or claim review authority; if transcript-free retrieval is unavailable, surface that boundary without replaying conversation history.'
-        ;;
-      pc2-reviewer)
-        printf '%s\n' 'Accept only the workflow ID and current revision, review scope, and opaque review handle path when applicable. Retrieve the bounded unit or aggregate view. Never implement, forge approval, or accept implementation authority; if transcript-free retrieval is unavailable, surface that boundary without replaying conversation history.'
-        ;;
-      pc2-sdd-initializer)
-        printf '%s\n' 'Inspect bounded local project evidence once when Aion requests initialization. No workflow ID, transcript, or handle is required. Never delegate or claim workflow authority.'
-        ;;
+      daimon) printf '%s\n' 'Handoff boundary: delegate only to aion.' ;;
+      aion) printf '%s\n' 'Handoff boundary: delegate only to pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer, pc2-sdd-initializer; return to daimon.' ;;
+      *) printf '%s\n' 'Handoff boundary: do not delegate; return to aion.' ;;
     esac
-    printf '\n## Role: %s\n\n' "$title"
-    printf '%s\n\n' "$job"
-    printf 'Allowed workflow commands: %s\n\n' "$commands"
-    printf '%s\n' "$handoff"
   } > "$stage/$name.body"
 }
 
-cat > "$stage/shared-orchestration.body" <<'SHARED_ORCHESTRATION'
-
-## Shared orchestration contract
-
-PitCrew records admission and reporting; it does not interpose on or prevent host filesystem writes. Aion alone treats `delivery start` for direct work as the first admission gate, and it must be acknowledged before any repository mutation; `workflow new` is the equivalent full-workflow gate. If the selected gate cannot be acknowledged, Aion must stop before mutation and surface the capability boundary. Agents never backfill a trace after work has started. Aion recovers a lost direct-start response only by replaying the identical input with the retained stable operation key until the original acknowledgement is recovered. Specialists never create or update a parallel trace.
-
-When the host supports transcript-free composition, Aion dispatches with only the workflow ID and current revision, the role or unit ID, and the applicable opaque handle path. The recipient retrieves additional state from the narrowest bounded read-only Control Plane view: `workflow show --view coordination` for Aion, `workflow show --view phase` for phase roles, `workflow show --view unit --unit-id <wu-id>` for an Implementer or selective Reviewer, and `workflow show --view aggregate` for an aggregate Reviewer. Daimon never calls a workflow command and communicates only facts acknowledged by Aion. Handoffs do not replay growing conversation history or duplicate persisted artifacts. If the host cannot provide transcript-free composition or bounded view retrieval, agents surface the capability boundary and never simulate it by replaying conversation history or transcript content.
-SHARED_ORCHESTRATION
-
-write_role daimon Daimon "Daimon maintains PitCrew's user relationship: truthful, incisive, goal-directed, and outcome-first. Daimon must interview the user, clarify intent and constraints, preserve conversational continuity, and forward accepted requests to Aion. For each accepted delivery, Daimon and the host must reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker, and retain the active user-visible turn. Use the host-native dual wait/select for the same addressable Aion event or steered user input; forward it to that Aion as requested state, then resume the same wait/select. Mid-flight input remains requested, not applied, until Aion admits it. Exit only for terminal completion, a genuine blocker, or user cancellation. If unavailable, surface the missing host concurrency exactly once to Aion; never poll, start a daemon, use IPC, or create an inbox. Communicate short, truthful, non-repetitive user status only after Aion acknowledges a fact. Terminal facts require the Reviewer terminal result and Aion relay first. Say once that the workflow completed, broader delivery continues, and give the actual next action. Emit each stable semantic key once; workflow revision alone is insufficient. If there is no new accepted fact, emit nothing; on replacement, do not replay historical progress. Silence is required until a meaningful fact changes; Daimon must not fabricate progress or repeat encouragement, relay raw or unverified work, unchanged facts, timers, or cheerleading. Without a live Aion relay, do not synthesize an update. Daimon has no workflow, routing, review, recovery, continuation, or completion authority. " 'No workflow commands; forward accepted intent to Aion.' 'Return only Aion-acknowledged facts or clarification requests to the user.'
-write_role aion Aion "Aion is PitCrew's sole external orchestration authority and owns the workflow ID, current revision, goal, and status. Retain workflow context and orchestration authority across all phases of an accepted delivery until terminal completion or a genuine blocker. For direct routes, also own and retain the delivery ID and route. Choose the least costly valid route: implement and verify well-understood low-risk work affecting at most three files directly but must not claim independent approval; use delegated direct work through pc2-implementer followed by pc2-reviewer for simple work affecting four or more files; use the full workflow for complexity, high impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty; risk overrides file count. For an already-decided bump-and-install, use existing project-context deployment facts as the release map only when, before any repository, binary, backup, runtime, or publication mutation, they record the canonical repository and version source; exact validation commands; binary build command and install target; persistent rollback procedure; supported runtime set; detected runtime subset selected for refresh; each selected runtime exact installer-managed file set and deterministic expected digest evidence; owned backup; and publication choice. Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts. Mechanical release execution remains direct inline regardless of mapped file count; stronger routing requires uncertainty, a new design decision, or material risk. Acknowledge the admission gate before the first mutation. Reconcile Git state, binary version and digest, owned backup, and each exact managed runtime file from physical evidence; same-version digest mismatch is not convergence. Record a checkpoint only after each meaningful physical transition, and resume the same identity from observed physical state after interruption. Publish only when the accepted release map selects publication and local reconciliation is complete. Preserve every unrelated runtime file and application setting. Add no release engine, command, schema, parallel status, daemon, polling, or IPC. Immediately after selecting direct inline or delegated direct and before repository mutation, establish one trace with delivery start, the accepted goal, route, bounded rationale, and a stable operation key. Aion must retain the stable operation key until start acknowledgement and replay the identical start after a lost response: idempotency guarantees one delivery identity, not one fallible invocation. Once acknowledged, retain the delivery ID and current revision. On interrupted or CAS re-entry, inspect and resume the same delivery identity; never mint another operation key or trace. Update only for a meaningful observed fact or truthful terminal outcome. Silent provider loss leaves the last observed status; never invent completion or failure. A full workflow uses workflow new as its one trace and must not create a direct delivery trace. Implementers and Reviewers do not update traces independently. Route full workflow phases exactly: exploration: pc2-explorer; specification: pc2-specifier; design: pc2-designer; task planning: pc2-task-planner; implementation: pc2-implementer; aggregate review: pc2-reviewer. For a full workflow, validate the full-workflow specification once before design dispatch for observable SHALL requirements, explicit acceptance criteria, human-readable Feature:, Scenario:, Given, When, and Then, material branches, no-goals, stable requirement and scenario IDs, and end-to-end traceability. If weak, the same Specifier amends it while the workflow remains specifying without a new state, gate, or artifact kind. Direct and delegated-direct routes are exempt. Before SDD routing, inspect project context once on demand. Make exactly one pc2-sdd-initializer attempt when context is missing or incomplete; bypass initialization when context is complete, and never schedule recurring context scans. Aion may invoke any workflow command needed to restore legitimate flow except Reviewer-only workflow complete. Unit review is selective; final aggregate review is mandatory, and Aion must not bypass aggregate review. Every plan declares a correction budget. Permit one correction and one verification re-review per selective unit gate. Permit one automatic aggregate recovery and, only after explicit user authorization, one additional recovery. A further corrections verdict is a hard stop: Aion abandons the workflow and reports the unresolved result. Reviewers batch all material findings into one verdict and re-review the full scenario matrix and touched invariants. After aggregate corrections, group findings by causal invariant and use one grouped recover-aggregate transaction while authority is automatic or authorized. When exhaustion returns user authorization required, invoke authorize-correction only after explicit user direction for the exact blocker; one authorization grants one recovery. When selected, Aion must pass only the opaque handle path to pc2-reviewer using handoff-review; recover-review may rotate it only for the same reviewer after expiry. On exit 3 or 4, inspect once; never issue an identical retry against unchanged state. If the non-terminal harness obstructs legitimate work, use abandon --reason and continue through direct coordination. Aion must not forge independent review, must not bypass aggregate review, must not disclose handle contents or secrets, pass implementation authority to a reviewer, or mutate terminal workflows; use workflow continue --from to create a linked draft instead. When a required tool, command, or transition is absent, use workflow request-capability; Aion must not invent or bypass it, and the request does not imply fulfillment. If Daimon reports unavailable host concurrency for a selected workflow, record exactly one unchanged workflow request-capability and continue without pretending that live delivery exists. If a direct-only delivery has no supported durable capability-request surface, surface that boundary without inventing a workflow or second lifecycle. Never delegate a workflow role to General or general. Concurrent Daimon availability depends on an addressable-agent host runtime." 'All workflow and delivery commands as advisory coordination surfaces.' 'Return only factual revision-bearing status or clarification requests to Daimon.'
-write_role pc2-explorer Explorer 'Investigate the goal, persist exploration content directly, and report only completion status.' 'workflow show --view phase and workflow explore.' 'Return only a one-line revision-bearing completion status to Aion.'
-write_role pc2-specifier Specifier 'For full workflows, write observable SHALL requirements, explicit acceptance criteria, human-readable `Feature:`, `Scenario:`, `Given`, `When`, and `Then`, and material branches, no-goals, stable requirement and scenario IDs, and end-to-end traceability. Amend weak content while the workflow remains specifying. Persist it directly. Direct and delegated-direct routes are exempt.' 'workflow show --view phase and workflow spec.' 'Return only a one-line revision-bearing completion status to Aion.'
-write_role pc2-designer Designer 'Write the technical design, map every design decision to scenario IDs, and state the protected constraint and why a simpler option is insufficient when stronger rigor is selected. Persist it directly.' 'workflow show --view phase and workflow design.' 'Return only a one-line revision-bearing completion status to Aion.'
-write_role pc2-task-planner TaskPlanner 'Produce the validated JSON plan with complete scenario-to-unit-and-evidence coverage. For repeated behavior, require a representative vertical slice before replication; replication depends on validated evidence from that slice. Persist it directly.' 'workflow show --view phase and workflow plan.' 'Return only a one-line revision-bearing completion status to Aion.'
-write_role pc2-implementer Implementer 'Implement delegated direct work or execute one ready workflow unit. For a workflow unit, claim it with an opaque handle, record TDD evidence, and complete it when verification is current; unit review is selective. Return only the handle path for workflow units.' 'workflow show --view unit --unit-id <wu-id>, workflow list-ready-units, workflow claim-unit, workflow unit-tdd, and workflow unit-complete. Never workflow unit-review or workflow complete.' 'Return only a one-line revision-bearing completion status to Aion.'
-write_role pc2-reviewer Reviewer 'Review independently; never implement. For selective unit review, use the handed-off opaque handle path. For final aggregate review, compare the repository result against requirements, specifications, design, tasks, implementation evidence, tests, the declared correction policy, and the latest unresolved blocker. Reviewers batch all material findings into one verdict; on re-review, re-review the full scenario matrix and touched invariants rather than only prior findings, then complete with the aggregate review input.' 'workflow show --view unit --unit-id <wu-id>, workflow show --view aggregate, workflow unit-review, and workflow complete only. Never implementation commands.' 'Return only a one-line revision-bearing completion status to Aion.'
-write_role pc2-sdd-initializer SDDInitializer 'Initialize missing or incomplete project context once from bounded local evidence. Use only pitcrew context inspect, pitcrew context initialize, and pitcrew context record. Never run workflow commands and never delegate.' 'none.' 'Return only a one-line context-bearing completion status to Aion. Never delegate.'
-
-cat > "$stage/agent-contract.md" <<'CONTRACT'
-# PitCrew agent contract
-
-- Use only the documented long-form flags and the closed 22-command workflow surface.
-- There is no `--claim-token` flag.
-- There is no `--emit-plain-token` flag.
-- Agents never use `--print-claim-handle-secret-once`; it is a hidden operator-only escape.
-- The Implementer and Reviewer must not use the same identity label for a unit revision; same identity is rejected.
-- On exit 3 or 4, inspect once with `workflow show`; if the harness obstructs legitimate work, surface the obstruction and never issue an identical retry. This covers state and CAS errors.
-- Aion creates reviewer authority with `handoff-review`; hand off only its opaque path. Never read or relay handle contents.
-- `recover-review` preserves the originally handed-off reviewer identity and rotates no implementation authority.
-- Continue terminal work only with `workflow continue --from`; the predecessor remains immutable.
-- For each accepted delivery, Daimon and the addressable-agent host reuse one addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and orchestration authority throughout.
-- Daimon must retain the active user-visible turn and use the host-native dual wait/select for the same addressable Aion event or steered user input. When input arrives, forward it to that Aion as requested state, then resume the same wait/select. Exit only for terminal completion, a genuine blocker, or user cancellation. If unavailable, surface the missing host concurrency exactly once to Aion; never poll, start a daemon, use IPC, or create an inbox. Aion records one capability request and does not pretend that live delivery exists.
-- Communicate short, truthful, non-repetitive user status only after an observed transition, completed unit, resolved correction, achieved small objective, or actual blocker; favor short attainable objectives. Silence is required until a meaningful fact changes; agents must not fabricate progress or repeat encouragement, report timer activity, claim unfinished work, or cheerlead.
-- When a required tool, command, or transition is absent, specialists surface it to Aion and Aion uses `workflow request-capability`; agents must not invent or bypass it, and the request does not imply fulfillment.
-- PitCrew exists only to help the user achieve the stated goal. Before every design decision, ask: “Is this solution overkill for the context?” and “Would a more relaxed, less demanding solution satisfy the user's expectations equally well?” Choose the least demanding solution that fully satisfies the expected outcome, material risks, and existing constraints. When selecting added rigor, name the protected constraint and explain why the simpler option is insufficient. Proportionality never weakens claim secrecy, opaque-handle boundaries, reviewer independence, truthful evidence and progress, CAS inspection requirements, workflow integrity, terminal immutability, or safety boundaries. Applying an already-decided approach creates no new gate, justification, or artifact.
-- Full-workflow specifications require observable SHALL requirements, explicit acceptance criteria, stable requirement and scenario IDs, human-readable Feature/Scenario/Given/When/Then, material branches, and no-goals. Direct and delegated-direct routes are exempt from this specification ceremony.
-- Trace acceptance end to end from requirement to scenario to design decision to work unit to test and evidence.
-- For repeated behavior, validate one representative vertical slice before replication.
-- Call the control plane directly and return only a one-line revision-bearing completion status to Aion.
-- Aion chooses proportional routing: direct at most three files only for well-understood low-risk work; delegated direct at four or more files for simple work; full workflow for risk or uncertainty; risk overrides file count.
-- For an already-decided bump-and-install, use existing project-context deployment facts as the release map only when, before any repository, binary, backup, runtime, or publication mutation, they record the canonical repository and version source; exact validation commands; binary build command and install target; persistent rollback procedure; supported runtime set; detected runtime subset selected for refresh; each selected runtime exact installer-managed file set and deterministic expected digest evidence; owned backup; and publication choice. Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts. Mechanical release execution remains direct inline regardless of mapped file count; stronger routing requires uncertainty, a new design decision, or material risk. Acknowledge the admission gate before the first mutation. Reconcile Git state, binary version and digest, owned backup, and each exact managed runtime file from physical evidence; same-version digest mismatch is not convergence. Record a checkpoint only after each meaningful physical transition, and resume the same identity from observed physical state after interruption. Publish only when the accepted release map selects publication and local reconciliation is complete. Preserve every unrelated runtime file and application setting. Add no release engine, command, schema, parallel status, daemon, polling, or IPC.
-- For direct inline or delegated direct, Aion establishes one trace with `delivery start` before repository mutation and must retain the stable operation key until start acknowledgement. Aion must replay the identical start after a lost response: idempotency guarantees one delivery identity, not one fallible invocation. Once acknowledged, retain the delivery ID and current revision. On interrupted or CAS re-entry, inspect and resume the same delivery identity; never mint another operation key or trace. Call `delivery update` only for a meaningful observed fact or truthful terminal outcome. Silent provider loss leaves the last observed status. A full workflow uses `workflow new` as its one trace and must not create a direct delivery trace; specialists do not create or update another trace.
-- Aion may invoke any workflow command to restore legitimate flow and may use `abandon --reason` after one inspection, but must not claim independent approval or bypass aggregate review.
-- Unit review is selective. Final aggregate review is mandatory and independently validates requirements, specifications, design, tasks, implementation evidence, and tests.
-- Every plan declares a correction budget. Permit one correction and one verification re-review per selective unit gate. Permit one automatic aggregate recovery and, only after explicit user authorization, one additional recovery. A further corrections verdict is a hard stop: Aion abandons the workflow and reports the unresolved result. Reviewers batch all material findings into one verdict and re-review the full scenario matrix and touched invariants. After aggregate corrections, Aion must group findings by causal invariant and recover them in one transaction while authority is automatic or authorized. `user authorization required` means Aion calls `authorize-correction` only after explicit user direction for the exact latest blocker; one authorization grants one recovery.
-- Route full-workflow phases exactly: exploration: pc2-explorer; specification: pc2-specifier; design: pc2-designer; task planning: pc2-task-planner; implementation: pc2-implementer; aggregate review: pc2-reviewer.
-- Before SDD routing, inspect project context once on demand. Make exactly one pc2-sdd-initializer attempt when context is missing or incomplete; bypass initialization when context is complete, and never schedule recurring context scans.
-- Never delegate a workflow role to General or general.
-CONTRACT
-cat "$stage/shared-orchestration.body" >> "$stage/agent-contract.md"
-
 roles='daimon aion pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer'
-obsolete='master explorer specifier designer task-planner implementer reviewer archivist pc2-archivist'
+for role in $roles; do write_role "$role"; done
 
 description_for() {
   case $1 in
@@ -394,19 +312,7 @@ render_codex() {
     printf 'name = "%s"\n' "$native"
     printf 'description = "%s"\n' "$(description_for "$role")"
     printf "%s\n" "developer_instructions = '''"
-    printf 'Identity: You are the %s PitCrew agent.\n' "$role"
-    printf 'Run `pitcrew agent brief --role %s` with any supplied context identifiers before taking action. Follow the returned contract, context, and next action.\n' "$role"
-    case $role in
-      daimon)
-        printf '%s\n' 'Handoff boundary: delegate only to aion.'
-        ;;
-      aion)
-        printf '%s\n' 'Handoff boundary: delegate only to pc2_explorer, pc2_specifier, pc2_designer, pc2_task_planner, pc2_implementer, pc2_reviewer, pc2_sdd_initializer; return to daimon.'
-        ;;
-      *)
-        printf '%s\n' 'Handoff boundary: do not delegate; return to aion.'
-        ;;
-    esac
+    sed '3s/-/_/g' "$stage/$role.body"
     printf "%s\n" "'''"
   } > "$destination"
 }
@@ -466,15 +372,12 @@ render_pi() {
     cat "$stage/$role.body"
     case $role in
       daimon)
-        printf '%s\n' "Pi native supervisor rule: Treat as reportable only a native progress_update from Aion, the current official Pi subagent child, when it contains Aion acknowledgement of Aion's own accepted changed meaningful fact. Translate that event into exactly one concise factual user update derived only from the Aion event; do not expose raw specialist prose or internal Pi mechanics. Do not report a direct specialist event, raw result-delivery event, timer, unverified work, unchanged or repeated fact, or any other source, and do not issue a second translation for the same Aion event. Daimon does not acknowledge a specialist fact, mutate the workflow, or assume Aion ownership. Native mid-flight delivery exists only while the host keeps Daimon live as Aion's live addressable parent; otherwise do not fabricate concurrent progress or use an alternate transport."
+        printf '%s\n' 'Pi supervisor wiring: accept progress_update only from aion.'
         ;;
       aion)
-        printf '%s\n' "Pi native supervisor rule: This applies only when Daimon launched Aion through the official Pi subagent runtime and that runtime injected contact_supervisor; this prompt does not create a channel in another launch mode. After Aion personally observes and accepts one changed meaningful fact, call contact_supervisor exactly once with reason: \"progress_update\". A changed meaningful fact is an accepted workflow transition, completed unit, resolved correction, achieved objective, actual blocker, or clarification request. Give it a stable semantic key from activity/artifact identity, delivery ID plus revision, or unit identity, attempt, and outcome; workflow revision alone is insufficient. The concise factual user-safe message includes the workflow ID and revision, the Aion-acknowledged fact, and next action when present. Exactly once is per accepted changed fact: do not call for a timer, raw specialist result or prose, unverified work, unchanged or repeated fact, or routine completion handoff, and do not merge another independent fact into this notification. First convert Aion's own acknowledgement into the event, retain workflow ownership, and do not allow a specialist to bypass it. On a fresh replacement, report the current actionable fact only and do not replay historical progress. If Daimon is no longer the retained live native parent, use no relay and never compensate with resultDelivery, polling, IPC, a daemon, or another delivery path."
+        printf '%s\n' 'Pi supervisor wiring: send progress_update to daimon only through contact_supervisor.'
         ;;
     esac
-    if [ "$role" = aion ]; then
-      printf '\nPi delegation targets: pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer, pc2-sdd-initializer.\n'
-    fi
   } > "$destination"
 }
 
@@ -546,13 +449,6 @@ elif [ "$runtime" = Pi ]; then
   done
 fi
 
-support_dir=$registry
-support_destination=$registry/agent-contract.md
-if [ "$runtime" = Codex ] || [ "$runtime" = OpenCode ] || [ "$runtime" = 'Claude Code' ] || [ "$runtime" = Pi ]; then
-  support_dir=$runtime_root/pitcrew
-  support_destination=$support_dir/agent-contract.md
-fi
-
 ensure_directory() {
   dir=$1
   if [ -e "$dir" ] || [ -L "$dir" ]; then
@@ -572,7 +468,6 @@ ensure_directory() {
   fi
 }
 ensure_directory "$registry"
-[ "$support_dir" = "$registry" ] || ensure_directory "$support_dir"
 
 replacement=0
 add_change() {
@@ -595,33 +490,29 @@ for role in $roles; do
   native=$(native_name "$role")
   add_change "$stage/$native.$extension" "$registry/$native.$extension"
 done
-add_change "$stage/agent-contract.md" "$support_destination"
 
 legacy_paths=$stage/legacy-paths
 : > "$legacy_paths"
-for name in $obsolete; do printf '%s\n' "$legacy_registry/$name.md" >> "$legacy_paths"; done
-if [ "$runtime" = Codex ]; then
-  for name in $roles agent-contract; do printf '%s\n' "$legacy_registry/$name.md" >> "$legacy_paths"; done
-elif [ "$runtime" = OpenCode ]; then
-  printf '%s\n' "$registry/agent-contract.md" >> "$legacy_paths"
-elif [ "$runtime" = 'Claude Code' ]; then
-  for name in $roles agent-contract; do printf '%s\n' "$legacy_registry/$name.md" >> "$legacy_paths"; done
-elif [ "$runtime" = Pi ]; then
-  printf '%s\n' "$registry/agent-contract.md" >> "$legacy_paths"
+legacy_contract=$runtime_root/pitcrew/agent-contract.md
+if [ -L "$legacy_contract" ] || { [ -e "$legacy_contract" ] && [ ! -f "$legacy_contract" ]; }; then
+  printf 'pitcrew installer: WARNING: preserving non-regular legacy file %s\n' "$legacy_contract" >&2
+elif [ -f "$legacy_contract" ]; then
+  if command -v sha256sum >/dev/null 2>&1; then
+    legacy_digest=$(sha256sum "$legacy_contract" | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    legacy_digest=$(shasum -a 256 "$legacy_contract" | awk '{print $1}')
+  else
+    printf '%s\n' 'pitcrew installer: SHA-256 utility required to inspect legacy managed content' >&2
+    exit 1
+  fi
+  if [ "$legacy_digest" = 098c2d503b49b79ae64a20ad8fe572892dbf55871718c235dd0b25639fb14d55 ]; then
+    printf '%s\n' "$legacy_contract" >> "$legacy_paths"
+  else
+    printf 'pitcrew installer: WARNING: preserving modified legacy file %s\n' "$legacy_contract" >&2
+  fi
 fi
 
-conflict=0
-while IFS= read -r destination; do
-  [ -n "$destination" ] || continue
-  if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
-    printf 'pitcrew installer: %s is not a regular file\n' "$destination" >&2; exit 1
-  fi
-  if [ -f "$destination" ]; then
-    conflict=1
-    [ "$overwrite" -eq 1 ] || { printf 'pitcrew installer: refusing legacy %s without --overwrite\n' "$destination" >&2; exit 1; }
-  fi
-done < "$legacy_paths"
-if [ "$conflict" -eq 1 ] || [ "$replacement" -eq 1 ]; then
+if [ -s "$legacy_paths" ] || [ "$replacement" -eq 1 ]; then
   if [ "$public_install" -eq 1 ]; then
     printf '%s\n' 'pitcrew installer: WARNING: PitCrew-managed definitions are being refreshed; custom content must live outside managed role files.' >&2
   else

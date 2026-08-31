@@ -47,6 +47,9 @@ func TestStandaloneBinaryInstallsCodexWithoutCheckout(t *testing.T) {
 	if len(entries) != 9 {
 		t.Fatalf("installed agents = %d, want 9", len(entries))
 	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "pitcrew", "agent-contract.md")); !os.IsNotExist(err) {
+		t.Fatalf("legacy agent contract was generated: %v", err)
+	}
 	roleNames := map[string]string{
 		"daimon.toml": "daimon", "aion.toml": "aion",
 		"pc2_explorer.toml": "pc2-explorer", "pc2_specifier.toml": "pc2-specifier",
