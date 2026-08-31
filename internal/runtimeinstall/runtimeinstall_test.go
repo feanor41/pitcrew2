@@ -65,6 +65,17 @@ func TestRunExtractsCanonicalFilesPrivatelyAndPreservesProcessContract(t *testin
 	}
 }
 
+func TestRepositoryAgentGuideIsOnlyTheDaimonBootstrap(t *testing.T) {
+	want := []byte("Work in this repository is performed by interacting directly with the `daimon` agent by default.\n")
+	got, err := os.ReadFile(filepath.Join("..", "..", "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("AGENTS.md = %q, want exact one-line bootstrap", got)
+	}
+}
+
 func TestRuntimeInstallHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_RUNTIMEINSTALL_HELPER") != "1" {
 		return

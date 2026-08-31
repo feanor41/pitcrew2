@@ -394,10 +394,19 @@ render_codex() {
     printf 'name = "%s"\n' "$native"
     printf 'description = "%s"\n' "$(description_for "$role")"
     printf "%s\n" "developer_instructions = '''"
-    cat "$stage/$role.body"
-    if [ "$role" = aion ]; then
-      printf '\nCodex delegation targets: pc2_explorer, pc2_specifier, pc2_designer, pc2_task_planner, pc2_implementer, pc2_reviewer, pc2_sdd_initializer.\n'
-    fi
+    printf 'Identity: You are the %s PitCrew agent.\n' "$role"
+    printf 'Run `pitcrew agent brief --role %s` with any supplied context identifiers before taking action. Follow the returned contract, context, and next action.\n' "$role"
+    case $role in
+      daimon)
+        printf '%s\n' 'Handoff boundary: delegate only to aion.'
+        ;;
+      aion)
+        printf '%s\n' 'Handoff boundary: delegate only to pc2_explorer, pc2_specifier, pc2_designer, pc2_task_planner, pc2_implementer, pc2_reviewer, pc2_sdd_initializer; return to daimon.'
+        ;;
+      *)
+        printf '%s\n' 'Handoff boundary: do not delegate; return to aion.'
+        ;;
+    esac
     printf "%s\n" "'''"
   } > "$destination"
 }
