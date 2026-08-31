@@ -47,9 +47,9 @@ func TestCLIReferenceOffersProgressiveNavigation(t *testing.T) {
 	}
 }
 
-func TestCLIReferenceKeepsFourBoundedDiagramsWithTextFallbacks(t *testing.T) {
+func TestCLIReferenceKeepsFiveBoundedDiagramsWithTextFallbacks(t *testing.T) {
 	doc := readCLIReference(t)
-	diagramIDs := []string{"admission-routing", "direct-delivery", "aggregate", "unit-authority"}
+	diagramIDs := []string{"control-plane-calls", "admission-routing", "direct-delivery", "aggregate", "unit-authority"}
 	for _, id := range diagramIDs {
 		startMarker := "<!-- cli-docs:diagram:" + id + ":start -->"
 		endMarker := "<!-- cli-docs:diagram:" + id + ":end -->"
@@ -74,6 +74,42 @@ func TestCLIReferenceKeepsFourBoundedDiagramsWithTextFallbacks(t *testing.T) {
 	}
 	if got := strings.Count(doc, "```mermaid"); got != len(diagramIDs) {
 		t.Fatalf("CLI reference has %d Mermaid diagrams; want exactly %d", got, len(diagramIDs))
+	}
+}
+
+func TestCLIReferenceExplainsControlPlaneCallStateFlow(t *testing.T) {
+	doc := readCLIReference(t)
+	normalized := strings.Join(strings.Fields(doc), " ")
+	for _, want := range []string{
+		"These call states are transient orchestration states, not persisted Control Plane lifecycle states.",
+		"waiting_for_user --> daimon_brief: user supplies intent",
+		"daimon_brief --> aion_continuity: handoff to exactly one Aion",
+		"aion_continuity --> user_relay: multiple identities require clarification",
+		"aion_continuity --> delivery_admitted: delivery start or workflow new",
+		"delivery_admitted --> current_brief: Aion selects current role and context",
+		"current_brief --> external_work: allowed_actions authorizes next call",
+		"external_work --> transition_call: role invokes pitcrew subprocess",
+		"transition_call --> fact_acknowledged: Control Plane commits and returns revision plus next_action",
+		"fact_acknowledged --> aion_coordination: role returns revision-bearing status",
+		"aion_coordination --> current_brief: more work",
+		"aion_coordination --> user_relay: acknowledged progress, blocker, or terminal fact",
+		"user_relay --> waiting_for_user: Daimon relays Aion-acknowledged fact",
+		"transition_call --> identity_inspection: exit 3 or 4",
+		"identity_inspection --> current_brief: inspect once, then choose",
+		"transition_call --> authority_recovery: exit 5",
+		"authority_recovery --> current_brief: obtain fresh scoped handle",
+		"`pitcrew agent brief --role daimon`",
+		"`pitcrew agent brief --role aion`",
+		"`delivery start` or `workflow new`",
+		"`pitcrew agent brief --role <role> [--workflow-id <id>] [--unit-id <id>]`",
+		"invokes only the command in `allowed_actions`",
+		"Every Control Plane request is a fresh local `pitcrew` subprocess",
+		"The Control Plane never calls a model or agent",
+		"No role reads or writes `state.db` directly",
+	} {
+		if !strings.Contains(normalized, strings.Join(strings.Fields(want), " ")) {
+			t.Fatalf("CLI reference is missing Control Plane call-flow contract %q", want)
+		}
 	}
 }
 

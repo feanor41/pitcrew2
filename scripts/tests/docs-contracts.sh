@@ -22,6 +22,7 @@ require README.md 'independent clone or a moved common directory receives a diff
 require docs/cli-reference.md 'pitcrew project inspect'
 require docs/cli-reference.md '<!-- cli-docs:navigation:start -->'
 require docs/cli-reference.md '<a id="command-catalog"></a>'
+require docs/cli-reference.md '<!-- cli-docs:diagram:control-plane-calls:start -->'
 require docs/cli-reference.md '<!-- cli-docs:diagram:admission-routing:start -->'
 require docs/cli-reference.md '<!-- cli-docs:diagram:direct-delivery:start -->'
 require docs/cli-reference.md '<!-- cli-docs:diagram:aggregate:start -->'
@@ -44,6 +45,9 @@ require docs/cli-reference.md 'A corrections verdict persists only the'
 require docs/cli-reference.md '`recover-aggregate` advances reopened units to their next revisions'
 require docs/cli-reference.md 'workflow continue --from; predecessor immutable'
 require docs/cli-reference.md 'The last unit atomically advances the workflow to `ready_to_complete`'
+require docs/cli-reference.md 'Every Control Plane request is a fresh local `pitcrew` subprocess'
+require docs/cli-reference.md 'never calls a model or agent'
+require docs/cli-reference.md 'No role reads or writes `state.db` directly'
 require docs/cli-reference.md '<!-- cli-docs:profiles:start -->'
 require docs/cli-reference.md '<!-- cli-docs:profile:agent:start -->'
 require docs/cli-reference.md '<!-- cli-docs:profile:agent-brief:start -->'
@@ -126,8 +130,8 @@ if grep -Eq -- '--claim-token|--emit-plain-token|/handles/[0-9a-f]{16,}\.json' d
 fi
 
 mermaid_count=$(grep -c '^```mermaid$' docs/cli-reference.md)
-test "$mermaid_count" -eq 4 || {
-  printf 'docs/cli-reference.md has %s Mermaid diagrams; expected 4\n' "$mermaid_count" >&2
+test "$mermaid_count" -eq 5 || {
+  printf 'docs/cli-reference.md has %s Mermaid diagrams; expected 5\n' "$mermaid_count" >&2
   exit 1
 }
 

@@ -13,6 +13,7 @@ blank flag values are rejected.
 
 - [Install PitCrew agents](#runtime-installation)
 - [Read a role brief](#agent-briefs)
+- [Understand Control Plane calls](#control-plane-call-flow)
 - [Inspect a project](#project-inspection-and-consolidation)
 - [Run a direct delivery](#delivery-routing-and-admission)
 - [Run a full workflow](#full-workflow-lifecycle)
@@ -41,6 +42,85 @@ blindly replay a mutation. Help and version output are plain text.
 | `3 — state` | Domain precondition or lifecycle state rejected the command. |
 | `4 — CAS` | The supplied revision is stale; inspect the identity once. |
 | `5 — handle` | Opaque authority is invalid, expired, unsafe, or mismatched. |
+
+<a id="control-plane-call-flow"></a>
+## Control Plane call flow
+
+PitCrew is a local subprocess boundary, not an actor or service. The external
+agent runtime carries the user conversation and performs handoffs. Agents call
+the CLI to read current authority or request a transition; the Control Plane
+validates the call, reads or atomically changes durable state, and returns a
+revision-bearing result with `next_action`.
+
+<!-- cli-docs:diagram:control-plane-calls:start -->
+```mermaid
+stateDiagram-v2
+    state "Waiting for user intent" as waiting_for_user
+    state "Daimon reads unscoped brief" as daimon_brief
+    state "Aion reads active continuity" as aion_continuity
+    state "One delivery identity admitted" as delivery_admitted
+    state "Role reads current authority" as current_brief
+    state "External repository work" as external_work
+    state "Role calls Control Plane transition" as transition_call
+    state "Durable fact acknowledged" as fact_acknowledged
+    state "Aion coordinates returned fact" as aion_coordination
+    state "Daimon prepares user relay" as user_relay
+    state "Inspect exact identity" as identity_inspection
+    state "Recover scoped authority" as authority_recovery
+    [*] --> waiting_for_user
+    waiting_for_user --> daimon_brief: user supplies intent
+    daimon_brief --> aion_continuity: handoff to exactly one Aion
+    aion_continuity --> user_relay: multiple identities require clarification
+    aion_continuity --> delivery_admitted: resume returned identity
+    aion_continuity --> delivery_admitted: delivery start or workflow new
+    delivery_admitted --> current_brief: Aion selects current role and context
+    current_brief --> external_work: allowed_actions authorizes next call
+    current_brief --> aion_coordination: no allowed action, return to Aion
+    external_work --> transition_call: role invokes pitcrew subprocess
+    transition_call --> fact_acknowledged: Control Plane commits and returns revision plus next_action
+    transition_call --> identity_inspection: exit 3 or 4
+    identity_inspection --> current_brief: inspect once, then choose
+    transition_call --> authority_recovery: exit 5
+    authority_recovery --> current_brief: obtain fresh scoped handle
+    fact_acknowledged --> aion_coordination: role returns revision-bearing status
+    aion_coordination --> current_brief: more work
+    aion_coordination --> user_relay: acknowledged progress, blocker, or terminal fact
+    user_relay --> waiting_for_user: Daimon relays Aion-acknowledged fact
+```
+**Text fallback.** These call states are transient orchestration states, not persisted Control Plane lifecycle states. The user supplies intent to Daimon;
+Daimon reads its unscoped brief and hands the request to exactly one Aion. Aion
+reads active continuity, asks for clarification when several identities match,
+otherwise resumes or admits one identity, and selects the next role and
+context. For direct work, Aion re-reads unscoped continuity; full-workflow
+specialists read workflow- or unit-scoped authority. The role acts only when
+`allowed_actions` authorizes the call, invokes the CLI, and returns the
+revision-bearing result to Aion. Aion either dispatches more work or returns an
+acknowledged fact through Daimon. Exit `3` or `4` causes one exact identity
+inspection; exit `5` requires fresh scoped authority rather than replay.
+<!-- cli-docs:diagram:control-plane-calls:end -->
+
+The concrete call boundaries are:
+
+1. Daimon activates with `pitcrew agent brief --role daimon`, then hands the
+   accepted intent to exactly one Aion through the external agent runtime.
+2. Aion calls `pitcrew agent brief --role aion` to inspect active continuity.
+   It resumes the returned identity, asks Daimon to clarify among several, or
+   admits exactly one new identity with `delivery start` or `workflow new`
+   before repository mutation.
+3. Aion or the selected specialist retrieves current authority with
+   `pitcrew agent brief --role <role> [--workflow-id <id>] [--unit-id <id>]`.
+   The IDs are present only when that role's context contract permits them.
+4. The role performs external repository work and invokes only the command in
+   `allowed_actions`, supplying the current revision and opaque handle when the
+   command requires them.
+5. The Control Plane returns the committed revision and `next_action`; a
+   specialist returns that revision-bearing status to Aion, and Aion either
+   coordinates another call or acknowledges a fact to Daimon for user relay.
+
+Every Control Plane request is a fresh local `pitcrew` subprocess. The Control
+Plane never calls a model or agent, chooses a route, or runs repository work.
+No role reads or writes `state.db` directly; all durable reads, CAS checks,
+handle checks, and transitions cross the CLI boundary.
 
 ## Runtime installation
 
