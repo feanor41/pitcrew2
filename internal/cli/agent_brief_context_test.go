@@ -62,8 +62,11 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 			t.Fatalf("%s leaked secret marker: %s", name, data)
 		}
 	}
-	if phase["next_action"] != "return to aion" || unit["next_action"] != "workflow unit-tdd" || reviewer["next_action"] != "workflow unit-review" || aggregate["next_action"] != "workflow complete" {
+	if phase["next_action"] != "return to aion" || unit["next_action"] != "return to aion" || reviewer["next_action"] != "return to aion" || aggregate["next_action"] != "workflow complete" {
 		t.Fatalf("role-local actions: phase=%v unit=%v reviewer=%v aggregate=%v", phase["next_action"], unit["next_action"], reviewer["next_action"], aggregate["next_action"])
+	}
+	if len(stringSlice(phase["allowed_actions"])) != 0 || len(stringSlice(unit["allowed_actions"])) != 0 || len(stringSlice(reviewer["allowed_actions"])) != 0 || strings.Join(stringSlice(aggregate["allowed_actions"]), ",") != "workflow complete" {
+		t.Fatalf("dynamic authorities: phase=%v unit=%v reviewer=%v aggregate=%v", phase["allowed_actions"], unit["allowed_actions"], reviewer["allowed_actions"], aggregate["allowed_actions"])
 	}
 	unitJSON, reviewerJSON, aggregateJSON := mustJSON(unit), mustJSON(reviewer), mustJSON(aggregate)
 	if strings.Contains(string(unitJSON), "wu-unrelated") || strings.Contains(string(reviewerJSON), "wu-unrelated") || strings.Contains(string(unitJSON), "unit-review") || strings.Contains(string(reviewerJSON), "claim-unit") {
@@ -71,6 +74,21 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 	}
 	if !strings.Contains(string(unitJSON), "SCN-CTX-001") || !strings.Contains(string(reviewerJSON), "SCN-CTX-001") || !strings.Contains(string(aggregateJSON), "wu-unrelated") {
 		t.Fatalf("required summaries missing: %s / %s / %s", unitJSON, reviewerJSON, aggregateJSON)
+	}
+	fullCases := map[string]map[string]any{
+		"phase":     fullBrief(t, root, "pc2-designer", "--workflow-id", "wf-context"),
+		"unit":      fullBrief(t, root, "pc2-implementer", "--workflow-id", "wf-context", "--unit-id", "wu-selected"),
+		"reviewer":  fullBrief(t, root, "pc2-reviewer", "--workflow-id", "wf-context", "--unit-id", "wu-selected"),
+		"aggregate": fullBrief(t, root, "pc2-reviewer", "--workflow-id", "wf-context"),
+	}
+	for name, value := range fullCases {
+		data, _ := json.Marshal(value)
+		text := strings.ToLower(string(data))
+		for _, forbidden := range []string{`"scope":`, `"areas":`, `"path":`, `"handle":`, `"secret":`, `"hash":`, `"audit":`, `"history":`, `"siblings":`} {
+			if strings.Contains(text, forbidden) {
+				t.Fatalf("full %s brief leaked %q: %s", name, forbidden, data)
+			}
+		}
 	}
 
 	empty := t.TempDir()

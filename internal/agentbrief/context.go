@@ -18,6 +18,20 @@ type PhaseContext struct {
 	State      string       `json:"state"`
 	Entries    []PhaseEntry `json:"entries"`
 }
+type CoordinationUnit struct {
+	UnitID  string `json:"unit_id,omitempty"`
+	Status  string `json:"status"`
+	Attempt int64  `json:"attempt,omitempty"`
+}
+type CoordinationContext struct {
+	WorkflowID          string               `json:"workflow_id"`
+	Revision            int64                `json:"revision"`
+	State               string               `json:"state"`
+	Current             *CoordinationUnit    `json:"current,omitempty"`
+	Ready               []CoordinationUnit   `json:"ready"`
+	Blocker             *CoordinationUnit    `json:"blocker,omitempty"`
+	CorrectionAuthority *CorrectionAuthority `json:"correction_authority,omitempty"`
+}
 type Coverage = history.UnitCoverage
 type ScenarioResult struct {
 	ScenarioID string `json:"scenario_id"`
@@ -44,8 +58,6 @@ type UnitContext struct {
 	UnitRevision     int64            `json:"unit_revision"`
 	State            string           `json:"state"`
 	Description      string           `json:"description"`
-	Scope            string           `json:"scope"`
-	Areas            []string         `json:"areas"`
 	DependsOn        []string         `json:"depends_on"`
 	Coverage         []Coverage       `json:"coverage"`
 	EvidenceRequired []string         `json:"evidence_required"`
@@ -53,6 +65,32 @@ type UnitContext struct {
 	ScenarioResults  []ScenarioResult `json:"scenario_results,omitempty"`
 	Review           *ReviewSummary   `json:"review,omitempty"`
 }
+
+func (b Brief) WithCoordination(projection history.Projection) Brief {
+	source := projection.Coordination
+	result := &CoordinationContext{WorkflowID: projection.Workflow.ID, Revision: projection.Workflow.Revision, State: projection.Workflow.State, Ready: []CoordinationUnit{}}
+	if source != nil {
+		result.Current = coordinationUnit(source.Current)
+		result.Blocker = coordinationUnit(source.Blocker)
+		for _, ready := range source.Ready {
+			result.Ready = append(result.Ready, *coordinationUnit(&ready))
+		}
+		if source.CorrectionAuthority != nil {
+			result.CorrectionAuthority = &CorrectionAuthority{Allowed: source.CorrectionAuthority.Allowed, Used: source.CorrectionAuthority.Used, Authority: source.CorrectionAuthority.Authority}
+		}
+		b.NextAction = source.NextAction
+	}
+	b.Context = &Context{Kind: "coordination", AllowedActions: allowedActions(b.NextAction), Coordination: result}
+	return b
+}
+
+func coordinationUnit(source *history.UnitStatus) *CoordinationUnit {
+	if source == nil {
+		return nil
+	}
+	return &CoordinationUnit{UnitID: source.ID, Status: source.Status, Attempt: source.Attempt}
+}
+
 type AggregateUnit struct {
 	UnitID          string           `json:"unit_id"`
 	UnitRevision    int64            `json:"unit_revision"`
@@ -78,30 +116,31 @@ func (b Brief) WithPhase(projection history.Projection) Brief {
 	phase := &PhaseContext{WorkflowID: projection.Workflow.ID, Revision: projection.Workflow.Revision, State: projection.Workflow.State, Entries: []PhaseEntry{}}
 	for _, entry := range projection.Phase.Normative.Entries {
 		if phases[entry.Phase] <= map[string]int{"pc2-explorer": 0, "pc2-specifier": 1, "pc2-designer": 2, "pc2-task-planner": 3}[b.Contract.Role] {
-			phase.Entries = append(phase.Entries, PhaseEntry{entry.ID, entry.Kind, entry.ParentID, entry.Body})
+			phase.Entries = append(phase.Entries, PhaseEntry{ID: entry.ID, Kind: entry.Kind, ParentID: entry.ParentID, Body: entry.Body})
 		}
 	}
 	b.Context = &Context{Kind: "phase", Phase: phase}
 	wantState := map[string]string{"pc2-explorer": "draft", "pc2-specifier": "exploring", "pc2-designer": "specifying", "pc2-task-planner": "designing"}[b.Contract.Role]
 	b.NextAction = map[bool]string{true: b.NextAction, false: "return to aion"}[projection.Workflow.State == wantState]
+	b.Context.AllowedActions = allowedActions(b.NextAction)
 	return b
 }
 
 func (b Brief) WithUnit(unitProjection, coordination, aggregate history.Projection, reviewer bool) Brief {
 	definition := unitProjection.Unit.Definition
-	unit := &UnitContext{WorkflowID: unitProjection.Workflow.ID, WorkflowRevision: unitProjection.Workflow.Revision, UnitID: definition.ID, UnitRevision: definition.Revision, State: definition.State, Description: definition.Description, Scope: definition.Scope, Areas: definition.Areas, DependsOn: definition.DependsOn, Coverage: coverage(definition.Coverage), EvidenceRequired: []string{"red-green TDD", "current affected-package verification", "result for every covered scenario"}}
+	unit := &UnitContext{WorkflowID: unitProjection.Workflow.ID, WorkflowRevision: unitProjection.Workflow.Revision, UnitID: definition.ID, UnitRevision: definition.Revision, State: definition.State, Description: definition.Description, DependsOn: definition.DependsOn, Coverage: coverage(definition.Coverage), EvidenceRequired: []string{"red-green TDD", "current affected-package verification", "result for every covered scenario"}}
 	unit.ScenarioResults = scenarioResults(aggregate, definition.ID, definition.Revision)
 	if reviewer {
 		if evidence := unitProjection.Unit.Evidence; evidence != nil {
-			unit.Evidence = &EvidenceSummary{evidence.Revision, evidence.RedOutcome, evidence.GreenOutcome, evidence.RefactorSummary, evidence.ValidationOutcome}
+			unit.Evidence = &EvidenceSummary{Revision: evidence.Revision, RedOutcome: evidence.RedOutcome, GreenOutcome: evidence.GreenOutcome, RefactorSummary: evidence.RefactorSummary, ValidationOutcome: evidence.ValidationOutcome}
 		}
 		if review := unitProjection.Unit.Review; review != nil {
-			unit.Review = &ReviewSummary{review.Revision, review.Verdict, review.Summary, review.Findings, review.PlanImpact}
+			unit.Review = &ReviewSummary{Revision: review.Revision, Verdict: review.Verdict, Summary: review.Summary, Findings: review.Findings, PlanImpact: review.PlanImpact}
 		}
-		b.NextAction = map[bool]string{true: "workflow unit-review", false: "return to aion"}[definition.State == "reviewing"]
+		b.NextAction = map[bool]string{true: "workflow unit-review", false: "return to aion"}[unitProjection.Workflow.State == "implementing" && definition.State == "reviewing"]
 	} else {
 		b.NextAction = "return to aion"
-		if coordination.Coordination != nil && coordination.Coordination.Current != nil && coordination.Coordination.Current.ID == definition.ID {
+		if unitProjection.Workflow.State == "implementing" && coordination.Coordination != nil && coordination.Coordination.Current != nil && coordination.Coordination.Current.ID == definition.ID {
 			switch coordination.Coordination.Current.Status {
 			case "Correction":
 				b.NextAction = "workflow recover-unit-claim"
@@ -109,11 +148,15 @@ func (b Brief) WithUnit(unitProjection, coordination, aggregate history.Projecti
 				b.NextAction = "workflow unit-tdd"
 			}
 		}
-		if definition.State == "pending" && b.NextAction == "return to aion" {
-			b.NextAction = "workflow claim-unit"
+		if unitProjection.Workflow.State == "implementing" && definition.State == "pending" && b.NextAction == "return to aion" && coordination.Coordination != nil {
+			for _, ready := range coordination.Coordination.Ready {
+				if ready.ID == definition.ID {
+					b.NextAction = "workflow claim-unit"
+				}
+			}
 		}
 	}
-	b.Context = &Context{Kind: "unit", Unit: unit}
+	b.Context = &Context{Kind: "unit", AllowedActions: allowedActions(b.NextAction), Unit: unit}
 	return b
 }
 
@@ -121,20 +164,20 @@ func (b Brief) WithAggregate(projection history.Projection) Brief {
 	result := &AggregateContext{WorkflowID: projection.Workflow.ID, Revision: projection.Workflow.Revision, State: projection.Workflow.State, Units: []AggregateUnit{}}
 	for _, projected := range projection.Aggregate.Units {
 		d := projected.Definition
-		result.Units = append(result.Units, AggregateUnit{d.ID, d.Revision, d.State, coverage(d.Coverage), scenarioResults(projection, d.ID, d.Revision)})
+		result.Units = append(result.Units, AggregateUnit{UnitID: d.ID, UnitRevision: d.Revision, State: d.State, Coverage: coverage(d.Coverage), ScenarioResults: scenarioResults(projection, d.ID, d.Revision)})
 	}
 	if projection.Aggregate.Correction != nil {
-		result.CorrectionAuthority = &CorrectionAuthority{projection.Aggregate.Correction.Allowed, projection.Aggregate.Correction.Used, projection.Aggregate.Correction.Authority}
+		result.CorrectionAuthority = &CorrectionAuthority{Allowed: projection.Aggregate.Correction.Allowed, Used: projection.Aggregate.Correction.Used, Authority: projection.Aggregate.Correction.Authority}
 	}
-	b.Context = &Context{Kind: "aggregate", Aggregate: result}
 	b.NextAction = map[bool]string{true: "workflow complete", false: "return to aion"}[projection.Workflow.State == "ready_to_complete"]
+	b.Context = &Context{Kind: "aggregate", AllowedActions: allowedActions(b.NextAction), Aggregate: result}
 	return b
 }
 
 func coverage(values []history.UnitCoverage) []Coverage {
 	result := make([]Coverage, 0, len(values))
 	for _, value := range values {
-		result = append(result, Coverage{value.RequirementID, value.ScenarioID})
+		result = append(result, Coverage{RequirementID: value.RequirementID, ScenarioID: value.ScenarioID})
 	}
 	return result
 }
@@ -152,10 +195,19 @@ func scenarioResults(projection history.Projection, unitID string, revision int6
 		_ = json.Unmarshal(run.ScenarioIDs, &ids)
 		for _, id := range ids {
 			if !seen[id] {
-				result = append(result, ScenarioResult{id, run.Outcome})
+				result = append(result, ScenarioResult{ScenarioID: id, Status: run.Outcome})
 				seen[id] = true
 			}
 		}
 	}
 	return result
+}
+
+func allowedActions(action string) []string {
+	switch action {
+	case "", "none", "return to aion", "handoff to aion", "await aion context request":
+		return []string{}
+	default:
+		return []string{action}
+	}
 }

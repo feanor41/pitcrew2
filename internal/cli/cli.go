@@ -148,6 +148,15 @@ func runAgent(args []string, deps Dependencies) int {
 			return write(continuity)
 		}, func() error { return write(history.EmptyActiveContinuity()) })
 	}
+	if brief.Contract.Role == "aion" {
+		return withReadStore(deps, func(s *store.Store) error {
+			projection, err := history.New(s).Project(context.Background(), values.one("--workflow-id"), history.ViewCoordination, "")
+			if err != nil {
+				return err
+			}
+			return writeAgentBrief(deps, brief.WithCoordination(projection), jsonOutput)
+		})
+	}
 	if brief.Contract.Role != "daimon" && brief.Contract.Role != "aion" && brief.Contract.Role != "pc2-sdd-initializer" {
 		return withReadStore(deps, func(s *store.Store) error {
 			svc, ctx := history.New(s), context.Background()

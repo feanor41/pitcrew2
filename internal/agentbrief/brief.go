@@ -26,17 +26,19 @@ type StableContract struct {
 }
 
 type Context struct {
-	Kind       string                    `json:"kind,omitempty"`
-	WorkflowID string                    `json:"workflow_id,omitempty"`
-	UnitID     string                    `json:"unit_id,omitempty"`
-	Continuity *history.ActiveContinuity `json:"continuity,omitempty"`
-	Phase      *PhaseContext             `json:"phase,omitempty"`
-	Unit       *UnitContext              `json:"unit,omitempty"`
-	Aggregate  *AggregateContext         `json:"aggregate,omitempty"`
+	Kind           string                    `json:"kind,omitempty"`
+	AllowedActions []string                  `json:"allowed_actions"`
+	WorkflowID     string                    `json:"workflow_id,omitempty"`
+	UnitID         string                    `json:"unit_id,omitempty"`
+	Continuity     *history.ActiveContinuity `json:"continuity,omitempty"`
+	Coordination   *CoordinationContext      `json:"coordination,omitempty"`
+	Phase          *PhaseContext             `json:"phase,omitempty"`
+	Unit           *UnitContext              `json:"unit,omitempty"`
+	Aggregate      *AggregateContext         `json:"aggregate,omitempty"`
 }
 
 func (b Brief) WithContinuity(continuity history.ActiveContinuity) Brief {
-	b.Context, b.NextAction = &Context{Kind: "continuity", Continuity: &continuity}, continuity.NextAction
+	b.Context, b.NextAction = &Context{Kind: "continuity", AllowedActions: allowedActions(continuity.NextAction), Continuity: &continuity}, continuity.NextAction
 	return b
 }
 
@@ -59,7 +61,7 @@ func New(role, workflowID, unitID string) (Brief, error) {
 	canonical, err := json.Marshal(struct {
 		ContractVersion string         `json:"contract_version"`
 		Contract        StableContract `json:"contract"`
-	}{ContractVersion, contract})
+	}{ContractVersion: ContractVersion, Contract: contract})
 	if err != nil {
 		return Brief{}, err
 	}
@@ -85,9 +87,12 @@ func WriteText(w io.Writer, brief Brief) error {
 				return err
 			}
 		}
-		if brief.Context.Phase != nil || brief.Context.Unit != nil || brief.Context.Aggregate != nil {
-			encoded, _ := json.Marshal(brief.Context)
-			_, _ = fmt.Fprintf(w, "dynamic_context: %s\n", encoded)
+		encoded, err := json.Marshal(brief.Context)
+		if err != nil {
+			return err
+		}
+		if _, err = fmt.Fprintf(w, "dynamic_context: %s\n", encoded); err != nil {
+			return err
 		}
 	}
 	_, err := fmt.Fprintf(w, "next_action: %s\n", brief.NextAction)
@@ -153,9 +158,9 @@ func nextAction(role, workflowID string) string {
 }
 
 func contracts() map[string]StableContract {
-	invariants := []string{"technical English internally", "truthful evidence and progress", "never expose opaque handle contents"}
+	invariants := []string{"technical English internally", "truthful evidence and progress", "never expose opaque handle contents", "allowed_commands is potential interface only; current authority is conveyed only by dynamic next_action and allowed_actions"}
 	c := func(role, identity, requirement string, responsibilities, handoffs, commands []string) StableContract {
-		return StableContract{role, identity, responsibilities, handoffs, commands, invariants, requirement}
+		return StableContract{Role: role, Identity: identity, Responsibilities: responsibilities, AllowedHandoffs: handoffs, AllowedCommands: commands, Invariants: invariants, BriefRequirement: requirement}
 	}
 	aionHandoffs := []string{"daimon", "pc2-explorer", "pc2-specifier", "pc2-designer", "pc2-task-planner", "pc2-implementer", "pc2-reviewer", "pc2-sdd-initializer"}
 	return map[string]StableContract{

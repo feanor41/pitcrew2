@@ -72,9 +72,6 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 		if initialized := digest("--role", "aion"); initialized != aion {
 			t.Fatalf("project state changed digest: %s != %s", initialized, aion)
 		}
-		if other := digest("--role", "aion", "--workflow-id", "wf-one"); other != aion {
-			t.Fatalf("dynamic workflow changed digest: %s != %s", other, aion)
-		}
 		reviewer, _ := agentbrief.New("pc2-reviewer", "wf-one", "")
 		unit, _ := agentbrief.New("pc2-reviewer", "wf-two", "wu-one")
 		if unit.ContractDigest != reviewer.ContractDigest {
@@ -117,7 +114,7 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		canonical := `{"contract_version":"1","contract":{"role":"daimon","identity":"Daimon","responsibilities":["own the user conversation","relay only Aion-acknowledged facts"],"allowed_handoffs":["aion"],"allowed_commands":[],"invariants":["technical English internally","truthful evidence and progress","never expose opaque handle contents"],"brief_requirement":"no workflow or unit context"}}`
+		canonical := `{"contract_version":"1","contract":{"role":"daimon","identity":"Daimon","responsibilities":["own the user conversation","relay only Aion-acknowledged facts"],"allowed_handoffs":["aion"],"allowed_commands":[],"invariants":["technical English internally","truthful evidence and progress","never expose opaque handle contents","allowed_commands is potential interface only; current authority is conveyed only by dynamic next_action and allowed_actions"],"brief_requirement":"no workflow or unit context"}}`
 		if want := fmt.Sprintf("%x", sha256.Sum256([]byte(canonical))); brief.ContractDigest != want {
 			t.Fatalf("digest=%s want canonical digest=%s", brief.ContractDigest, want)
 		}
