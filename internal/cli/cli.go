@@ -136,7 +136,7 @@ func runAgent(args []string, deps Dependencies) int {
 		return fail(deps, ErrUsage, err.Error())
 	}
 	if values.one("--json") != "" {
-		if err = json.NewEncoder(deps.Stdout).Encode(brief); err != nil {
+		if err = writeSuccess(deps, map[string]any{"brief": brief}, brief.NextAction); err != nil {
 			return fail(deps, err, err.Error())
 		}
 		return int(envelope.OK)
