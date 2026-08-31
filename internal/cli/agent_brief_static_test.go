@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"testing"
 )
@@ -99,6 +100,35 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 		}
 		if aion == reviewer {
 			t.Fatal("different canonical role contracts share a digest")
+		}
+	})
+
+	t.Run("allowed commands are closed to each role authority", func(t *testing.T) {
+		root := t.TempDir()
+		cases := []struct {
+			role     string
+			context  []string
+			commands []string
+		}{
+			{"daimon", nil, nil},
+			{"aion", nil, []string{"delivery", "workflow"}},
+			{"pc2-sdd-initializer", nil, []string{"context inspect", "context initialize", "context record"}},
+			{"pc2-explorer", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow explore"}},
+			{"pc2-specifier", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow spec"}},
+			{"pc2-designer", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow design"}},
+			{"pc2-task-planner", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow plan"}},
+			{"pc2-implementer", []string{"--workflow-id", "wf-x", "--unit-id", "wu-x"}, []string{"workflow show", "workflow list-ready-units", "workflow claim-unit", "workflow unit-tdd", "workflow unit-complete"}},
+			{"pc2-reviewer", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow unit-review", "workflow complete"}},
+		}
+		for _, tc := range cases {
+			args := append([]string{"agent", "brief", "--role", tc.role}, tc.context...)
+			got := runBriefAt(root, "", append(args, "--json")...)
+			var brief struct {
+				AllowedCommands []string `json:"allowed_commands"`
+			}
+			if got.code != 0 || json.Unmarshal([]byte(got.stdout), &brief) != nil || !reflect.DeepEqual(brief.AllowedCommands, tc.commands) {
+				t.Fatalf("role %s commands=%v, want %v; result=%#v", tc.role, brief.AllowedCommands, tc.commands, got)
+			}
 		}
 	})
 }

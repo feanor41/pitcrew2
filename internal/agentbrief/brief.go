@@ -89,16 +89,15 @@ func contracts() map[string]Contract {
 			ContextPolicy: policy,
 		}
 	}
-	workflow := []string{"workflow show"}
 	return map[string]Contract{
 		"daimon":              makeContract("daimon", "Own the user conversation and relay only Aion-acknowledged facts.", "no workflow or unit context", []string{"aion"}, nil),
 		"aion":                makeContract("aion", "Own routing, admission, continuity, and orchestration authority.", "optional workflow context; no unit context", []string{"daimon", "pc2 specialists"}, []string{"delivery", "workflow"}),
 		"pc2-sdd-initializer": makeContract("pc2-sdd-initializer", "Initialize missing project context once when Aion requests it.", "no workflow or unit context", []string{"aion"}, []string{"context inspect", "context initialize", "context record"}),
-		"pc2-explorer":        makeContract("pc2-explorer", "Explore the accepted workflow scope and return repository evidence.", "workflow context required; no unit context", []string{"aion"}, workflow),
-		"pc2-specifier":       makeContract("pc2-specifier", "Write executable requirements and scenarios for the accepted workflow.", "workflow context required; no unit context", []string{"aion"}, workflow),
-		"pc2-designer":        makeContract("pc2-designer", "Design the accepted workflow proportionally from repository evidence.", "workflow context required; no unit context", []string{"aion"}, workflow),
-		"pc2-task-planner":    makeContract("pc2-task-planner", "Create short dependency-ordered work units with explicit coverage.", "workflow context required; no unit context", []string{"aion"}, workflow),
+		"pc2-explorer":        makeContract("pc2-explorer", "Explore the accepted workflow scope and return repository evidence.", "workflow context required; no unit context", []string{"aion"}, []string{"workflow show", "workflow explore"}),
+		"pc2-specifier":       makeContract("pc2-specifier", "Write executable requirements and scenarios for the accepted workflow.", "workflow context required; no unit context", []string{"aion"}, []string{"workflow show", "workflow spec"}),
+		"pc2-designer":        makeContract("pc2-designer", "Design the accepted workflow proportionally from repository evidence.", "workflow context required; no unit context", []string{"aion"}, []string{"workflow show", "workflow design"}),
+		"pc2-task-planner":    makeContract("pc2-task-planner", "Create short dependency-ordered work units with explicit coverage.", "workflow context required; no unit context", []string{"aion"}, []string{"workflow show", "workflow plan"}),
 		"pc2-implementer":     makeContract("pc2-implementer", "Implement one claimed unit with current TDD evidence.", "workflow and unit context required", []string{"aion"}, []string{"workflow show", "workflow list-ready-units", "workflow claim-unit", "workflow unit-tdd", "workflow unit-complete"}),
-		"pc2-reviewer":        makeContract("pc2-reviewer", "Independently review one unit or the aggregate result.", "workflow context required; optional unit context", []string{"aion"}, []string{"workflow show", "workflow handoff-review", "workflow unit-review", "workflow complete"}),
+		"pc2-reviewer":        makeContract("pc2-reviewer", "Independently review one unit or the aggregate result.", "workflow context required; optional unit context", []string{"aion"}, []string{"workflow show", "workflow unit-review", "workflow complete"}),
 	}
 }
