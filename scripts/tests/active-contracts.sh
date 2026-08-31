@@ -70,6 +70,27 @@ for required in \
 done
 
 for required in \
+  'Full-workflow specifications require observable SHALL requirements, explicit acceptance criteria, stable requirement and scenario IDs, human-readable Feature/Scenario/Given/When/Then, material branches, and no-goals.' \
+  'Trace acceptance end to end from requirement to scenario to design decision to work unit to test and evidence.' \
+  'For repeated behavior, validate one representative vertical slice before replication.' \
+  'Direct and delegated-direct routes are exempt from this specification ceremony.'; do
+  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
+    printf 'generated shared executable-workflow contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for required in \
+  'A selected unit-review gate permits at most one correction followed by one verification review.' \
+  'Aggregate review permits one automatic grouped recovery and one additional grouped recovery only after explicit user authorization.' \
+  'The aggregate verification reviews the full scenario matrix and touched invariants before a truthful hard stop.'; do
+  grep -Fq "$required" "$repo_root/docs/contributing.md" || {
+    printf 'contributor bounded-correction contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for required in \
   'existing project-context deployment facts as the release map' \
   'before any repository, binary, backup, runtime, or publication mutation' \
   'canonical repository and version source' \
@@ -156,6 +177,65 @@ if test -s "$findings"; then
 fi
 
 runtime_contract="$repo_root/openspec/specs/runtime-install/spec.md"
+plan_contract="$repo_root/openspec/specs/plan-and-work-units/spec.md"
+review_contract="$repo_root/openspec/specs/tdd-and-review/spec.md"
+workflow_contract="$repo_root/openspec/specs/workflow-lifecycle/spec.md"
+
+for required in \
+  'full-workflow specification once before design dispatch' \
+  'observable SHALL requirements' \
+  'explicit acceptance criteria' \
+  'human-readable `Feature:`, `Scenario:`, `Given`, `When`, and `Then`' \
+  'material branches, no-goals, stable requirement and scenario IDs, and end-to-end traceability' \
+  'same Specifier amends it while the workflow remains specifying' \
+  'Direct and delegated-direct routes are exempt'; do
+  grep -Fq "$required" "$repo_root/AGENTS.md" || {
+    printf 'canonical executable-specification contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
+    printf 'generated executable-specification contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for required in \
+  'map every design decision to scenario IDs' \
+  'representative vertical slice before replication' \
+  'replication depends on validated evidence from that slice' \
+  'batch all material findings into one verdict' \
+  're-review the full scenario matrix and touched invariants' \
+  'one correction and one verification re-review per selective unit gate' \
+  'one automatic aggregate recovery and, only after explicit user authorization, one additional recovery' \
+  'hard stop: Aion abandons the workflow and reports the unresolved result'; do
+  grep -Fq "$required" "$repo_root/AGENTS.md" || {
+    printf 'canonical bounded-delivery contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
+    printf 'generated bounded-delivery contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+for contract_rule in \
+  "$plan_contract|representative vertical slice before replication" \
+  "$plan_contract|Every acceptance scenario SHALL map to at least one work unit and verification target" \
+  "$review_contract|batch all material findings into one verdict" \
+  "$review_contract|re-review the full scenario matrix and touched invariants" \
+  "$workflow_contract|Before design dispatch, Aion SHALL validate the effective full-workflow specification once" \
+  "$workflow_contract|the CLI SHALL NOT add a Gherkin parser, gate, state, schema field, command, or artifact kind" \
+  "$workflow_contract|one automatic aggregate recovery and, only after explicit user authorization, one additional recovery" \
+  "$workflow_contract|hard stop: Aion abandons the workflow and reports the unresolved result" \
+  "$repo_root/docs/contributing.md|Feature/Scenario/Given/When/Then" \
+  "$repo_root/docs/contributing.md|representative vertical slice before replication"; do
+  contract_file=${contract_rule%%|*}
+  required=${contract_rule#*|}
+  grep -Fq "$required" "$contract_file" || {
+    printf 'active systemic workflow contract omitted: %s\n' "$required" >&2
+    exit 1
+  }
+done
 for required in \
   'active user-visible turn' \
   'host-native dual wait/select' \

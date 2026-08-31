@@ -83,6 +83,15 @@ An approved review SHALL leave the unit `reviewing`. `unit-complete` SHALL requi
 
 `workflow complete --input-file` SHALL accept an existing review verdict shape with `approved|corrections`, summary, and findings, plus structured aggregate verification and a reviewed-result checkpoint when the workflow has structured coverage. It SHALL reject an actor matching implementation evidence for any current unit revision and reject repeated completion while an aggregate blocker is unresolved, without mutation. The reviewer SHALL validate the repository result and tests against requirements, all specification/design amendments, plan/tasks, current evidence, unit reviews, and the declared correction policy. Approval with no blocker SHALL append an `aggregate_review` artifact and atomically complete the workflow. Corrections SHALL append it once, advance CAS in `ready_to_complete`, and return `workflow recover-aggregate` when authority exists or `user authorization required` when exhausted; the verdict itself consumes no round.
 
+The Reviewer SHALL inspect the complete acceptance matrix and batch all material findings into one verdict. A correction re-review SHALL re-review the full scenario matrix and touched invariants rather than checking only the previous findings. At a selective unit gate, Aion SHALL allow one correction and one verification re-review; another corrections result SHALL stop orchestration rather than begin an unbounded loop. These are orchestration limits and SHALL NOT add a review command, state, or counter.
+
+#### Scenario: Review findings are finite and complete
+
+- GIVEN an initial or correction review of a structured result
+- WHEN the Reviewer records its verdict
+- THEN it SHALL cover the complete acceptance matrix and batch all material findings
+- AND a correction verification SHALL also cover touched invariants beyond the prior findings
+
 `authorize-correction` SHALL accept strict `{aggregate_review_revision,reason,user_direction_confirmed:true}` only for the exact current exhausted blocker. It SHALL append one authorization artifact/activity and a same-state CAS event atomically. Premature, mismatched, repeated-unconsumed, or terminal requests SHALL fail without mutation; the actor and confirmation are audited assertions, not authentication.
 
 #### Scenario: Aggregate corrections preserve flow

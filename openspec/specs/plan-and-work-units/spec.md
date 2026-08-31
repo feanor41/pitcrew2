@@ -73,6 +73,15 @@ Legacy opaque specifications and historical plan bodies SHALL remain coverage-fr
 
 ### Requirement: Admission and approval
 
+Planning SHALL preserve executable traceability. The design SHALL map every design decision to scenario IDs. Every acceptance scenario SHALL map to at least one work unit and verification target. When multiple targets repeat the same behavior, the plan SHALL schedule a representative vertical slice before replication, and replication depends on validated evidence from that slice. Estimated budgets SHALL NOT remove acceptance coverage; an over-budget plan SHALL split by user-visible behavior instead.
+
+#### Scenario: Representative evidence precedes replication
+
+- GIVEN one behavior must be repeated across multiple targets
+- WHEN the planner orders its work units
+- THEN one representative slice SHALL produce validation evidence before dependent replication begins
+- AND every acceptance scenario SHALL retain a unit and verification target
+
 A unit SHALL be admitted by default only when changed lines ≤400 and review minutes ≤60. A larger indivisible unit SHALL declare an admission exception and SHALL require a matching repeatable `--approve-exception <unit-id>` on `approve-plan`. Approval SHALL reject missing, unknown, duplicate, or unnecessary exception flags and SHALL persist approved exceptions.
 
 #### Scenario: Oversized unit requires approval

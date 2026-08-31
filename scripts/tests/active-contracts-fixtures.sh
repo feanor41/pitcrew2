@@ -9,7 +9,10 @@ trap 'rm -rf "$fixture_root"' EXIT HUP INT TERM
 mkdir -p "$fixture_root/scripts/tests" "$fixture_root/docs" \
   "$fixture_root/openspec/changes/archive" \
   "$fixture_root/openspec/specs/cli-surface" \
-  "$fixture_root/openspec/specs/runtime-install"
+  "$fixture_root/openspec/specs/runtime-install" \
+  "$fixture_root/openspec/specs/plan-and-work-units" \
+  "$fixture_root/openspec/specs/tdd-and-review" \
+  "$fixture_root/openspec/specs/workflow-lifecycle"
 cp "$source_root/scripts/tests/active-contracts.sh" "$fixture_root/scripts/tests/"
 
 printf '%s\n' \
@@ -134,8 +137,40 @@ append_cli_continuity() {
     >>"$fixture_root/openspec/specs/cli-surface/spec.md"
 }
 
+append_agent_systemic_contract() {
+  printf '%s\n' \
+    'validate the full-workflow specification once before design dispatch' \
+    'observable SHALL requirements' \
+    'explicit acceptance criteria' \
+    'human-readable `Feature:`, `Scenario:`, `Given`, `When`, and `Then`' \
+    'material branches, no-goals, stable requirement and scenario IDs, and end-to-end traceability' \
+    'same Specifier amends it while the workflow remains specifying' \
+    'Direct and delegated-direct routes are exempt' \
+    'map every design decision to scenario IDs' \
+    'representative vertical slice before replication' \
+    'replication depends on validated evidence from that slice' \
+    'batch all material findings into one verdict' \
+    're-review the full scenario matrix and touched invariants' \
+    'one correction and one verification re-review per selective unit gate' \
+    'one automatic aggregate recovery and, only after explicit user authorization, one additional recovery' \
+    'hard stop: Aion abandons the workflow and reports the unresolved result' \
+    >>"$fixture_root/AGENTS.md"
+}
+
+append_installer_systemic_contract() {
+  append_agent_systemic_contract
+  tail -n 15 "$fixture_root/AGENTS.md" >>"$fixture_root/scripts/install-templates.sh"
+  printf '%s\n' \
+    'Full-workflow specifications require observable SHALL requirements, explicit acceptance criteria, stable requirement and scenario IDs, human-readable Feature/Scenario/Given/When/Then, material branches, and no-goals.' \
+    'Trace acceptance end to end from requirement to scenario to design decision to work unit to test and evidence.' \
+    'For repeated behavior, validate one representative vertical slice before replication.' \
+    'Direct and delegated-direct routes are exempt from this specification ceremony.' \
+    >>"$fixture_root/scripts/install-templates.sh"
+}
+
 append_agent_continuity
 append_cli_continuity
+append_installer_systemic_contract
 printf '%s\n' \
   'unchanged capability requirement' \
   'SHALL NOT append a duplicate request' \
@@ -170,12 +205,94 @@ printf '%s\n' \
   'resume the same identity from observed physical state' \
   'Publish only when the accepted release map selects publication' \
   'release engine, command, schema, parallel status, daemon, polling, or IPC' \
-  >"$fixture_root/scripts/install-templates.sh"
+  >>"$fixture_root/scripts/install-templates.sh"
+
+printf '%s\n' \
+  'Every acceptance scenario SHALL map to at least one work unit and verification target' \
+  'representative vertical slice before replication' \
+  >"$fixture_root/openspec/specs/plan-and-work-units/spec.md"
+printf '%s\n' \
+  'batch all material findings into one verdict' \
+  're-review the full scenario matrix and touched invariants' \
+  >"$fixture_root/openspec/specs/tdd-and-review/spec.md"
+printf '%s\n' \
+  'Before design dispatch, Aion SHALL validate the effective full-workflow specification once' \
+  'the CLI SHALL NOT add a Gherkin parser, gate, state, schema field, command, or artifact kind' \
+  'one automatic aggregate recovery and, only after explicit user authorization, one additional recovery' \
+  'hard stop: Aion abandons the workflow and reports the unresolved result' \
+  >"$fixture_root/openspec/specs/workflow-lifecycle/spec.md"
+printf '%s\n' \
+  'Feature/Scenario/Given/When/Then' \
+  'representative vertical slice before replication' \
+  'A selected unit-review gate permits at most one correction followed by one verification review.' \
+  'Aggregate review permits one automatic grouped recovery and one additional grouped recovery only after explicit user authorization.' \
+  'The aggregate verification reviews the full scenario matrix and touched invariants before a truthful hard stop.' \
+  >"$fixture_root/docs/contributing.md"
 
 if ! sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
   echo "clean active contracts were rejected" >&2
   exit 1
 fi
+
+for required_systemic_rule in \
+  'full-workflow specification once before design dispatch' \
+  'observable SHALL requirements' \
+  'explicit acceptance criteria' \
+  'human-readable `Feature:`, `Scenario:`, `Given`, `When`, and `Then`' \
+  'material branches, no-goals, stable requirement and scenario IDs, and end-to-end traceability' \
+  'same Specifier amends it while the workflow remains specifying' \
+  'Direct and delegated-direct routes are exempt' \
+  'map every design decision to scenario IDs' \
+  'representative vertical slice before replication' \
+  'replication depends on validated evidence from that slice' \
+  'batch all material findings into one verdict' \
+  're-review the full scenario matrix and touched invariants' \
+  'one correction and one verification re-review per selective unit gate' \
+  'one automatic aggregate recovery and, only after explicit user authorization, one additional recovery' \
+  'hard stop: Aion abandons the workflow and reports the unresolved result'; do
+  cp "$fixture_root/AGENTS.md" "$fixture_root/agents.saved"
+  grep -Fv "$required_systemic_rule" "$fixture_root/agents.saved" >"$fixture_root/AGENTS.md"
+  if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
+    echo "missing systemic workflow rule escaped validation: $required_systemic_rule" >&2
+    exit 1
+  fi
+  mv "$fixture_root/agents.saved" "$fixture_root/AGENTS.md"
+done
+
+for required_installer_rule in \
+  'observable SHALL requirements' \
+  'explicit acceptance criteria' \
+  'stable requirement and scenario IDs' \
+  'Feature/Scenario/Given/When/Then' \
+  'material branches, and no-goals' \
+  'Trace acceptance end to end from requirement to scenario to design decision to work unit to test and evidence.' \
+  'For repeated behavior, validate one representative vertical slice before replication.' \
+  'Direct and delegated-direct routes are exempt from this specification ceremony.'; do
+  cp "$fixture_root/scripts/install-templates.sh" "$fixture_root/installer.saved"
+  grep -Fv "$required_installer_rule" "$fixture_root/installer.saved" >"$fixture_root/scripts/install-templates.sh"
+  if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
+    echo "missing canonical installer systemic rule escaped validation: $required_installer_rule" >&2
+    exit 1
+  fi
+  mv "$fixture_root/installer.saved" "$fixture_root/scripts/install-templates.sh"
+done
+
+for fixture_rule in \
+  'openspec/specs/plan-and-work-units/spec.md|Every acceptance scenario SHALL map to at least one work unit and verification target' \
+  'openspec/specs/tdd-and-review/spec.md|re-review the full scenario matrix and touched invariants' \
+  'openspec/specs/workflow-lifecycle/spec.md|Before design dispatch, Aion SHALL validate the effective full-workflow specification once' \
+  'openspec/specs/workflow-lifecycle/spec.md|the CLI SHALL NOT add a Gherkin parser, gate, state, schema field, command, or artifact kind' \
+  'docs/contributing.md|Feature/Scenario/Given/When/Then'; do
+  relative=${fixture_rule%%|*}
+  required=${fixture_rule#*|}
+  cp "$fixture_root/$relative" "$fixture_root/contract.saved"
+  grep -Fv "$required" "$fixture_root/contract.saved" >"$fixture_root/$relative"
+  if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
+    echo "missing active systemic contract escaped validation: $required" >&2
+    exit 1
+  fi
+  mv "$fixture_root/contract.saved" "$fixture_root/$relative"
+done
 
 grep -Fv 'pitcrew context initialize' "$fixture_root/openspec/specs/runtime-install/spec.md" >"$fixture_root/runtime.tmp"
 mv "$fixture_root/runtime.tmp" "$fixture_root/openspec/specs/runtime-install/spec.md"
@@ -273,6 +390,7 @@ printf '%s\n' \
   '`context inspect`, `context initialize`, `context record`' \
   >"$fixture_root/AGENTS.md"
 append_agent_continuity
+append_agent_systemic_contract
 
 printf '%s\n' 'Forbidden Master documentation' >"$fixture_root/docs/guide.md"
 if sh "$fixture_root/scripts/tests/active-contracts.sh" >/dev/null 2>&1; then
