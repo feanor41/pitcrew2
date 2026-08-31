@@ -30,6 +30,9 @@ type Context struct {
 	WorkflowID string                    `json:"workflow_id,omitempty"`
 	UnitID     string                    `json:"unit_id,omitempty"`
 	Continuity *history.ActiveContinuity `json:"continuity,omitempty"`
+	Phase      *PhaseContext             `json:"phase,omitempty"`
+	Unit       *UnitContext              `json:"unit,omitempty"`
+	Aggregate  *AggregateContext         `json:"aggregate,omitempty"`
 }
 
 func (b Brief) WithContinuity(continuity history.ActiveContinuity) Brief {
@@ -81,6 +84,10 @@ func WriteText(w io.Writer, brief Brief) error {
 			if _, err := fmt.Fprintf(w, "continuity_count: %d\ncontinuity_candidates: %s\n", brief.Context.Continuity.Count, formatCandidates(brief.Context.Continuity.Candidates)); err != nil {
 				return err
 			}
+		}
+		if brief.Context.Phase != nil || brief.Context.Unit != nil || brief.Context.Aggregate != nil {
+			encoded, _ := json.Marshal(brief.Context)
+			_, _ = fmt.Fprintf(w, "dynamic_context: %s\n", encoded)
 		}
 	}
 	_, err := fmt.Fprintf(w, "next_action: %s\n", brief.NextAction)

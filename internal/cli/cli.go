@@ -148,6 +148,43 @@ func runAgent(args []string, deps Dependencies) int {
 			return write(continuity)
 		}, func() error { return write(history.EmptyActiveContinuity()) })
 	}
+	if brief.Contract.Role != "daimon" && brief.Contract.Role != "aion" && brief.Contract.Role != "pc2-sdd-initializer" {
+		return withReadStore(deps, func(s *store.Store) error {
+			svc, ctx := history.New(s), context.Background()
+			workflowID, unitID := values.one("--workflow-id"), values.one("--unit-id")
+			switch brief.Contract.Role {
+			case "pc2-explorer", "pc2-specifier", "pc2-designer", "pc2-task-planner":
+				projection, err := svc.Project(ctx, workflowID, history.ViewPhase, "")
+				if err != nil {
+					return err
+				}
+				brief = brief.WithPhase(projection)
+			case "pc2-implementer", "pc2-reviewer":
+				if brief.Contract.Role == "pc2-reviewer" && unitID == "" {
+					projection, err := svc.Project(ctx, workflowID, history.ViewAggregate, "")
+					if err != nil {
+						return err
+					}
+					brief = brief.WithAggregate(projection)
+					break
+				}
+				unit, err := svc.Project(ctx, workflowID, history.ViewUnit, unitID)
+				if err != nil {
+					return err
+				}
+				coordination, err := svc.Project(ctx, workflowID, history.ViewCoordination, "")
+				if err != nil {
+					return err
+				}
+				aggregate, err := svc.Project(ctx, workflowID, history.ViewAggregate, "")
+				if err != nil {
+					return err
+				}
+				brief = brief.WithUnit(unit, coordination, aggregate, brief.Contract.Role == "pc2-reviewer")
+			}
+			return writeAgentBrief(deps, brief, jsonOutput)
+		})
+	}
 	if err = writeAgentBrief(deps, brief, jsonOutput); err != nil {
 		return fail(deps, err, err.Error())
 	}

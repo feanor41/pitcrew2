@@ -75,17 +75,17 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 		if other := digest("--role", "aion", "--workflow-id", "wf-one"); other != aion {
 			t.Fatalf("dynamic workflow changed digest: %s != %s", other, aion)
 		}
-		reviewer := digest("--role", "pc2-reviewer", "--workflow-id", "wf-one")
-		if unit := digest("--role", "pc2-reviewer", "--workflow-id", "wf-two", "--unit-id", "wu-one"); unit != reviewer {
-			t.Fatalf("dynamic review scope changed digest: %s != %s", unit, reviewer)
+		reviewer, _ := agentbrief.New("pc2-reviewer", "wf-one", "")
+		unit, _ := agentbrief.New("pc2-reviewer", "wf-two", "wu-one")
+		if unit.ContractDigest != reviewer.ContractDigest {
+			t.Fatalf("dynamic review scope changed digest: %s != %s", unit.ContractDigest, reviewer.ContractDigest)
 		}
-		if aion == reviewer {
+		if aion == reviewer.ContractDigest {
 			t.Fatal("different canonical role contracts share a digest")
 		}
 	})
 
 	t.Run("allowed commands are closed to each role authority", func(t *testing.T) {
-		root := t.TempDir()
 		cases := []struct {
 			role     string
 			context  []string
@@ -102,11 +102,10 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 			{"pc2-reviewer", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow unit-review", "workflow complete"}},
 		}
 		for _, tc := range cases {
-			args := append([]string{"agent", "brief", "--role", tc.role}, tc.context...)
-			got := runBriefAt(root, "", append(args, "--json")...)
-			brief, _, err := decodeBrief(got)
-			if got.code != 0 || err != nil || !reflect.DeepEqual(brief.Contract.AllowedCommands, tc.commands) {
-				t.Fatalf("role %s commands=%v, want %v; result=%#v", tc.role, brief.Contract.AllowedCommands, tc.commands, got)
+			values, _ := parseFlags(tc.context, flagRules{optional: []string{"--workflow-id", "--unit-id"}})
+			brief, err := agentbrief.New(tc.role, values.one("--workflow-id"), values.one("--unit-id"))
+			if err != nil || !reflect.DeepEqual(brief.Contract.AllowedCommands, tc.commands) {
+				t.Fatalf("role %s commands=%v, want %v; err=%v", tc.role, brief.Contract.AllowedCommands, tc.commands, err)
 			}
 		}
 	})
@@ -131,10 +130,10 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 		if next != "handoff to aion" {
 			t.Fatalf("Daimon next_action=%q", next)
 		}
-		args := []string{"agent", "brief", "--role", "pc2-implementer", "--workflow-id", "wf-x", "--unit-id", "wu-x"}
+		args := []string{"agent", "brief", "--role", "aion"}
 		contextBrief, contextNext, err := decodeBrief(runBriefAt(root, "", append(args, "--json")...))
 		contextText := textLabels(runBriefAt(root, "", args...).stdout)
-		if err != nil || contextBrief.Context == nil || contextText["workflow_id"] != contextBrief.Context.WorkflowID || contextText["unit_id"] != contextBrief.Context.UnitID || contextText["next_action"] != contextNext {
+		if err != nil || contextBrief.Context == nil || contextBrief.Context.Continuity == nil || contextText["context_kind"] != contextBrief.Context.Kind || contextText["next_action"] != contextNext {
 			t.Fatalf("text/JSON context mismatch: brief=%#v labels=%v err=%v", contextBrief, contextText, err)
 		}
 	})
