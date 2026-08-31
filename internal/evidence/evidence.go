@@ -131,15 +131,15 @@ func (r TDDRecord) Validate() error {
 			return fmt.Errorf("%s is required", name)
 		}
 	}
-	redExit, ok := outcomeExitCode(r.RedOutcome)
+	redExit, ok := ParseOutcome(r.RedOutcome)
 	if !ok || redExit == 0 {
 		return fmt.Errorf("red outcome must record a failing exit")
 	}
-	greenExit, ok := outcomeExitCode(r.GreenOutcome)
+	greenExit, ok := ParseOutcome(r.GreenOutcome)
 	if !ok || greenExit != 0 {
 		return fmt.Errorf("green outcome must record exit 0")
 	}
-	validationExit, ok := outcomeExitCode(r.ValidationOutcome)
+	validationExit, ok := ParseOutcome(r.ValidationOutcome)
 	if !ok || validationExit != 0 {
 		return fmt.Errorf("validation outcome must record exit 0")
 	}
@@ -152,7 +152,8 @@ func (r TDDRecord) Validate() error {
 	return nil
 }
 
-func outcomeExitCode(outcome string) (int, bool) {
+// ParseOutcome returns the leading process exit code from a recorded outcome.
+func ParseOutcome(outcome string) (int, bool) {
 	text := strings.TrimSpace(outcome)
 	if !strings.HasPrefix(text, "exit ") {
 		return 0, false
@@ -180,7 +181,7 @@ func (r VerificationRun) Validate() error {
 	if strings.TrimSpace(r.RepositoryFingerprint) == "" {
 		return fmt.Errorf("repository fingerprint is required")
 	}
-	if _, ok := outcomeExitCode(r.Outcome); !ok {
+	if _, ok := ParseOutcome(r.Outcome); !ok {
 		return fmt.Errorf("verification outcome must record an exit")
 	}
 	if r.ReusedFromID == r.ID && r.ReusedFromID != "" {
@@ -344,7 +345,7 @@ func validateStructuredUnitEvidence(record TDDRecord, covered []string) error {
 		if _, exists := runs[run.ID]; exists {
 			return fmt.Errorf("duplicate verification ID %q", run.ID)
 		}
-		exit, _ := outcomeExitCode(run.Outcome)
+		exit, _ := ParseOutcome(run.Outcome)
 		if exit != 0 {
 			return fmt.Errorf("%s verification must record exit 0", run.Tier)
 		}
@@ -364,7 +365,7 @@ func validateStructuredUnitEvidence(record TDDRecord, covered []string) error {
 		if _, exists := results[result.ScenarioID]; exists {
 			return fmt.Errorf("duplicate current scenario result %s", result.ScenarioID)
 		}
-		exit, ok := outcomeExitCode(result.Outcome)
+		exit, ok := ParseOutcome(result.Outcome)
 		if !ok || exit != 0 {
 			return fmt.Errorf("scenario result %s must record exit 0", result.ScenarioID)
 		}
@@ -416,7 +417,7 @@ func persistVerificationRuns(ctx context.Context, tx *sql.Tx, wfID string, unitI
 			if !equalStrings(priorScenarios, scenarios) {
 				return fmt.Errorf("reused verification scenario set does not match")
 			}
-			if exit, ok := outcomeExitCode(outcome); !ok || exit != 0 {
+			if exit, ok := ParseOutcome(outcome); !ok || exit != 0 {
 				return fmt.Errorf("reused verification is not an immutable success")
 			}
 		}
@@ -752,7 +753,7 @@ func validateAggregateBundle(ctx context.Context, tx *sql.Tx, wfID string, revie
 		if err := run.Validate(); err != nil {
 			return err
 		}
-		exit, _ := outcomeExitCode(run.Outcome)
+		exit, _ := ParseOutcome(run.Outcome)
 		if run.Tier == AggregateFull && exit == 0 {
 			aggregateSuccess = true
 		}

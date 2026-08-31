@@ -89,6 +89,19 @@ func TestTDDOutcomeSemanticsRequireRedFailureAndSuccessfulGreenValidation(t *tes
 	}
 }
 
+func TestParseOutcomeAcceptsExitPrefixWithDiagnostic(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		exit  int
+		ok    bool
+	}{{"exit 0: focused passed", 0, true}, {"exit 2: package failed", 2, true}, {"passed", 0, false}} {
+		exit, ok := ParseOutcome(tc.input)
+		if exit != tc.exit || ok != tc.ok {
+			t.Fatalf("ParseOutcome(%q)=(%d,%v), want (%d,%v)", tc.input, exit, ok, tc.exit, tc.ok)
+		}
+	}
+}
+
 func TestRecordReviewCorrectionsIncrementRevisionAndPersistFindings(t *testing.T) {
 	svc, db, wfID, unitID := evidenceService(t)
 	ctx := context.Background()

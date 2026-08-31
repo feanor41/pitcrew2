@@ -1,338 +1,50 @@
 #!/bin/sh
-
 set -eu
-
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 archive_root="$repo_root/openspec/changes/archive"
 archive_before=$(mktemp "${TMPDIR:-/tmp}/pitcrew-archive-before.XXXXXX")
 archive_after=$(mktemp "${TMPDIR:-/tmp}/pitcrew-archive-after.XXXXXX")
-findings=$(mktemp "${TMPDIR:-/tmp}/pitcrew-active-findings.XXXXXX")
-trap 'rm -f "$archive_before" "$archive_after" "$findings"' EXIT HUP INT TERM
-
+expected_agents=$(mktemp "${TMPDIR:-/tmp}/pitcrew-agents.XXXXXX")
+trap 'rm -f "$archive_before" "$archive_after" "$expected_agents"' EXIT HUP INT TERM
 archive_snapshot() {
   destination=$1
   find "$archive_root" -type f -print | LC_ALL=C sort |
     while IFS= read -r path; do sha256sum "$path"; done >"$destination"
 }
-
-active_contract_files() {
-  cat <<'EOF'
-AGENTS.md
-openspec/AGENTS.md
-EOF
-  find "$repo_root/docs" -type f -print | LC_ALL=C sort |
-    while IFS= read -r path; do
-      printf '%s\n' "${path#"$repo_root/"}"
-    done
-  find "$repo_root/openspec/specs" -type f -print | LC_ALL=C sort |
-    while IFS= read -r path; do
-      printf '%s\n' "${path#"$repo_root/"}"
-    done
-}
-
-allowed_legacy_line() {
-  relative=$1
-  line=$2
-  case "$relative:$line" in
-    docs/contributing.md:*master.md*) return 0 ;;
-    *'--actor master'* | *'"actor":"master"'* | *'"actor": "master"'*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 archive_snapshot "$archive_before"
-
-: >"$findings"
-active_contract_files | while IFS= read -r relative; do
-  grep -nE '(^|[^[:alnum:]_])[Mm]aster([^[:alnum:]_]|$)|master\.md|master revise plan' \
-    "$repo_root/$relative" |
-    while IFS= read -r line; do
-      if ! allowed_legacy_line "$relative" "$line"; then
-        printf '%s:%s\n' "$relative" "$line" >>"$findings"
-      fi
-    done || :
-done
-
-cli_contract="$repo_root/openspec/specs/cli-surface/spec.md"
-for required in \
-  'Daimon SHALL NOT invoke workflow commands' \
-  'only Aion-acknowledged facts or clarification requests' \
-  '| `delivery active` | none' \
-  'zero active candidates' \
-  'exactly one active candidate' \
-  'multiple active candidates' \
-  'one identity-specific inspection' \
-  'SHALL NOT select by recency, ordering, route, goal similarity, or status'; do
-  grep -Fq "$required" "$cli_contract" || {
-    printf 'CLI Daimon boundary omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  'Full-workflow specifications require observable SHALL requirements, explicit acceptance criteria, stable requirement and scenario IDs, human-readable Feature/Scenario/Given/When/Then, material branches, and no-goals.' \
-  'Trace acceptance end to end from requirement to scenario to design decision to work unit to test and evidence.' \
-  'For repeated behavior, validate one representative vertical slice before replication.' \
-  'Direct and delegated-direct routes are exempt from this specification ceremony.'; do
-  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
-    printf 'generated shared executable-workflow contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  'A selected unit-review gate permits at most one correction followed by one verification review.' \
-  'Aggregate review permits one automatic grouped recovery and one additional grouped recovery only after explicit user authorization.' \
-  'The aggregate verification reviews the full scenario matrix and touched invariants before a truthful hard stop.'; do
-  grep -Fq "$required" "$repo_root/docs/contributing.md" || {
-    printf 'contributor bounded-correction contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  'existing project-context deployment facts as the release map' \
-  'before any repository, binary, backup, runtime, or publication mutation' \
-  'canonical repository and version source' \
-  'exact validation commands' \
-  'binary build command and install target' \
-  'persistent rollback procedure' \
-  'supported runtime set' \
-  'detected runtime subset selected for refresh' \
-  'each selected runtime exact installer-managed file set and deterministic expected digest evidence' \
-  'Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts' \
-  'Mechanical release execution remains direct inline regardless of mapped file count' \
-  'same-version digest mismatch is not convergence' \
-  'resume the same identity from observed physical state' \
-  'Publish only when the accepted release map selects publication' \
-  'release engine, command, schema, parallel status, daemon, polling, or IPC'; do
-  grep -Fq "$required" "$repo_root/AGENTS.md" || {
-    printf 'canonical recoverable-release contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
-    printf 'generated recoverable-release contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  '`delivery active`' \
-  'zero active candidates' \
-  'exactly one active candidate' \
-  'more than one active candidate' \
-  'one identity-specific inspection' \
-  'same delivery identity and current revision' \
-  'does not select by recency, display order, route, goal similarity, or status' \
-  'routine projected `next_action`' \
-  'stable semantic key' \
-  'unit identity, attempt, and outcome' \
-  'current actionable or terminal fact' \
-  'does not replay historical progress'; do
-  grep -Fq "$required" "$repo_root/AGENTS.md" || {
-    printf 'active continuity contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  '`delivery active` | None' \
-  'aion admit new delivery' \
-  'delivery show --delivery-id <id>' \
-  'aion clarify delivery identity' \
-  'Direct-only capability gaps'; do
-  grep -Fq "$required" "$repo_root/docs/cli-reference.md" || {
-    printf 'active continuity CLI documentation omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  'Run `delivery active` before admitting new work' \
-  'stable semantic key' \
-  'unit identity, attempt, and outcome' \
-  'do not replay historical progress' \
-  'direct-only delivery has no supported durable capability-request surface'; do
-  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
-    printf 'installed continuity contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-if test -s "$findings"; then
-  cat "$findings" >&2
-  echo "active contracts retain legacy Master vocabulary" >&2
+printf '%s\n' 'Work in this repository is performed by interacting directly with the `daimon` agent by default.' >"$expected_agents"
+if ! cmp -s "$expected_agents" "$repo_root/AGENTS.md"; then
+  echo 'AGENTS.md is not the exact one-line Daimon selector' >&2
   exit 1
 fi
-
-active_contract_files | while IFS= read -r relative; do
-  grep -niE 'Daimon (may |MAY |uses |creates |passes |chooses |selects |orchestrates |coordinates |approves |holds |invokes )|Daimon.{0,80}(all workflow commands|proportional routing|sole coordinator)' \
-    "$repo_root/$relative" >>"$findings" || :
-done
-
-if test -s "$findings"; then
-  cat "$findings" >&2
-  echo "active contracts grant orchestration authority to Daimon" >&2
-  exit 1
-fi
-
+# The binary, rather than repository or generated prompt manuals, is the
+# versioned source of role identity and current authority.
+GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/pitcrew-active-contracts-gocache} \
+  go test ./internal/agentbrief ./cmd/pitcrew \
+  -run 'TestStableContractsCarryBootstrapMechanicsNotRuntimePrompts|TestScopedAgentBriefCommandsActivateAgainstAcceptedWorkflow' \
+  -count=1
 runtime_contract="$repo_root/openspec/specs/runtime-install/spec.md"
-plan_contract="$repo_root/openspec/specs/plan-and-work-units/spec.md"
-review_contract="$repo_root/openspec/specs/tdd-and-review/spec.md"
-workflow_contract="$repo_root/openspec/specs/workflow-lifecycle/spec.md"
-
 for required in \
-  'full-workflow specification once before design dispatch' \
-  'observable SHALL requirements' \
-  'explicit acceptance criteria' \
-  'human-readable `Feature:`, `Scenario:`, `Given`, `When`, and `Then`' \
-  'material branches, no-goals, stable requirement and scenario IDs, and end-to-end traceability' \
-  'same Specifier amends it while the workflow remains specifying' \
-  'Direct and delegated-direct routes are exempt'; do
-  grep -Fq "$required" "$repo_root/AGENTS.md" || {
-    printf 'canonical executable-specification contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
-    printf 'generated executable-specification contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  'map every design decision to scenario IDs' \
-  'representative vertical slice before replication' \
-  'replication depends on validated evidence from that slice' \
-  'batch all material findings into one verdict' \
-  're-review the full scenario matrix and touched invariants' \
-  'one correction and one verification re-review per selective unit gate' \
-  'one automatic aggregate recovery and, only after explicit user authorization, one additional recovery' \
-  'hard stop: Aion abandons the workflow and reports the unresolved result'; do
-  grep -Fq "$required" "$repo_root/AGENTS.md" || {
-    printf 'canonical bounded-delivery contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-  grep -Fq "$required" "$repo_root/scripts/install-templates.sh" || {
-    printf 'generated bounded-delivery contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for contract_rule in \
-  "$plan_contract|representative vertical slice before replication" \
-  "$plan_contract|Every acceptance scenario SHALL map to at least one work unit and verification target" \
-  "$review_contract|batch all material findings into one verdict" \
-  "$review_contract|re-review the full scenario matrix and touched invariants" \
-  "$workflow_contract|Before design dispatch, Aion SHALL validate the effective full-workflow specification once" \
-  "$workflow_contract|the CLI SHALL NOT add a Gherkin parser, gate, state, schema field, command, or artifact kind" \
-  "$workflow_contract|one automatic aggregate recovery and, only after explicit user authorization, one additional recovery" \
-  "$workflow_contract|hard stop: Aion abandons the workflow and reports the unresolved result" \
-  "$repo_root/docs/contributing.md|Feature/Scenario/Given/When/Then" \
-  "$repo_root/docs/contributing.md|representative vertical slice before replication"; do
-  contract_file=${contract_rule%%|*}
-  required=${contract_rule#*|}
-  grep -Fq "$required" "$contract_file" || {
-    printf 'active systemic workflow contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-for required in \
-  'active user-visible turn' \
-  'host-native dual wait/select' \
-  'requested state' \
-  'terminal completion, a genuine blocker, or user cancellation' \
-  'exactly one request-capability' \
-  'polling, daemon, IPC, or durable inbox' \
-  'unchanged capability requirement' \
-  'SHALL NOT append a duplicate request' \
-  'direct-only delivery has no supported durable capability-request surface' \
-  'SHALL NOT invent a workflow or parallel lifecycle'; do
+  'pitcrew agent brief --role' \
+  'contract_version' \
+  'contract_digest' \
+  'SHALL NOT create `pitcrew/agent-contract.md`' \
+  'recognized checksum' \
+  'Modified, non-regular, and unrelated files'; do
   grep -Fq "$required" "$runtime_contract" || {
-    printf 'runtime live-turn contract omitted: %s\n' "$required" >&2
+    printf 'runtime installation contract omitted: %s\n' "$required" >&2
     exit 1
   }
 done
-
-for required in \
-  'first admission gate' \
-  'acknowledged before any repository mutation' \
-  'stop before mutation and surface the capability boundary' \
-  'never backfill a trace after work has started' \
-  'does not interpose on or prevent host filesystem writes' \
-  'transcript-free composition' \
-  'workflow ID and current revision' \
-  'role or unit ID' \
-  'applicable opaque handle path' \
-  'workflow show --view coordination' \
-  'workflow show --view phase' \
-  'workflow show --view unit --unit-id' \
-  'workflow show --view aggregate' \
-  'never simulate it by replaying conversation history or transcript content'; do
-  grep -Fq "$required" "$repo_root/AGENTS.md" || {
-    printf 'active trace/handoff contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-  grep -Fq "$required" "$runtime_contract" || {
-    printf 'runtime trace/handoff contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  'before repository mutation' \
-  'retain the stable operation key until start acknowledgement' \
-  'replay the identical start after a lost response' \
-  'inspect and resume the same delivery identity' \
-  'one delivery identity, not one fallible invocation' \
-  'retain the delivery ID and current revision' \
-  'meaningful observed fact' \
-  'last observed status' \
-  'MUST NOT create a direct delivery trace'; do
-  grep -Fq "$required" "$repo_root/AGENTS.md" || {
-    printf 'active Aion delivery-trace contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-  grep -Fq "$required" "$runtime_contract" || {
-    printf 'runtime Aion delivery-trace contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  'inspects project context once on demand' \
-  'exactly one `pc2-sdd-initializer` attempt' \
-  'bypasses it for `complete`' \
-  'never schedules recurring scans' \
-  'exactly the seven specialists' \
-  'Daimon targets only Aion' \
-  'specialists never delegate' \
-  '`context inspect`, `context initialize`, `context record`'; do
-  grep -Fq "$required" "$repo_root/AGENTS.md" || {
-    printf 'active project-context routing contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
-for required in \
-  'exactly all nine native definitions' \
-  'target exactly the seven specialists' \
-  'inspect project context once on demand' \
-  'exactly one `pc2-sdd-initializer` attempt' \
-  'bypass initialization when context is `complete`' \
-  'never schedule recurring context scans' \
-  'pitcrew context inspect' \
-  'pitcrew context initialize' \
-  'pitcrew context record'; do
-  grep -Fq "$required" "$runtime_contract" || {
-    printf 'runtime project-context routing contract omitted: %s\n' "$required" >&2
-    exit 1
-  }
-done
-
+# Public Go tests exercise native least privilege, the closed graph, and real
+# scoped brief activation without duplicating their phrase inventory here.
+GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/pitcrew-active-contracts-gocache} \
+  go test ./internal/runtimeinstall ./cmd/pitcrew \
+  -run 'TestRepositoryAgentGuideIsOnlyTheDaimonBootstrap|TestRuntimeInstall|TestScopedAgentBriefCommandsActivateAgainstAcceptedWorkflow|TestStandaloneBinaryInstallsCodexWithoutCheckout' \
+  -count=1
 archive_snapshot "$archive_after"
 if ! cmp -s "$archive_before" "$archive_after"; then
-  echo "archived OpenSpec content changed during active-contract validation" >&2
+  echo 'archived OpenSpec content changed during active-contract validation' >&2
   exit 1
 fi
-
-echo "active contracts: clean"
+echo 'active contracts: clean'

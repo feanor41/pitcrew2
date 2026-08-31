@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -11,12 +13,89 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestRunDelegatesGlobalVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--version"}, strings.NewReader(""), &stdout, &stderr, t.TempDir()); code != 0 || stdout.String() != "pitcrew 0.20.2\n" || stderr.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestScopedAgentBriefCommandsActivateAgainstAcceptedWorkflow(t *testing.T) {
+	binary, project, dataHome := filepath.Join(t.TempDir(), "pitcrew"), t.TempDir(), filepath.Join(t.TempDir(), "data")
+	if output, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build pitcrew: %v\n%s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", project, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("initialize project: %v: %s", err, output)
+	}
+	run := func(args ...string) ([]byte, error) {
+		command := exec.Command(binary, args...)
+		command.Dir = project
+		command.Env = append(os.Environ(), "XDG_DATA_HOME="+dataHome)
+		return command.CombinedOutput()
+	}
+	created, err := run("workflow", "new", "--name", "Scoped", "--goal", "activate scoped briefs", "--actor", "aion")
+	if err != nil {
+		t.Fatalf("create workflow: %v\n%s", err, created)
+	}
+	var envelope struct {
+		Data struct {
+			Workflow struct {
+				ID string `json:"id"`
+			} `json:"workflow"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(created, &envelope) != nil || envelope.Data.Workflow.ID == "" {
+		t.Fatalf("workflow envelope=%s", created)
+	}
+	var databasePath string
+	_ = filepath.Walk(dataHome, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr == nil && info != nil && info.Name() == "state.db" {
+			databasePath = path
+		}
+		return nil
+	})
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	wfID, unitID := envelope.Data.Workflow.ID, "wu-scoped"
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{query: `UPDATE workflows SET state='implementing',revision=7 WHERE id=?`, args: []any{wfID}},
+		{query: `INSERT INTO plans VALUES(?,'summary','internal',1,'{}')`, args: []any{wfID}},
+		{query: `INSERT INTO work_units VALUES(?,?,'scoped unit','internal/scoped','[]','[]',1,1,'reviewing',NULL,0,1)`, args: []any{unitID, wfID}},
+	} {
+		if _, err = database.Exec(statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{
+		{"agent", "brief", "--role", "pc2-explorer", "--workflow-id", wfID, "--json"},
+		{"agent", "brief", "--role", "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID, "--json"},
+		{"agent", "brief", "--role", "pc2-reviewer", "--workflow-id", wfID, "--unit-id", unitID, "--json"},
+		{"agent", "brief", "--role", "pc2-reviewer", "--workflow-id", wfID, "--json"},
+	} {
+		if output, runErr := run(args...); runErr != nil || !bytes.Contains(output, []byte(`"ok":true`)) {
+			t.Fatalf("valid scoped brief %v: %v\n%s", args, runErr, output)
+		}
+	}
+	for _, args := range [][]string{
+		{"agent", "brief", "--role", "pc2-explorer", "--json"},
+		{"agent", "brief", "--role", "pc2-implementer", "--workflow-id", wfID, "--json"},
+		{"agent", "brief", "--role", "pc2-reviewer", "--json"},
+		{"agent", "brief", "--role", "pc2-explorer", "--workflow-id", "wf-missing", "--json"},
+	} {
+		if output, runErr := run(args...); runErr == nil || bytes.Contains(output, []byte(`"ok":true`)) {
+			t.Fatalf("invalid scoped brief %v succeeded: %s", args, output)
+		}
 	}
 }
 
@@ -47,71 +126,99 @@ func TestStandaloneBinaryInstallsCodexWithoutCheckout(t *testing.T) {
 	if len(entries) != 9 {
 		t.Fatalf("installed agents = %d, want 9", len(entries))
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "pitcrew", "agent-contract.md")); err != nil {
-		t.Fatalf("installed contract: %v", err)
+	if _, err := os.Stat(filepath.Join(home, ".codex", "pitcrew", "agent-contract.md")); !os.IsNotExist(err) {
+		t.Fatalf("legacy agent contract was generated: %v", err)
 	}
-	contract, err := os.ReadFile(filepath.Join(home, ".codex", "pitcrew", "agent-contract.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{
-		"first admission gate",
-		"does not interpose on or prevent host filesystem writes",
-		"transcript-free composition",
-		"workflow ID and current revision",
-		"workflow show --view unit --unit-id",
-		"never simulate it by replaying conversation history or transcript content",
-	} {
-		if !bytes.Contains(contract, []byte(required)) {
-			t.Fatalf("standalone installed contract omitted %q", required)
-		}
-	}
-	roleClauses := map[string]string{
-		"daimon.toml":              "Do not invoke workflow commands",
-		"aion.toml":                "Never forge or bypass independent review",
-		"pc2_explorer.toml":        "bounded phase view",
-		"pc2_specifier.toml":       "bounded phase view",
-		"pc2_designer.toml":        "bounded phase view",
-		"pc2_task_planner.toml":    "bounded phase view",
-		"pc2_implementer.toml":     "bounded unit view",
-		"pc2_reviewer.toml":        "bounded unit or aggregate view",
-		"pc2_sdd_initializer.toml": "No workflow ID, transcript, or handle is required",
+	roleNames := map[string]string{
+		"daimon.toml": "daimon", "aion.toml": "aion",
+		"pc2_explorer.toml": "pc2-explorer", "pc2_specifier.toml": "pc2-specifier",
+		"pc2_designer.toml": "pc2-designer", "pc2_task_planner.toml": "pc2-task-planner",
+		"pc2_implementer.toml": "pc2-implementer", "pc2_reviewer.toml": "pc2-reviewer",
+		"pc2_sdd_initializer.toml": "pc2-sdd-initializer",
 	}
 	for _, entry := range entries {
 		body, readErr := os.ReadFile(filepath.Join(registry, entry.Name()))
-		if readErr != nil || !bytes.Contains(body, []byte(roleClauses[entry.Name()])) {
-			t.Fatalf("installed role %s omitted role-specific coordination clause: %v", entry.Name(), readErr)
+		role := roleNames[entry.Name()]
+		brief := "pitcrew agent brief --role " + role
+		briefAt, actionAt := bytes.Index(body, []byte(brief)), bytes.Index(body, []byte("before taking action"))
+		if readErr != nil || briefAt < 0 || actionAt < 0 || briefAt >= actionAt {
+			t.Fatalf("installed role %s omitted its pre-action bootstrap: %v", entry.Name(), readErr)
+		}
+		for _, forbidden := range []string{"THE FOUR MAXIMS", "Allowed workflow commands:", "correction budget", "release map", "Shared orchestration contract"} {
+			if bytes.Contains(body, []byte(forbidden)) {
+				t.Fatalf("installed role %s embeds manual content %q", entry.Name(), forbidden)
+			}
 		}
 	}
-	rolePermissions := map[string]string{
-		"daimon.toml":           "Allowed workflow commands: No workflow commands; forward accepted intent to Aion.",
-		"pc2_explorer.toml":     "Allowed workflow commands: workflow show --view phase and workflow explore.",
-		"pc2_specifier.toml":    "Allowed workflow commands: workflow show --view phase and workflow spec.",
-		"pc2_designer.toml":     "Allowed workflow commands: workflow show --view phase and workflow design.",
-		"pc2_task_planner.toml": "Allowed workflow commands: workflow show --view phase and workflow plan.",
-		"pc2_implementer.toml":  "Allowed workflow commands: workflow show --view unit --unit-id <wu-id>, workflow list-ready-units, workflow claim-unit, workflow unit-tdd, and workflow unit-complete. Never workflow unit-review or workflow complete.",
-		"pc2_reviewer.toml":     "Allowed workflow commands: workflow show --view unit --unit-id <wu-id>, workflow show --view aggregate, workflow unit-review, and workflow complete only. Never implementation commands.",
+	daimon, _ := os.ReadFile(filepath.Join(registry, "daimon.toml"))
+	aion, _ := os.ReadFile(filepath.Join(registry, "aion.toml"))
+	if !bytes.Contains(daimon, []byte("delegate only to aion")) {
+		t.Fatal("Daimon target boundary drifted")
 	}
-	for role, permission := range rolePermissions {
-		body, readErr := os.ReadFile(filepath.Join(registry, role))
-		if readErr != nil || !bytes.Contains(body, []byte("\n"+permission+"\n")) {
-			t.Fatalf("installed role %s permission drift: %v", role, readErr)
+	targets := "pc2_explorer, pc2_specifier, pc2_designer, pc2_task_planner, pc2_implementer, pc2_reviewer, pc2_sdd_initializer"
+	if !bytes.Contains(aion, []byte("delegate only to "+targets)) {
+		t.Fatal("Aion target boundary drifted")
+	}
+	for file := range roleNames {
+		if file == "daimon.toml" || file == "aion.toml" {
+			continue
 		}
-	}
-	var roleBytes int
-	for _, entry := range entries {
-		body, _ := os.ReadFile(filepath.Join(registry, entry.Name()))
-		roleBytes += len(body)
-	}
-	if roleBytes > 49000 {
-		t.Fatalf("installed role prompts use %d bytes; budget is 49000", roleBytes)
+		body, _ := os.ReadFile(filepath.Join(registry, file))
+		if !bytes.Contains(body, []byte("do not delegate; return to aion")) {
+			t.Fatalf("specialist %s target boundary drifted", file)
+		}
 	}
 	want := "Installed PitCrew agents for Codex in " + registry + "\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Fatalf("stdout=%q, want %q; stderr=%q", stdout.String(), want, stderr.String())
 	}
+	aionBefore, _ := os.ReadFile(filepath.Join(registry, "aion.toml"))
+	custom := filepath.Join(registry, "custom.toml")
+	if err := os.WriteFile(custom, []byte("unrelated = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reinstall := exec.Command(binary, "install", "codex")
+	reinstall.Dir = workingDirectory
+	reinstall.Env = cmd.Env
+	if output, err := reinstall.CombinedOutput(); err != nil {
+		t.Fatalf("idempotent reinstall: %v\n%s", err, output)
+	}
+	aionAfter, _ := os.ReadFile(filepath.Join(registry, "aion.toml"))
+	customAfter, _ := os.ReadFile(custom)
+	if !bytes.Equal(aionBefore, aionAfter) || string(customAfter) != "unrelated = true\n" {
+		t.Fatal("reinstall was not idempotent or changed an unrelated file")
+	}
 	if matches, err := filepath.Glob(filepath.Join(temporaryDirectory, "pitcrew-install-*")); err != nil || len(matches) != 0 {
 		t.Fatalf("private extraction remains: %v (err=%v)", matches, err)
+	}
+
+	project, dataHome := t.TempDir(), filepath.Join(t.TempDir(), "data")
+	if output, err := exec.Command("git", "-C", project, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("initialize clean project: %v: %s", err, output)
+	}
+	for _, call := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"agent", "brief", "--role", "daimon"}, "next_action: handoff to aion"},
+		{[]string{"agent", "brief", "--role", "daimon", "--json"}, `"next_action":"handoff to aion"`},
+		{[]string{"agent", "brief", "--role", "aion"}, "next_action: aion admit new delivery"},
+		{[]string{"agent", "brief", "--role", "aion", "--json"}, `"next_action":"aion admit new delivery"`},
+	} {
+		brief := exec.Command(binary, call.args...)
+		brief.Dir = project
+		brief.Env = append(os.Environ(), "XDG_DATA_HOME="+dataHome)
+		output, err := brief.CombinedOutput()
+		if err != nil || !bytes.Contains(output, []byte(call.want)) {
+			t.Fatalf("brief %v: %v\n%s", call.args, err, output)
+		}
+	}
+	status, err := exec.Command("git", "-C", project, "status", "--porcelain", "--untracked-files=all").CombinedOutput()
+	if err != nil || len(status) != 0 {
+		t.Fatalf("agent bootstrap mutated checkout: %v, %q", err, status)
+	}
+	if _, err := os.Stat(dataHome); !os.IsNotExist(err) {
+		t.Fatalf("agent bootstrap created data home: %v", err)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/activity"
+	"github.com/fmazzalomo/pitcrew/internal/agentbrief"
 	"github.com/fmazzalomo/pitcrew/internal/consolidate"
 	"github.com/fmazzalomo/pitcrew/internal/correction"
 	"github.com/fmazzalomo/pitcrew/internal/delivery"
@@ -94,6 +95,8 @@ func Run(args []string, deps Dependencies) int {
 		return int(envelope.OK)
 	}
 	switch args[0] {
+	case "agent":
+		return runAgent(args[1:], deps)
 	case "install":
 		return runInstall(args[1:], deps)
 	case "tui":
@@ -114,6 +117,94 @@ func Run(args []string, deps Dependencies) int {
 	default:
 		return fail(deps, ErrUsage, fmt.Sprintf("unknown command %q", args[0]))
 	}
+}
+
+func runAgent(args []string, deps Dependencies) int {
+	if equalArgs(args, "--help") || equalArgs(args, "brief", "--help") {
+		writeHelp(deps.Stdout, "Usage: pitcrew agent brief --role <role> [--workflow-id <id>] [--unit-id <id>] [--json]\n")
+		return int(envelope.OK)
+	}
+	if len(args) == 0 || args[0] != "brief" {
+		return fail(deps, ErrUsage, "usage: pitcrew agent brief --role <role> [--workflow-id <id>] [--unit-id <id>] [--json]")
+	}
+	values, err := parseFlags(args[1:], flagRules{required: []string{"--role"}, optional: []string{"--workflow-id", "--unit-id"}, boolean: []string{"--json"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	brief, err := agentbrief.New(values.one("--role"), values.one("--workflow-id"), values.one("--unit-id"))
+	if err != nil {
+		return fail(deps, ErrUsage, err.Error())
+	}
+	jsonOutput := values.one("--json") != ""
+	if brief.Contract.Role == "aion" && values.one("--workflow-id") == "" {
+		write := func(continuity history.ActiveContinuity) error {
+			return writeAgentBrief(deps, brief.WithContinuity(continuity), jsonOutput)
+		}
+		return withReadStoreOrUninitialized(deps, func(s *store.Store) error {
+			continuity, err := history.New(s).ActiveContinuity(context.Background())
+			if err != nil {
+				return err
+			}
+			return write(continuity)
+		}, func() error { return write(history.EmptyActiveContinuity()) })
+	}
+	if brief.Contract.Role == "aion" {
+		return withReadStore(deps, func(s *store.Store) error {
+			projection, err := history.New(s).Project(context.Background(), values.one("--workflow-id"), history.ViewCoordination, "")
+			if err != nil {
+				return err
+			}
+			return writeAgentBrief(deps, brief.WithCoordination(projection), jsonOutput)
+		})
+	}
+	if brief.Contract.Role != "daimon" && brief.Contract.Role != "aion" && brief.Contract.Role != "pc2-sdd-initializer" {
+		return withReadStore(deps, func(s *store.Store) error {
+			svc, ctx := history.New(s), context.Background()
+			workflowID, unitID := values.one("--workflow-id"), values.one("--unit-id")
+			switch brief.Contract.Role {
+			case "pc2-explorer", "pc2-specifier", "pc2-designer", "pc2-task-planner":
+				projection, err := svc.Project(ctx, workflowID, history.ViewPhase, "")
+				if err != nil {
+					return err
+				}
+				brief = brief.WithPhase(projection)
+			case "pc2-implementer", "pc2-reviewer":
+				if brief.Contract.Role == "pc2-reviewer" && unitID == "" {
+					projection, err := svc.Project(ctx, workflowID, history.ViewAggregate, "")
+					if err != nil {
+						return err
+					}
+					brief = brief.WithAggregate(projection)
+					break
+				}
+				unit, err := svc.Project(ctx, workflowID, history.ViewUnit, unitID)
+				if err != nil {
+					return err
+				}
+				coordination, err := svc.Project(ctx, workflowID, history.ViewCoordination, "")
+				if err != nil {
+					return err
+				}
+				aggregate, err := svc.Project(ctx, workflowID, history.ViewAggregate, "")
+				if err != nil {
+					return err
+				}
+				brief = brief.WithUnit(unit, coordination, aggregate, brief.Contract.Role == "pc2-reviewer")
+			}
+			return writeAgentBrief(deps, brief, jsonOutput)
+		})
+	}
+	if err = writeAgentBrief(deps, brief, jsonOutput); err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return int(envelope.OK)
+}
+
+func writeAgentBrief(deps Dependencies, brief agentbrief.Brief, jsonOutput bool) error {
+	if jsonOutput {
+		return writeSuccess(deps, map[string]any{"brief": brief}, brief.NextAction)
+	}
+	return agentbrief.WriteText(deps.Stdout, brief)
 }
 
 func runInstall(args []string, deps Dependencies) int {
@@ -400,23 +491,16 @@ func runDeliveryActive(args []string, deps Dependencies) int {
 	if len(args) != 0 {
 		return fail(deps, ErrUsage, "delivery active accepts no options")
 	}
-	empty := func() error {
-		return writeSuccess(deps, map[string]any{"deliveries": []history.Delivery{}}, "aion admit new delivery")
+	write := func(continuity history.ActiveContinuity) error {
+		return writeSuccess(deps, map[string]any{"deliveries": continuity.Deliveries}, continuity.NextAction)
 	}
 	return withReadStoreOrUninitialized(deps, func(s *store.Store) error {
-		deliveries, err := history.New(s).ListActiveDeliveries(context.Background())
+		continuity, err := history.New(s).ActiveContinuity(context.Background())
 		if err != nil {
 			return err
 		}
-		next := "aion clarify delivery identity"
-		switch len(deliveries) {
-		case 0:
-			next = "aion admit new delivery"
-		case 1:
-			next = "delivery show --delivery-id " + deliveries[0].ID
-		}
-		return writeSuccess(deps, map[string]any{"deliveries": deliveries}, next)
-	}, empty)
+		return write(continuity)
+	}, func() error { return write(history.EmptyActiveContinuity()) })
 }
 
 func deliveryStateError(err error) error {
@@ -1231,6 +1315,7 @@ func writeHelp(w io.Writer, body string) {
 const rootHelp = `Usage: pitcrew <command> [options]
 
 Commands:
+  agent brief
   install codex|opencode|claude|pi
   project inspect|consolidate
   context inspect|initialize|record

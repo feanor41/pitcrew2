@@ -5,20 +5,51 @@ skip() { printf 'SKIP: %s\n' "$*"; exit 0; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 ROOT=$(CDPATH= cd "$(dirname "$0")/../.." && pwd)
 
-for required in \
-  'stable semantic key' \
-  'unit identity, attempt, and outcome' \
-  'workflow revision alone is insufficient' \
-  'do not replay historical progress' \
-  'Reviewer alone runs `workflow complete` and returns the terminal result' \
-  'relays it before the first publication action' \
-  'broader delivery continues, and gives the actual next action' \
-  'final delivery-only report omits that terminal key' \
-  'Terminal facts require the Reviewer terminal result and Aion relay first' \
-  'If there is no new accepted fact, emit nothing' \
-  'Without a live Aion relay, do not synthesize an update'; do
-  grep -Fq "$required" "$ROOT/scripts/install-templates.sh" || fail "Pi semantic reporting contract omitted: $required"
+BOOTSTRAP_HOME=${TMPDIR:-/tmp}/pitcrew-pi-bootstrap.$$
+mkdir -p "$BOOTSTRAP_HOME/npm/node_modules/pi-subagents" "$BOOTSTRAP_HOME/extensions/subagent"
+printf '%s\n' '{"name":"pi-subagents","version":"0.25.0"}' > "$BOOTSTRAP_HOME/npm/node_modules/pi-subagents/package.json"
+printf '%s\n' '{"packages":["npm:pi-subagents"]}' > "$BOOTSTRAP_HOME/settings.json"
+printf '%s\n' '{"maxSubagentDepth":3}' > "$BOOTSTRAP_HOME/extensions/subagent/config.json"
+PI_AGENT_HOME=$BOOTSTRAP_HOME sh "$ROOT/scripts/install-templates.sh" pi >/dev/null || fail 'could not render Pi bootstrap definitions'
+
+roles='daimon aion pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer'
+for role in $roles; do
+  prompt=$BOOTSTRAP_HOME/agents/$role.md
+  [ -f "$prompt" ] || fail "missing Pi role $role"
+  case $role in
+    daimon|aion|pc2-sdd-initializer) command="pitcrew agent brief --role $role" ;;
+    pc2-implementer) command="pitcrew agent brief --role $role --workflow-id <received-workflow-id> --unit-id <received-unit-id>" ;;
+    pc2-reviewer) command="pitcrew agent brief --role $role --workflow-id <received-workflow-id> [--unit-id <received-unit-id>]" ;;
+    *) command="pitcrew agent brief --role $role --workflow-id <received-workflow-id>" ;;
+  esac
+  command_line=$(grep -nF "$command" "$prompt" | head -1 | cut -d: -f1)
+  action_line=$(grep -nF 'before taking action' "$prompt" | head -1 | cut -d: -f1)
+  [ -n "$command_line" ] && [ -n "$action_line" ] && [ "$command_line" -le "$action_line" ] || fail "$role bootstrap does not precede action"
+  grep -F "Identity: You are the $role PitCrew agent." "$prompt" >/dev/null || fail "$role identity drifted"
+  case $command in *'<received-'*) grep -F 'Replace each received-ID placeholder with the corresponding ID from the handoff' "$prompt" >/dev/null || fail "$role does not require received-ID substitution" ;; esac
+  [ "$role" != pc2-reviewer ] || grep -F 'Include the bracketed unit flag only when the handoff includes a unit ID' "$prompt" >/dev/null || fail 'reviewer optional unit syntax is ambiguous'
+  for forbidden in 'THE FOUR MAXIMS' 'Allowed workflow commands:' 'correction budget' 'release map' 'Shared orchestration contract'; do
+    grep -F "$forbidden" "$prompt" >/dev/null && fail "$role embeds obsolete manual content: $forbidden" || :
+  done
 done
+
+daimon=$BOOTSTRAP_HOME/agents/daimon.md
+aion=$BOOTSTRAP_HOME/agents/aion.md
+grep -Fx 'tools: bash, subagent' "$daimon" >/dev/null || fail 'Pi Daimon bootstrap/delegation tools drifted'
+grep -Fx 'maxSubagentDepth: 3' "$daimon" >/dev/null || fail 'Pi Daimon nesting depth drifted'
+grep -F 'Handoff boundary: delegate only to aion.' "$daimon" >/dev/null || fail 'Pi Daimon target boundary drifted'
+grep -F 'accept progress_update only from aion' "$daimon" >/dev/null || fail 'Pi Daimon supervisor wiring drifted'
+grep -Fx 'tools: read, grep, find, ls, bash, edit, write, subagent' "$aion" >/dev/null || fail 'Pi Aion delegation tool drifted'
+grep -Fx 'maxSubagentDepth: 3' "$aion" >/dev/null || fail 'Pi Aion nesting depth drifted'
+targets='pc2-explorer, pc2-specifier, pc2-designer, pc2-task-planner, pc2-implementer, pc2-reviewer, pc2-sdd-initializer'
+grep -F "Handoff boundary: delegate only to $targets; return to daimon." "$aion" >/dev/null || fail 'Pi Aion target boundary drifted'
+grep -F 'send progress_update to daimon only through contact_supervisor' "$aion" >/dev/null || fail 'Pi Aion supervisor wiring drifted'
+for role in pc2-explorer pc2-specifier pc2-designer pc2-task-planner pc2-implementer pc2-reviewer pc2-sdd-initializer; do
+  prompt=$BOOTSTRAP_HOME/agents/$role.md
+  grep '^tools: .*subagent' "$prompt" >/dev/null && fail "$role can unexpectedly delegate in Pi" || :
+  grep -F 'Handoff boundary: do not delegate; return to aion.' "$prompt" >/dev/null || fail "$role target boundary drifted"
+done
+rm -rf "$BOOTSTRAP_HOME"
 
 verify_runtime_evidence() {
   node - "$1" "$2" "$3" <<'NODE'

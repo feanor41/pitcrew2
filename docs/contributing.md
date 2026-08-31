@@ -48,7 +48,7 @@ Admit the operation before mutation, then reconcile from physical evidence:
    from that revision. A matching version with a different digest is stale;
 3. verify the owned backup exists and preserves the displaced binary digest;
 4. refresh each selected runtime through the transactional installer and compare
-   only its exact managed role files and support contract; preserve unrelated
+   only its exact managed role files; preserve unrelated
    runtime files and application settings;
 5. publish GitHub artifacts only after local convergence and only if selected.
 
@@ -130,11 +130,13 @@ Applying an already-decided approach creates no new gate, justification, or arti
 When changing the public runtime installer or `scripts/install-templates.sh`, prove all of these:
 
 - each exact `pitcrew install codex|opencode|claude|pi` selector installs only its selected runtime, even when all other homes and override variables exist;
-- every supported runtime installs exactly eight native agents plus `pitcrew/agent-contract.md` outside agent discovery: Codex: `agents/*.toml` with underscore native identities; OpenCode: `agents/*.md`; Claude Code: `agents/*.md`; Pi: `agents/*.md`;
-- every Aion definition resolves exactly the six native specialist identities, while Daimon can hand off only to Aion and specialists cannot delegate;
-- every role contains the exact canonical `MAXIMS.md` bytes and hand-off reminder;
+- every supported runtime installs exactly nine minimal native role bootstraps in its native registry: Codex: `agents/*.toml`; OpenCode: `agents/*.md`; Claude Code: `agents/*.md`; Pi: `agents/*.md`;
+- every definition retrieves its canonical role-scoped `pitcrew agent brief` before action instead of embedding workflow policy;
+- every Aion definition resolves exactly the seven native specialist identities, while Daimon can hand off only to Aion and specialists cannot delegate;
+- runtime-native permissions give coordinators the shell and delegation tools needed to retrieve and hand off briefs, while specialists retain shell access without delegation;
 - a byte-identical reinstall is a no-op;
-- the public command warns before transactionally refreshing only differing current and legacy PitCrew-managed filenames, and preserves unrelated files and application configuration;
+- the public command warns before transactionally refreshing differing current managed role files, and preserves unrelated files and application configuration;
+- a recognized prior managed `pitcrew/agent-contract.md` is removed transactionally by exact checksum, while missing, modified, and non-regular variants are preserved or reported as appropriate;
 - direct script invocation protects differing managed files unless `--overwrite` is explicit;
 - a partial failure restores every touched file and removes installer-created directories and temporary files;
 - a built binary installs from embedded assets outside the checkout and leaves no extraction residue;
@@ -157,7 +159,7 @@ the failure. Malformed or incompatible resolved output must be fixed in the
 configuration reported by the verification command. The installer validates
 this prerequisite before any target write and never rewrites user JSON or
 JSONC. Depth two preserves the existing bounded topology: Daimon can call only
-Aion, Aion can call only the six specialists, and specialists cannot delegate.
+Aion, Aion can call only the seven specialists, and specialists cannot delegate.
 
 The real nested-runtime probe is isolated, opt-in, and may consume provider
 tokens. It reports `SKIP`, never `PASS`, when it is not enabled or lacks the CLI
@@ -176,7 +178,11 @@ and global depth-two success without reading or changing real OpenCode config.
 
 Run `sh scripts/tests/run.sh` with `/bin/sh`, not Bash. The suite builds a standalone binary and exercises the four public selectors, prerequisite failures, managed updates, idempotency, rollback, signals, and cleanup. If `shellcheck` is available, run it with shell dialect `sh` and resolve applicable findings.
 
-Before a managed refresh or direct overwrite migration, preserve any custom instructions needed from legacy `master.md`, customized `daimon.md`, or a pre-existing `aion.md` outside managed role filenames. Public installation authorizes bounded refresh and emits a warning; direct invocation refuses differing managed definitions without `--overwrite`. Both use the same transactional rollback, and arbitrary customization is not translated automatically.
+Before a managed refresh, preserve custom instructions from any current managed
+role file outside managed filenames. Public installation authorizes bounded
+refresh and emits a warning; direct invocation refuses differing managed
+definitions without `--overwrite`. Both use the same transactional rollback,
+and arbitrary customization is not translated automatically.
 
 ## Scope changes
 
