@@ -853,6 +853,95 @@ func TestAggregateReviewCorrectionsCASActorAndTerminalIntegrity(t *testing.T) {
 	assertRejectedAggregate("terminal", "third-reviewer", workflowRevision(t, approved), 3)
 }
 
+func TestWorkflowCompleteAcceptsStructuredAggregateEvidenceAtomically(t *testing.T) {
+	root := t.TempDir()
+	wfID, _, revision := setupStructuredReadyWorkflow(t, root)
+	approval := writeInput(t, root, "structured-approval.json", structuredAggregateApproval(root, "exit 0", true))
+	completed := mustOK(t, runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "aggregate-reviewer", "--input-file", approval))
+	if workflowState(t, completed) != "completed" || !strings.Contains(string(completed), `"next_action":"none"`) {
+		t.Fatalf("completion=%s", completed)
+	}
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var runs, checkpoints int
+	if err = s.DB().QueryRow(`SELECT count(*) FROM verification_records WHERE workflow_id=? AND unit_id IS NULL AND tier='aggregate_full'`, wfID).Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB().QueryRow(`SELECT count(*) FROM reviewed_checkpoints WHERE workflow_id=?`, wfID).Scan(&checkpoints); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 || checkpoints != 1 {
+		t.Fatalf("aggregate bundle was not persisted atomically: runs=%d checkpoints=%d", runs, checkpoints)
+	}
+}
+
+func TestWorkflowCompleteRejectsInvalidStructuredBundlesWithoutMutation(t *testing.T) {
+	cases := map[string]struct {
+		body       func(string) string
+		stale      bool
+		incomplete bool
+		contains   string
+	}{
+		"missing checkpoint": {body: func(root string) string { return structuredAggregateApproval(root, "exit 0", false) }, contains: "checkpoint"},
+		"invalid checkpoint": {body: func(string) string {
+			return `{"verdict":"approved","summary":"checked","findings":"","verification_runs":[{"id":"aggregate-1","tier":"aggregate_full","command":"go test ./...","outcome":"exit 0","repository_fingerprint":"fingerprint-a","scenario_ids":["SCN-CLI-001"]}],"checkpoint":{"project_id":"","checkout_root":"","base_revision":"","head_revision":"","result_digest":"","dirty":false}}`
+		}, contains: "checkpoint"},
+		"missing verification": {body: func(root string) string {
+			return strings.Replace(structuredAggregateApproval(root, "exit 0", true), `[{"id":"aggregate-1","tier":"aggregate_full","command":"go test ./...","outcome":"exit 0","repository_fingerprint":"fingerprint-a","scenario_ids":["SCN-CLI-001"]}]`, `[]`, 1)
+		}, contains: "aggregate_full"},
+		"failed verification":      {body: func(root string) string { return structuredAggregateApproval(root, "exit 1", true) }, contains: "aggregate_full"},
+		"stale unit evidence":      {body: func(root string) string { return structuredAggregateApproval(root, "exit 0", true) }, stale: true, contains: "focused"},
+		"incomplete unit evidence": {body: func(root string) string { return structuredAggregateApproval(root, "exit 0", true) }, incomplete: true, contains: "focused"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			var wfID, unitID string
+			var revision int64
+			if tc.incomplete {
+				var handle string
+				wfID, unitID, handle = setupReviewingUnit(t, root, "implementer")
+				s, err := store.Open(context.Background(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = s.DB().Exec(`INSERT INTO unit_coverage(workflow_id,unit_id,requirement_id,scenario_id) VALUES(?,?,?,?)`, wfID, unitID, "REQ-CLI-001", "SCN-CLI-001")
+				_ = s.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				revision = workflowRevision(t, mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handle)))
+			} else {
+				wfID, unitID, revision = setupStructuredReadyWorkflow(t, root)
+			}
+			if tc.stale {
+				s, err := store.Open(context.Background(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = s.DB().Exec(`UPDATE work_units SET revision=revision+1 WHERE workflow_id=? AND id=?`, wfID, unitID)
+				_ = s.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+			input := writeInput(t, root, "invalid-aggregate.json", tc.body(root))
+			failed := runAt(t, root, "workflow", "complete", "--workflow-id", wfID, "--revision", itoa(revision), "--actor", "aggregate-reviewer", "--input-file", input)
+			if failed.code == 0 || failed.stdout != "" || !strings.Contains(failed.stderr, tc.contains) {
+				t.Fatalf("failure=%#v", failed)
+			}
+			after := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID))
+			if !bytes.Equal(before, after) {
+				t.Fatalf("rejected aggregate mutated workflow")
+			}
+		})
+	}
+}
+
 func TestAuthorizeCorrectionGatesExactExhaustedBlockerAndEnablesBatch(t *testing.T) {
 	root := t.TempDir()
 	wfID, unitID, handle := setupReviewingUnit(t, root, "implementer")
@@ -1667,6 +1756,34 @@ func setupReviewingUnit(t *testing.T, root, actor string) (string, string, strin
 	tdd := writeInput(t, root, "tdd.json", `{"red_command":"test red","red_outcome":"exit 1","green_command":"test green","green_outcome":"exit 0","refactor_summary":"","validation_command":"test all","validation_outcome":"exit 0","changed_paths":"internal"}`)
 	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", actor, "--claim-handle", handlePath, "--input-file", tdd))
 	return wfID, unitID, handlePath
+}
+
+func setupStructuredReadyWorkflow(t *testing.T, root string) (string, string, int64) {
+	t.Helper()
+	wfID, unitID, _ := setupImplementingUnit(t, root)
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.DB().Exec(`INSERT INTO unit_coverage(workflow_id,unit_id,requirement_id,scenario_id) VALUES(?,?,?,?)`, wfID, unitID, "REQ-CLI-001", "SCN-CLI-001")
+	_ = s.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--handle-dir", filepath.Join(root, "handles")))
+	handle := stringField(t, claim, "handle_path")
+	tdd := writeInput(t, root, "structured-tdd.json", `{"red_command":"test red","red_outcome":"exit 1","green_command":"test green","green_outcome":"exit 0","refactor_summary":"","validation_command":"test all","validation_outcome":"exit 0","changed_paths":"internal","verification_runs":[{"id":"focused-1","tier":"focused","command":"go test -run Focused","outcome":"exit 0","repository_fingerprint":"fingerprint-a","scenario_ids":["SCN-CLI-001"]},{"id":"package-1","tier":"affected_package","command":"go test ./internal/cli","outcome":"exit 0","repository_fingerprint":"fingerprint-a","scenario_ids":["SCN-CLI-001"]}],"scenario_results":[{"scenario_id":"SCN-CLI-001","outcome":"exit 0","verification_id":"focused-1"}]}`)
+	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handle, "--input-file", tdd))
+	ready := mustOK(t, runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handle))
+	return wfID, unitID, workflowRevision(t, ready)
+}
+
+func structuredAggregateApproval(root, outcome string, checkpoint bool) string {
+	body := `{"verdict":"approved","summary":"requirements satisfied","findings":"","verification_runs":[{"id":"aggregate-1","tier":"aggregate_full","command":"go test ./...","outcome":"` + outcome + `","repository_fingerprint":"fingerprint-a","scenario_ids":["SCN-CLI-001"]}]`
+	if checkpoint {
+		body += `,"checkpoint":{"project_id":"` + strings.Repeat("1", 64) + `","checkout_root":"` + root + `","base_revision":"` + strings.Repeat("2", 40) + `","head_revision":"` + strings.Repeat("3", 40) + `","result_digest":"` + strings.Repeat("4", 64) + `","dirty":false}`
+	}
+	return body + `}`
 }
 
 func handoffReview(t *testing.T, root, wfID, unitID, reviewer string) string {

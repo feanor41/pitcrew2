@@ -71,9 +71,11 @@ type reviewInput struct {
 	PlanImpact *evidence.PlanImpact `json:"plan_impact,omitempty"`
 }
 type aggregateReviewInput struct {
-	Verdict  *evidence.Verdict `json:"verdict"`
-	Summary  *string           `json:"summary"`
-	Findings *string           `json:"findings"`
+	Verdict          *evidence.Verdict            `json:"verdict"`
+	Summary          *string                      `json:"summary"`
+	Findings         *string                      `json:"findings"`
+	VerificationRuns []evidence.VerificationRun   `json:"verification_runs,omitempty"`
+	Checkpoint       *evidence.ReviewedCheckpoint `json:"checkpoint,omitempty"`
 }
 
 func Run(args []string, deps Dependencies) int {
@@ -812,7 +814,7 @@ func runComplete(args []string, deps Dependencies) int {
 	if input.Verdict == nil || input.Summary == nil || input.Findings == nil {
 		return fail(deps, ErrState, "aggregate review requires verdict, summary, and findings")
 	}
-	review := evidence.AggregateReview{Verdict: *input.Verdict, Summary: *input.Summary, Findings: *input.Findings, Actor: values.one("--actor")}
+	review := evidence.AggregateReview{Verdict: *input.Verdict, Summary: *input.Summary, Findings: *input.Findings, VerificationRuns: input.VerificationRuns, Checkpoint: input.Checkpoint, Actor: values.one("--actor")}
 	if err = review.Validate(); err != nil {
 		return fail(deps, ErrState, err.Error())
 	}
