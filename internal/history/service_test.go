@@ -620,7 +620,7 @@ func TestServiceListsDirectDelegatedAndFullDeliveriesExactlyOnce(t *testing.T) {
 		}
 		byID[item.ID] = item
 	}
-	if got := byID["wf-blocked"]; got.Route != FullWorkflow || got.Status != "blocked" || got.Summary != "waiting on input" || got.NextAction != "ask user" {
+	if got := byID["wf-blocked"]; got.Route != FullWorkflow || got.Status != "implementing" || got.Summary != "waiting on input" || got.NextAction != "workflow list-ready-units" {
 		t.Fatalf("workflow projection = %#v", got)
 	}
 	if got := byID["dl-000000000000000000000001"]; got.Route != "direct_inline" || got.Status != "completed" || got.FinishedAt == "" {
@@ -685,7 +685,7 @@ func TestListActiveDeliveriesFiltersUnifiedHistoryAndKeepsStableCandidateFacts(t
 	if got := byID["wf-planning"]; got.Route != FullWorkflow || got.Revision != 3 || got.Status != "planning" || got.NextAction == "" {
 		t.Fatalf("workflow candidate facts = %#v", got)
 	}
-	if got := byID["wf-blocked"]; got.Status != "blocked" || got.Revision != 4 || got.NextAction != "ask user" {
+	if got := byID["wf-blocked"]; got.Status != "implementing" || got.Revision != 4 || got.NextAction != "workflow list-ready-units" {
 		t.Fatalf("blocked workflow candidate facts = %#v", got)
 	}
 	if got := byID["dl-000000000000000000000013"]; got.Route != "direct_inline" || got.Revision != 3 || got.Status != "interrupted" || got.NextAction != "inspect" {

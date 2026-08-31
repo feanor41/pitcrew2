@@ -135,16 +135,30 @@ func runAgent(args []string, deps Dependencies) int {
 	if err != nil {
 		return fail(deps, ErrUsage, err.Error())
 	}
-	if values.one("--json") != "" {
-		if err = writeSuccess(deps, map[string]any{"brief": brief}, brief.NextAction); err != nil {
-			return fail(deps, err, err.Error())
+	jsonOutput := values.one("--json") != ""
+	if brief.Contract.Role == "aion" && values.one("--workflow-id") == "" {
+		write := func(continuity history.ActiveContinuity) error {
+			return writeAgentBrief(deps, brief.WithContinuity(continuity), jsonOutput)
 		}
-		return int(envelope.OK)
+		return withReadStoreOrUninitialized(deps, func(s *store.Store) error {
+			continuity, err := history.New(s).ActiveContinuity(context.Background())
+			if err != nil {
+				return err
+			}
+			return write(continuity)
+		}, func() error { return write(history.EmptyActiveContinuity()) })
 	}
-	if err = agentbrief.WriteText(deps.Stdout, brief); err != nil {
+	if err = writeAgentBrief(deps, brief, jsonOutput); err != nil {
 		return fail(deps, err, err.Error())
 	}
 	return int(envelope.OK)
+}
+
+func writeAgentBrief(deps Dependencies, brief agentbrief.Brief, jsonOutput bool) error {
+	if jsonOutput {
+		return writeSuccess(deps, map[string]any{"brief": brief}, brief.NextAction)
+	}
+	return agentbrief.WriteText(deps.Stdout, brief)
 }
 
 func runInstall(args []string, deps Dependencies) int {
@@ -431,23 +445,16 @@ func runDeliveryActive(args []string, deps Dependencies) int {
 	if len(args) != 0 {
 		return fail(deps, ErrUsage, "delivery active accepts no options")
 	}
-	empty := func() error {
-		return writeSuccess(deps, map[string]any{"deliveries": []history.Delivery{}}, "aion admit new delivery")
+	write := func(continuity history.ActiveContinuity) error {
+		return writeSuccess(deps, map[string]any{"deliveries": continuity.Deliveries}, continuity.NextAction)
 	}
 	return withReadStoreOrUninitialized(deps, func(s *store.Store) error {
-		deliveries, err := history.New(s).ListActiveDeliveries(context.Background())
+		continuity, err := history.New(s).ActiveContinuity(context.Background())
 		if err != nil {
 			return err
 		}
-		next := "aion clarify delivery identity"
-		switch len(deliveries) {
-		case 0:
-			next = "aion admit new delivery"
-		case 1:
-			next = "delivery show --delivery-id " + deliveries[0].ID
-		}
-		return writeSuccess(deps, map[string]any{"deliveries": deliveries}, next)
-	}, empty)
+		return write(continuity)
+	}, func() error { return write(history.EmptyActiveContinuity()) })
 }
 
 func deliveryStateError(err error) error {

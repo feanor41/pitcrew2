@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/fmazzalomo/pitcrew/internal/history"
 )
 
 const ContractVersion = "1"
@@ -24,8 +26,15 @@ type StableContract struct {
 }
 
 type Context struct {
-	WorkflowID string `json:"workflow_id,omitempty"`
-	UnitID     string `json:"unit_id,omitempty"`
+	Kind       string                    `json:"kind,omitempty"`
+	WorkflowID string                    `json:"workflow_id,omitempty"`
+	UnitID     string                    `json:"unit_id,omitempty"`
+	Continuity *history.ActiveContinuity `json:"continuity,omitempty"`
+}
+
+func (b Brief) WithContinuity(continuity history.ActiveContinuity) Brief {
+	b.Context, b.NextAction = &Context{Kind: "continuity", Continuity: &continuity}, continuity.NextAction
+	return b
 }
 
 type Brief struct {
@@ -65,12 +74,25 @@ func WriteText(w io.Writer, brief Brief) error {
 		return err
 	}
 	if brief.Context != nil {
-		if _, err := fmt.Fprintf(w, "workflow_id: %s\nunit_id: %s\n", brief.Context.WorkflowID, brief.Context.UnitID); err != nil {
+		if _, err := fmt.Fprintf(w, "context_kind: %s\nworkflow_id: %s\nunit_id: %s\n", brief.Context.Kind, brief.Context.WorkflowID, brief.Context.UnitID); err != nil {
 			return err
+		}
+		if brief.Context.Continuity != nil {
+			if _, err := fmt.Fprintf(w, "continuity_count: %d\ncontinuity_candidates: %s\n", brief.Context.Continuity.Count, formatCandidates(brief.Context.Continuity.Candidates)); err != nil {
+				return err
+			}
 		}
 	}
 	_, err := fmt.Fprintf(w, "next_action: %s\n", brief.NextAction)
 	return err
+}
+
+func formatCandidates(candidates []history.ActiveCandidate) string {
+	items := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		items = append(items, fmt.Sprintf("%s@%d:%s:%s", candidate.DeliveryID, candidate.Revision, candidate.Status, candidate.NextAction))
+	}
+	return strings.Join(items, ", ")
 }
 
 func validateContext(role, workflowID, unitID string) error {

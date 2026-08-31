@@ -276,10 +276,7 @@ func projectWorkflowDelivery(detail Detail) Delivery {
 	workflow := detail.Workflow
 	status, summary, nextAction := workflow.State, "", detail.Synopsis.NextAction
 	if detail.Synopsis.Progress != nil {
-		summary, nextAction = detail.Synopsis.Progress.Summary, detail.Synopsis.Progress.NextAction
-		if detail.Synopsis.Progress.Status == "blocked" {
-			status = "blocked"
-		}
+		summary = detail.Synopsis.Progress.Summary
 	}
 	correction := detail.Synopsis.CorrectionPolicy
 	if correction != nil && correction.BlockerRevision != 0 && workflow.State != string(workflowdomain.Completed) && workflow.State != string(workflowdomain.Abandoned) {
