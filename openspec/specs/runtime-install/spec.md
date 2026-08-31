@@ -2,332 +2,137 @@
 
 ## Purpose
 
-Define the contract for `pitcrew install codex|opencode|claude|pi` and its canonical
-POSIX installer. It configures one supported runtime, not the PitCrew binary.
+Define the contract for `pitcrew install codex|opencode|claude|pi` and its
+canonical POSIX installer. Installation configures one supported agent runtime;
+it does not install the PitCrew binary or create workflow state.
 
 ## Requirements
 
-### Requirement: POSIX and standalone execution
+### Requirement: POSIX standalone transaction
 
 The installer SHALL remain POSIX `/bin/sh`. The binary SHALL embed the canonical
-script and maxims, extract both privately, preserve cwd and streams, invoke
-`/bin/sh`, and always clean up. It SHALL work outside the checkout without
-assumptions and SHALL NOT open `.pitcrew/state.db`. Setup or cleanup failures
-SHALL exit 1 with an actionable `pitcrew install:` diagnostic; child exit status
-SHALL otherwise be preserved.
+script, extract it privately, preserve cwd and streams, invoke `/bin/sh`, and
+always clean up. Rendering, prerequisite checks, native-schema validation, and
+graph validation SHALL precede mutation. Failure or handled interruption SHALL
+restore replaced or removed files byte-for-byte and remove installer-created
+files and directories. An identical reinstall SHALL be a write no-op.
 
-#### Scenario: Standalone binary installs from embedded assets
+#### Scenario: A standalone binary rolls back partial installation
 
 - GIVEN only a compiled PitCrew binary and an isolated runtime home
-- WHEN an exact public install command runs outside the checkout
-- THEN installation SHALL use canonical embedded bytes
-- AND no extracted asset SHALL remain
+- WHEN installation fails after a staged write
+- THEN the prior target tree SHALL be restored exactly
+- AND no extracted asset or workflow state SHALL remain
 
-### Requirement: Roll back partial writes and remain idempotent
+### Requirement: Minimal executable role bootstraps
 
-Rendering, prerequisite checks, native-schema validation, and graph validation
-SHALL precede mutation. Failure or handled interruption SHALL restore every
-replaced or removed file byte-for-byte and remove installer-created files and
-directories in reverse order. Repeating a successful installation with identical
-assets SHALL not rewrite installed bytes.
+The selected runtime SHALL receive native definitions for `daimon`, `aion`,
+`pc2-explorer`, `pc2-specifier`, `pc2-designer`, `pc2-task-planner`,
+`pc2-implementer`, `pc2-reviewer`, and `pc2-sdd-initializer`. Each definition
+SHALL contain only stable role identity, the exact role-scoped
+`pitcrew agent brief --role <hyphenated-role>` bootstrap, an instruction to
+retrieve that brief before action, and its stable handoff boundary. Scoped roles
+SHALL substitute received workflow and unit IDs in the required canonical
+flags. Generated definitions SHALL NOT duplicate maxims, routing, correction,
+release, workflow, or command manuals.
 
-#### Scenario: Partial failure rolls back
+The versioned binary response is the dynamic contract source. It SHALL expose
+`contract_version`, a deterministic `contract_digest`, stable role contract,
+bounded dynamic context, current `allowed_actions`, and `next_action`. Brief
+retrieval SHALL be read-only.
 
-- GIVEN a simulated failure after one write
-- WHEN installation aborts
-- THEN the exact prior target tree SHALL be restored
-
-### Requirement: One native definition per role
-
-The selected runtime SHALL receive native definitions for:
-
-- `daimon`
-- `aion`
-- `pc2-explorer`
-- `pc2-specifier`
-- `pc2-designer`
-- `pc2-task-planner`
-- `pc2-implementer`
-- `pc2-reviewer`
-- `pc2-sdd-initializer`
-
-Codex SHALL use `agents/*.toml` with underscore native identities. OpenCode,
-Claude Code, and Pi SHALL use `agents/*.md` with hyphenated identities. Each
-definition SHALL contain canonical `MAXIMS.md` bytes, native schema, tools,
-permissions, role responsibility, and its exact hand-off reminder. Obsolete
-unprefixed roles and `pc2-archivist` SHALL be absent.
-
-#### Scenario: Every native role is installed
+#### Scenario: Every installed role retrieves current authority
 
 - GIVEN a selected runtime whose prerequisites pass
-- WHEN installation succeeds
-- THEN exactly all nine native definitions SHALL exist and validate
-- AND obsolete PitCrew definitions SHALL be absent
+- WHEN installation succeeds and a role begins work
+- THEN all nine native definitions SHALL exist
+- AND the role SHALL retrieve its valid scoped brief before action
+- AND an invalid or unscoped request SHALL fail without mutation
 
-### Requirement: Separated agent contract and bounded graph
+### Requirement: Native least privilege and bounded graph
 
-The installer SHALL write `<runtime-root>/pitcrew/agent-contract.md` outside
-agent discovery. It SHALL record opaque-handle boundaries, distinct
-Implementer/Reviewer actors, CAS inspection, and the prohibitions on
-`--claim-token`, `--emit-plain-token`, and
-`--print-claim-handle-secret-once`. Daimon SHALL target only Aion, Aion SHALL
-target exactly the seven specialists, and specialists SHALL NOT delegate.
+Codex SHALL preserve native role and target metadata. OpenCode SHALL preserve
+mode and permission metadata. Claude Code coordinators SHALL have shell and
+Agent tools, while specialists SHALL have shell but no delegation. Pi
+coordinators SHALL have shell and subagent tools, while specialists SHALL have
+shell but no subagent tool and SHALL preserve supervisor depth wiring.
 
-#### Scenario: Contract and graph validate before mutation
+Daimon SHALL target exactly one Aion. Aion SHALL target exactly the seven
+specialists. Specialists SHALL NOT delegate. The installer SHALL NOT create `pitcrew/agent-contract.md`;
+stable mechanics belong to `pitcrew agent brief`,
+not a generated support file.
 
-- GIVEN staged runtime definitions
-- WHEN the installer validates their declared targets
-- THEN every bounded edge and common prohibition SHALL match the role contract
+#### Scenario: Native graph validates before mutation
 
-### Requirement: Bounded project-context initialization routing
+- GIVEN staged definitions for a supported runtime
+- WHEN native metadata and declared targets are validated
+- THEN the least-privilege tool contract and every bounded edge SHALL match
+- AND validation failure SHALL occur before target mutation
 
-Before SDD routing, Aion SHALL inspect project context once on demand. It SHALL
-dispatch exactly one `pc2-sdd-initializer` attempt when inspection reports
-`missing` or `incomplete`, bypass initialization when context is `complete`,
-and never schedule recurring context scans. The initializer SHALL use only
-literal `pitcrew context inspect`, `pitcrew context initialize`, and
-`pitcrew context record` commands, own no workflow lifecycle command, and never
-delegate. Its command literals SHALL survive native rendering unchanged.
-
-#### Scenario: Complete context bypasses initialization
-
-- GIVEN project context inspection reports `complete`
-- WHEN Aion selects SDD routing
-- THEN no initializer attempt SHALL be dispatched
-- AND no recurring scan SHALL be scheduled
-
-### Requirement: Live user turn and addressable Aion
-
-For each accepted non-terminal delivery, generated Daimon instructions SHALL
-retain the active user-visible turn and the same addressable Aion. Daimon SHALL
-use the host-native dual wait/select for either an event from that Aion or
-steered user input. User input SHALL be forwarded to that Aion as requested state,
-not applied state, before Daimon resumes the same wait/select. Only Aion-acknowledged
-changed meaningful facts MAY reach the user: accepted transitions, completed
-units, resolved corrections, achieved objectives, actual blockers, or
-clarification requests. Daimon SHALL remain silent otherwise and exit the live
-turn only for terminal completion, a genuine blocker, or user cancellation.
-
-If the host cannot keep the turn and Aion concurrently addressable, Daimon SHALL
-surface that missing capability once. For a selected workflow with the supported
-durable surface, Aion SHALL record exactly one request-capability for the
-unchanged capability requirement and SHALL NOT append a duplicate request when
-the same absence is observed again. The request SHALL NOT imply fulfillment or
-fabricate live progress. If a direct-only delivery has no supported durable capability-request surface,
-Aion SHALL report that recording is unavailable and
-SHALL NOT invent a workflow or parallel lifecycle. No runtime SHALL compensate
-with polling, daemon, IPC, or durable inbox behavior.
-
-#### Scenario: User steering returns to the same wait
-
-- GIVEN Daimon is waiting on the retained Aion and the user supplies new input
-- WHEN the host-native selection yields that input
-- THEN Daimon SHALL forward it to the same Aion as requested state
-- AND resume waiting after Aion admits, rejects, or requests clarification
-
-#### Scenario: Missing concurrency is durable once
-
-- GIVEN a host lacks native concurrent user/Aion selection
-- WHEN Daimon detects the limitation
-- THEN it SHALL notify Aion once and Aion SHALL record one capability request for an active workflow
-- AND repeated observation of the unchanged absence SHALL NOT append a duplicate request
-- AND no agent SHALL poll or create another transport
-
-#### Scenario: Direct-only capability recording stays truthful
-
-- GIVEN a direct-only delivery requires missing host continuity
-- AND no supported durable capability-request surface exists for that trace
-- WHEN Aion handles the boundary
-- THEN it SHALL report that durable recording is unavailable
-- AND SHALL NOT create a workflow, request ledger, or parallel lifecycle
-
-#### Scenario: Pi runtime evidence remains honest
-
-- GIVEN the opt-in official Pi supervisor smoke is disabled or its stable native prerequisites are unavailable
-- WHEN runtime verification runs
-- THEN it SHALL report `SKIP` rather than claim live-turn proof
-- AND static Pi instructions SHALL retain the same acknowledgement and transport prohibitions
-
-### Requirement: Aion supplies economical delivery facts
-
-**REQ-TRACE-001**
-
-After selecting `direct_inline` or `delegated_direct`, generated Aion
-instructions SHALL establish one trace before repository mutation with `delivery start`,
-using the accepted goal, selected route, bounded route rationale, and
-a stable operation key. Aion SHALL retain the stable operation key until start acknowledgement
-and replay the identical start after a lost response. Idempotency SHALL guarantee one delivery identity, not one fallible invocation.
-Once acknowledged, Aion
-SHALL retain the delivery ID and current revision. On interrupted or CAS re-entry,
-Aion SHALL inspect and resume the same delivery identity and SHALL NOT mint a
-replacement key or trace. It SHALL update only after a meaningful observed fact
-or truthful terminal outcome. If the provider disappears, the trace SHALL retain
-its last observed status; agents SHALL NOT infer a terminal outcome. A full
-workflow SHALL use `workflow new` as its one durable trace and Aion MUST NOT create a direct delivery trace
-in addition. Specialists SHALL NOT create or
-update a parallel trace.
-
-The generated contract SHALL identify `delivery start` for direct work and
-`workflow new` for full workflow work as the first admission gate. The gate
-SHALL be acknowledged before any repository mutation. When the selected gate
-cannot be acknowledged, Aion SHALL stop before mutation and surface the capability boundary;
-it SHALL never backfill a trace after work has started. This is an orchestration
-contract, not filesystem mediation: PitCrew records admission and reporting but
-does not interpose on or prevent host filesystem writes.
-
-#### Scenario: Every route has one provider-owned trace
-
-**SCN-TRACE-001**
-
-- GIVEN Aion accepts work and selects one proportional route
-- WHEN work starts and later changes meaningfully
-- THEN a direct route SHALL have one retained `dl-*` identity before mutation
-- AND a lost start response SHALL be replayed with the retained operation key
-- AND a full workflow SHALL have one `wf-*` identity and zero direct traces
-- AND updates SHALL describe only facts Aion actually observed
-
-### Requirement: Transcript-minimal specialist handoffs
-
-**REQ-HANDOFF-001**
-
-When a host supports transcript-free composition, installed contracts SHALL
-require Aion to dispatch only the workflow ID and current revision, role or unit ID,
-and applicable opaque handle path. The recipient SHALL retrieve additional state
-from the narrowest bounded read-only Control Plane view: `workflow show --view coordination`
-for Aion, `workflow show --view phase` for phase roles,
-`workflow show --view unit --unit-id <wu-id>` for an Implementer or selective
-Reviewer, and `workflow show --view aggregate` for an aggregate Reviewer.
-The generated Allowed workflow commands SHALL include exactly that role-appropriate
-read-only view alongside each specialist's mutation commands. Daimon SHALL invoke
-no workflow commands and SHALL communicate only facts acknowledged by Aion.
-Handoffs SHALL NOT replay growing conversation history or duplicate persisted
-artifacts. If the host cannot provide transcript-free composition or bounded view
-retrieval, agents SHALL surface the capability boundary and never simulate it by replaying conversation history or transcript content.
-Actor separation, opaque-handle secrecy, the exact nine-role registry, and the
-seven-target Aion graph SHALL remain unchanged.
-
-#### Scenario: Supported composition passes only durable coordinates
-
-**SCN-HANDOFF-001**
-
-- GIVEN a host supports transcript-free composition and bounded view retrieval
-- WHEN Aion dispatches a phase, unit, or aggregate specialist
-- THEN the handoff SHALL contain only the workflow ID and current revision,
-  role or unit ID, and applicable opaque handle path
-- AND the specialist SHALL retrieve only its role-appropriate bounded view
-- AND an unsupported host SHALL surface the capability boundary without
-  replaying or simulating transcript context
-
-### Requirement: Explicit selection and current registry paths
+### Requirement: Explicit selection and prerequisites
 
 The public command SHALL select exactly one lowercase, alias-free runtime and
 ignore homes and overrides for every other runtime. A missing selected root MAY
 be created transactionally. Direct script invocation without a selector SHALL
 retain backward-compatible autodetection.
 
-| Token | Override / default root | Native registry | Legacy registry |
-|---|---|---|---|
-| `codex` | `CODEX_HOME` / `~/.codex` | `agents/*.toml` | `prompts/*.md` |
-| `opencode` | `OPENCODE_CONFIG_DIR` / `~/.config/opencode` | `agents/*.md` | prior PitCrew entries in `agents/` |
-| `claude` | `CLAUDE_CONFIG_DIR` / `~/.claude` | `agents/*.md` | `prompts/*.md` |
-| `pi` | `PI_AGENT_HOME` / `~/.pi/agent` | `agents/*.md` | prior PitCrew entries in `agents/` |
+| Token | Override / default root | Native registry |
+|---|---|---|
+| `codex` | `CODEX_HOME` / `~/.codex` | `agents/*.toml` |
+| `opencode` | `OPENCODE_CONFIG_DIR` / `~/.config/opencode` | `agents/*.md` |
+| `claude` | `CLAUDE_CONFIG_DIR` / `~/.claude` | `agents/*.md` |
+| `pi` | `PI_AGENT_HOME` / `~/.pi/agent` | `agents/*.md` |
+
+OpenCode SHALL require OpenCode 1.18.23 or newer, `jq`, `timeout`, and an
+unambiguous effective top-level integer `subagent_depth` of at least 2 from
+`opencode --pure debug config` in the caller working directory. Pi SHALL require
+Node.js, active `pi-subagents` version 0.25.0 or newer, and integer
+`maxSubagentDepth` of at least 3. Prerequisite failure SHALL occur before writes
+and SHALL NOT modify application configuration or access the network.
 
 #### Scenario: Explicit selection cannot drift
 
 - GIVEN all four runtime homes and overrides exist
 - WHEN `pitcrew install pi` runs
-- THEN only the selected Pi paths MAY be inspected or mutated
+- THEN only selected Pi paths MAY be inspected or mutated
 
-### Requirement: Managed update boundary
+### Requirement: Checksum-gated legacy cleanup
 
-The public command SHALL authorize refresh only of current and legacy
-PitCrew-managed filenames. Before replacing differing bytes, stderr SHALL emit
-exactly `pitcrew installer: WARNING: PitCrew-managed definitions are being refreshed; custom content must live outside managed role files.`
+The installer SHALL stop generating or referencing
+`pitcrew/agent-contract.md`. A missing legacy file SHALL be a no-op. A regular
+legacy file whose bytes match a recognized checksum of prior managed content
+MAY be transactionally backed up and removed. Rollback SHALL restore that file
+byte-for-byte. Modified, non-regular, and unrelated files SHALL be preserved and
+reported; cleanup SHALL NOT blind-delete or traverse broadly.
+
+Current role definitions remain installer-managed. The public command SHALL
+warn before refreshing differing current managed definitions. Direct script
+invocation SHALL refuse such differences unless `--overwrite` is explicit.
 Unrelated files and application configuration SHALL remain byte-identical.
-Direct script invocation SHALL continue to refuse differing managed files unless
-`--overwrite` is explicit. Direct `--overwrite` SHALL retain its distinct legacy
-warning: `pitcrew installer: WARNING: replacing prompts or legacy names; preserve desired custom text before continuing.`
-Unsafe, non-regular, symlink, or unwritable targets SHALL fail before commit.
 
-#### Scenario: Public managed refresh is bounded
+#### Scenario: Modified legacy content is preserved
 
-- GIVEN old managed definitions, legacy names, and an unrelated custom file
-- WHEN the public command succeeds
-- THEN managed bytes SHALL refresh and legacy names SHALL be removed
-- AND the warning SHALL precede mutation while the unrelated file remains exact
+- GIVEN a legacy support file differs from every recognized checksum
+- WHEN installation succeeds
+- THEN the file SHALL remain byte-identical and be reported
+- AND recognized legacy content in the same transaction SHALL be restorable
 
-### Requirement: OpenCode nested orchestration prerequisite
+### Requirement: Runtime output and verification
 
-Before writing any target file for OpenCode, the installer SHALL require
-OpenCode 1.18.23 or newer, `jq`, `timeout`, and an unambiguous effective
-top-level integer `subagent_depth` of at least 2 from
-`opencode --pure debug config` in the caller working directory.
+Success SHALL exit 0 and print exactly `Installed PitCrew agents for <Runtime>
+in <registry>` followed by a newline. Failure SHALL preserve actionable plain
+stderr and non-zero status without success stdout or a temporary extraction
+path.
 
-Failure SHALL report the directory, exact verification command, configuration
-precedence, remediation (`"subagent_depth": 2`), and the durable rerun command
-`pitcrew install opencode`. PitCrew SHALL NOT create, parse, or rewrite user
-OpenCode JSON or JSONC. A greater global depth SHALL NOT broaden the installed
-`Daimon -> Aion -> specialist` permission edges.
-
-#### Scenario: Insufficient effective depth fails without writes
-
-- GIVEN unsupported tooling or missing, malformed, ambiguous, or insufficient
-  effective depth
-- WHEN `pitcrew install opencode` runs
-- THEN it SHALL fail before target mutation with actionable public guidance
-
-### Requirement: Pi extension prerequisite
-
-Before target writes, Pi SHALL require Node.js, an installed and active
-`pi-subagents` version 0.25.0 or newer, and a valid object at
-`<pi-agent-home>/extensions/subagent/config.json` whose integer
-`maxSubagentDepth` is at least 3. Exact `npm:pi-subagents` identity MAY include
-a non-empty version/range suffix; near-name packages SHALL fail. Installed
-Daimon and Aion definitions SHALL declare depth 3 so the bounded
-`Daimon -> Aion -> specialist` chain is executable while specialists remain
-unable to delegate. PitCrew SHALL NOT install packages, access the network, or
-modify Pi configuration.
-
-#### Scenario: Invalid Pi extension fails without writes
-
-- GIVEN a missing, inactive, too-old, malformed, or near-name extension, or
-  missing, malformed, or insufficient nested-depth configuration
-- WHEN `pitcrew install pi` runs
-- THEN it SHALL fail before mutation with the durable public rerun command
-
-### Requirement: Runtime output
-
-Success SHALL exit 0 and write exactly `Installed PitCrew agents for <Runtime>
-in <registry>` followed by a newline, using `Codex`, `OpenCode`, `Claude Code`,
-or `Pi`. Prerequisite, validation, write, rollback, or wrapper failure SHALL
-preserve actionable plain stderr and non-zero status without success stdout or
-a temporary extraction path.
-
-### Requirement: Opt-in OpenCode runtime depth probe
-
-The repository SHALL provide an isolated, opt-in real OpenCode probe. It MAY
-copy credentials only into its temporary data home and SHALL NOT read or mutate
-real effective configuration. Without explicit enablement, compatible CLI, and
-credentials it SHALL report `SKIP`, never `PASS`. When enabled it SHALL prove
-default depth-one rejection and global depth-two specialist success.
-
-#### Scenario: Unavailable real-runtime prerequisites skip
-
-- GIVEN the probe is not enabled or lacks the CLI or credentials
-- WHEN it runs
-- THEN it SHALL exit successfully with `SKIP` and SHALL NOT claim `PASS`
-
-### Requirement: Four-runtime public verification
-
-POSIX shell tests SHALL exercise all four public selectors, missing roots,
-selection isolation, native schemas, identity sets, maxims, bounded dispatch,
-managed refresh, unrelated preservation, byte-idempotency, legacy cleanup,
-prerequisite failures, rollback, signals, and cleanup. Focused and full Go tests
-SHALL prove CLI dispatch, wrapper behavior, and standalone embedded execution.
+POSIX tests SHALL exercise all four public selectors, native schemas and tools,
+the bounded graph, real brief activation, idempotency, checksum-gated cleanup,
+modified and unrelated preservation, rollback, signals, and cleanup. The
+opt-in real OpenCode probe SHALL report `SKIP`, never `PASS`, when compatible
+runtime prerequisites or credentials are unavailable.
 
 #### Scenario: Complete public contract is exercised
 
 - GIVEN the repository verification suite
-- WHEN shell syntax/suite, focused/full Go tests, build, vet, formatting, diff,
-  and standalone probes run
-- THEN all four public installation contracts SHALL remain proven
+- WHEN shell, focused/full Go, build, vet, formatting, diff, and standalone
+  probes run
+- THEN the four runtime installation contracts SHALL remain proven

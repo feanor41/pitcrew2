@@ -1,6 +1,8 @@
 # PitCrew CLI reference
 
-PitCrew exposes `install`, `project`, `context`, `delivery`, `tui`, `principles`, two global flags, and exactly 24 `workflow` subcommands. Every flag is long-form. Commands not listed here do not exist.
+PitCrew exposes `agent`, `install`, `project`, `context`, `delivery`, `tui`,
+`principles`, and `workflow` command groups. Every flag is long-form. Commands
+not listed here do not exist.
 
 The external role channel is `user ↔ Daimon ↔ Aion ↔ specialists`. Daimon interviews, clarifies intent, preserves conversational continuity, and reports only Aion-acknowledged facts or questions. Aion alone owns routing and workflow coordination. For each accepted delivery, Daimon and the addressable-agent host reuse the same addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and authority throughout. Mid-flight input remains requested, not applied, until Aion admits it against current state; concurrent Daimon availability depends on host support for addressable agents, not a PitCrew daemon, service, IPC, polling, or inbox.
 
@@ -32,8 +34,8 @@ pitcrew install claude
 pitcrew install pi
 ```
 
-Tokens are exact, lowercase, and alias-free. The command installs eight native
-agents plus `pitcrew/agent-contract.md`, but not the binary, another runtime,
+Tokens are exact, lowercase, and alias-free. The command installs nine minimal
+native role bootstraps, but not a support-policy file, the binary, another runtime,
 packages, a daemon, or workflow state. Success prints exactly `Installed
 PitCrew agents for <Runtime> in <registry>`.
 
@@ -47,14 +49,16 @@ or default root:
 | Claude Code | `CLAUDE_CONFIG_DIR` / `~/.claude` | `agents/*.md` | `prompts/*.md` |
 | Pi | `PI_AGENT_HOME` / `~/.pi/agent` | `agents/*.md` | prior PitCrew entries in `agents/` |
 
-The public command transactionally refreshes only PitCrew-managed filenames and
+The public command transactionally refreshes current PitCrew-managed role files and
 warns exactly: `pitcrew installer: WARNING: PitCrew-managed definitions are
 being refreshed; custom content must live outside managed role files.` This is
 the public-command warning. The legacy `pitcrew installer: WARNING: replacing
 prompts or legacy names; preserve desired custom text before continuing.` is
 reserved for direct `scripts/install-templates.sh --overwrite` invocation.
 Unrelated files and application configuration are never rewritten; identical
-reruns are write no-ops, and failures roll back.
+reruns are write no-ops, and failures roll back. A prior managed
+`pitcrew/agent-contract.md` is removed only when its bytes match a recognized
+checksum. Modified or non-regular legacy files are preserved and reported.
 
 OpenCode additionally requires OpenCode 1.18.23 or newer, `jq`, `timeout`, and
 effective top-level `"subagent_depth": 2` (or greater) in the caller's target
@@ -73,7 +77,7 @@ reported configuration source. PitCrew fails before target writes when the
 prerequisite is absent or invalid; it does not rewrite user JSON or JSONC.
 Depth two enables the existing `Daimon -> Aion -> specialist` call chain
 without broadening permissions: Daimon still targets only Aion, Aion only the
-six specialists, and specialists cannot delegate.
+seven specialists, and specialists cannot delegate.
 
 Pi additionally requires Node.js, an installed and active `pi-subagents`
 version 0.25.0 or newer, and `maxSubagentDepth: 3` (or greater) in
@@ -86,6 +90,7 @@ install the extension, access the network, or modify Pi configuration.
 
 | Command | Required inputs |
 |---|---|
+| `agent brief` | `--role <role> [--workflow-id <id>] [--unit-id <id>]`; context flags are role-validated. |
 | `install` | exactly one of `codex`, `opencode`, `claude`, or `pi` |
 | `project inspect` | None. |
 | `project consolidate` | `--input-file <path>` |
@@ -134,6 +139,21 @@ ID. Linked worktrees share the project result, while independent clones do not.
 Direct-only capability gaps remain truthful blockers: there is no direct
 capability-request ledger, and Aion does not invent a workflow or parallel
 lifecycle to record one.
+
+## Agent briefs
+
+`pitcrew agent brief` is the read-only, versioned source of role instructions
+and current authority. Daimon and `pc2-sdd-initializer` accept no context. Aion
+accepts an optional workflow ID. Phase specialists require a workflow ID;
+`pc2-implementer` requires both workflow and unit IDs; `pc2-reviewer` requires a
+workflow ID and accepts an optional unit ID. Unsupported roles and invalid
+context combinations fail before project inspection and create no state.
+
+Text and `--json` responses expose the same stable `contract_version` and
+deterministic `contract_digest`. The digest covers only the stable role contract;
+bounded dynamic context, `allowed_actions`, and `next_action` do not change it.
+Callers must use the returned dynamic authority rather than infer an action from
+the stable command interface.
 
 ## Stage artifact inputs
 
