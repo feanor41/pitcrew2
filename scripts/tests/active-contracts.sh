@@ -40,7 +40,7 @@ done
 # scoped brief activation without duplicating their phrase inventory here.
 GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/pitcrew-active-contracts-gocache} \
   go test ./internal/runtimeinstall ./cmd/pitcrew \
-  -run 'TestRepositoryAgentGuideIsOnlyTheDaimonBootstrap|TestRuntimeInstall|TestScopedAgentBriefCommandsActivateAgainstAcceptedWorkflow' \
+  -run 'TestRepositoryAgentGuideIsOnlyTheDaimonBootstrap|TestRuntimeInstall|TestScopedAgentBriefCommandsActivateAgainstAcceptedWorkflow|TestStandaloneBinaryInstallsCodexWithoutCheckout' \
   -count=1
 archive_snapshot "$archive_after"
 if ! cmp -s "$archive_before" "$archive_after"; then
