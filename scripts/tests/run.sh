@@ -925,18 +925,55 @@ assert_no_temps "$legacy_rollback"
 fi
 
 legacy_contract=$TMP_ROOT/legacy-contract
-mkdir -p "$TMP_ROOT/prior/scripts"
-git show HEAD:scripts/install-templates.sh > "$TMP_ROOT/prior/scripts/install-templates.sh"
-cp "$ROOT/MAXIMS.md" "$TMP_ROOT/prior/MAXIMS.md"
-CODEX_HOME=$legacy_contract sh "$TMP_ROOT/prior/scripts/install-templates.sh" codex >/dev/null
+mkdir -p "$legacy_contract/pitcrew"
+cat > "$legacy_contract/pitcrew/agent-contract.md" <<'LEGACY_AGENT_CONTRACT'
+# PitCrew agent contract
+
+- Use only the documented long-form flags and the closed 22-command workflow surface.
+- There is no `--claim-token` flag.
+- There is no `--emit-plain-token` flag.
+- Agents never use `--print-claim-handle-secret-once`; it is a hidden operator-only escape.
+- The Implementer and Reviewer must not use the same identity label for a unit revision; same identity is rejected.
+- On exit 3 or 4, inspect once with `workflow show`; if the harness obstructs legitimate work, surface the obstruction and never issue an identical retry. This covers state and CAS errors.
+- Aion creates reviewer authority with `handoff-review`; hand off only its opaque path. Never read or relay handle contents.
+- `recover-review` preserves the originally handed-off reviewer identity and rotates no implementation authority.
+- Continue terminal work only with `workflow continue --from`; the predecessor remains immutable.
+- For each accepted delivery, Daimon and the addressable-agent host reuse one addressable Aion instance across all phases until terminal completion or a genuine blocker; Aion retains workflow context and orchestration authority throughout.
+- Daimon must retain the active user-visible turn and use the host-native dual wait/select for the same addressable Aion event or steered user input. When input arrives, forward it to that Aion as requested state, then resume the same wait/select. Exit only for terminal completion, a genuine blocker, or user cancellation. If unavailable, surface the missing host concurrency exactly once to Aion; never poll, start a daemon, use IPC, or create an inbox. Aion records one capability request and does not pretend that live delivery exists.
+- Communicate short, truthful, non-repetitive user status only after an observed transition, completed unit, resolved correction, achieved small objective, or actual blocker; favor short attainable objectives. Silence is required until a meaningful fact changes; agents must not fabricate progress or repeat encouragement, report timer activity, claim unfinished work, or cheerlead.
+- When a required tool, command, or transition is absent, specialists surface it to Aion and Aion uses `workflow request-capability`; agents must not invent or bypass it, and the request does not imply fulfillment.
+- PitCrew exists only to help the user achieve the stated goal. Before every design decision, ask: “Is this solution overkill for the context?” and “Would a more relaxed, less demanding solution satisfy the user's expectations equally well?” Choose the least demanding solution that fully satisfies the expected outcome, material risks, and existing constraints. When selecting added rigor, name the protected constraint and explain why the simpler option is insufficient. Proportionality never weakens claim secrecy, opaque-handle boundaries, reviewer independence, truthful evidence and progress, CAS inspection requirements, workflow integrity, terminal immutability, or safety boundaries. Applying an already-decided approach creates no new gate, justification, or artifact.
+- Full-workflow specifications require observable SHALL requirements, explicit acceptance criteria, stable requirement and scenario IDs, human-readable Feature/Scenario/Given/When/Then, material branches, and no-goals. Direct and delegated-direct routes are exempt from this specification ceremony.
+- Trace acceptance end to end from requirement to scenario to design decision to work unit to test and evidence.
+- For repeated behavior, validate one representative vertical slice before replication.
+- Call the control plane directly and return only a one-line revision-bearing completion status to Aion.
+- Aion chooses proportional routing: direct at most three files only for well-understood low-risk work; delegated direct at four or more files for simple work; full workflow for risk or uncertainty; risk overrides file count.
+- For an already-decided bump-and-install, use existing project-context deployment facts as the release map only when, before any repository, binary, backup, runtime, or publication mutation, they record the canonical repository and version source; exact validation commands; binary build command and install target; persistent rollback procedure; supported runtime set; detected runtime subset selected for refresh; each selected runtime exact installer-managed file set and deterministic expected digest evidence; owned backup; and publication choice. Repair missing or inadequate release facts with one bounded context record replacement while preserving unrelated facts. Mechanical release execution remains direct inline regardless of mapped file count; stronger routing requires uncertainty, a new design decision, or material risk. Acknowledge the admission gate before the first mutation. Reconcile Git state, binary version and digest, owned backup, and each exact managed runtime file from physical evidence; same-version digest mismatch is not convergence. Record a checkpoint only after each meaningful physical transition, and resume the same identity from observed physical state after interruption. Publish only when the accepted release map selects publication and local reconciliation is complete. Preserve every unrelated runtime file and application setting. Add no release engine, command, schema, parallel status, daemon, polling, or IPC.
+- For direct inline or delegated direct, Aion establishes one trace with `delivery start` before repository mutation and must retain the stable operation key until start acknowledgement. Aion must replay the identical start after a lost response: idempotency guarantees one delivery identity, not one fallible invocation. Once acknowledged, retain the delivery ID and current revision. On interrupted or CAS re-entry, inspect and resume the same delivery identity; never mint another operation key or trace. Call `delivery update` only for a meaningful observed fact or truthful terminal outcome. Silent provider loss leaves the last observed status. A full workflow uses `workflow new` as its one trace and must not create a direct delivery trace; specialists do not create or update another trace.
+- Aion may invoke any workflow command to restore legitimate flow and may use `abandon --reason` after one inspection, but must not claim independent approval or bypass aggregate review.
+- Unit review is selective. Final aggregate review is mandatory and independently validates requirements, specifications, design, tasks, implementation evidence, and tests.
+- Every plan declares a correction budget. Permit one correction and one verification re-review per selective unit gate. Permit one automatic aggregate recovery and, only after explicit user authorization, one additional recovery. A further corrections verdict is a hard stop: Aion abandons the workflow and reports the unresolved result. Reviewers batch all material findings into one verdict and re-review the full scenario matrix and touched invariants. After aggregate corrections, Aion must group findings by causal invariant and recover them in one transaction while authority is automatic or authorized. `user authorization required` means Aion calls `authorize-correction` only after explicit user direction for the exact latest blocker; one authorization grants one recovery.
+- Route full-workflow phases exactly: exploration: pc2-explorer; specification: pc2-specifier; design: pc2-designer; task planning: pc2-task-planner; implementation: pc2-implementer; aggregate review: pc2-reviewer.
+- Before SDD routing, inspect project context once on demand. Make exactly one pc2-sdd-initializer attempt when context is missing or incomplete; bypass initialization when context is complete, and never schedule recurring context scans.
+- Never delegate a workflow role to General or general.
+
+## Shared orchestration contract
+
+PitCrew records admission and reporting; it does not interpose on or prevent host filesystem writes. Aion alone treats `delivery start` for direct work as the first admission gate, and it must be acknowledged before any repository mutation; `workflow new` is the equivalent full-workflow gate. If the selected gate cannot be acknowledged, Aion must stop before mutation and surface the capability boundary. Agents never backfill a trace after work has started. Aion recovers a lost direct-start response only by replaying the identical input with the retained stable operation key until the original acknowledgement is recovered. Specialists never create or update a parallel trace.
+
+When the host supports transcript-free composition, Aion dispatches with only the workflow ID and current revision, the role or unit ID, and the applicable opaque handle path. The recipient retrieves additional state from the narrowest bounded read-only Control Plane view: `workflow show --view coordination` for Aion, `workflow show --view phase` for phase roles, `workflow show --view unit --unit-id <wu-id>` for an Implementer or selective Reviewer, and `workflow show --view aggregate` for an aggregate Reviewer. Daimon never calls a workflow command and communicates only facts acknowledged by Aion. Handoffs do not replay growing conversation history or duplicate persisted artifacts. If the host cannot provide transcript-free composition or bounded view retrieval, agents surface the capability boundary and never simulate it by replaying conversation history or transcript content.
+LEGACY_AGENT_CONTRACT
+cp "$legacy_contract/pitcrew/agent-contract.md" "$TMP_ROOT/known-agent-contract.md"
 assert_file "$legacy_contract/pitcrew/agent-contract.md"
 if CODEX_HOME=$legacy_contract PITCREW_TEST_FAIL_AFTER_LEGACY_REMOVALS=1 sh "$INSTALLER" codex >/dev/null 2>&1; then fail 'legacy contract rollback fault succeeded'; fi
 assert_file "$legacy_contract/pitcrew/agent-contract.md"
 CODEX_HOME=$legacy_contract sh "$INSTALLER" codex >/dev/null
 assert_absent "$legacy_contract/pitcrew/agent-contract.md"
-printf '%s\n' modified > "$legacy_contract/pitcrew/agent-contract.md"
+cp "$TMP_ROOT/known-agent-contract.md" "$legacy_contract/pitcrew/agent-contract.md"
+printf x >> "$legacy_contract/pitcrew/agent-contract.md"
 CODEX_HOME=$legacy_contract sh "$INSTALLER" codex >/dev/null 2> "$TMP_ROOT/modified-legacy.err"
-grep -Fx modified "$legacy_contract/pitcrew/agent-contract.md" >/dev/null || fail 'modified legacy contract was removed'
+cmp "$TMP_ROOT/known-agent-contract.md" "$legacy_contract/pitcrew/agent-contract.md" >/dev/null && fail 'one-byte-modified legacy contract lost its modification'
+[ "$(wc -c < "$legacy_contract/pitcrew/agent-contract.md")" -eq "$(( $(wc -c < "$TMP_ROOT/known-agent-contract.md") + 1 ))" ] || fail 'modified legacy fixture did not remain one byte larger'
 grep -F 'preserving modified legacy file' "$TMP_ROOT/modified-legacy.err" >/dev/null || fail 'modified legacy preservation was not reported'
 
 for runtime in codex opencode claude pi; do
