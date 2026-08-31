@@ -167,6 +167,43 @@ assert_proportional_contract() {
   grep -F 'Applying an already-decided approach creates no new gate, justification, or artifact.' "$contract_file" >/dev/null || fail "agent contract omitted mechanical-execution exemption in $destination"
 }
 
+assert_executable_workflow_contract() {
+  destination=$1
+  aion=$(role_path "$destination" aion)
+  specifier=$(role_path "$destination" pc2-specifier)
+  designer=$(role_path "$destination" pc2-designer)
+  planner=$(role_path "$destination" pc2-task-planner)
+  reviewer=$(role_path "$destination" pc2-reviewer)
+  contract=$(contract_path "$destination")
+  for rule in \
+    'full-workflow specification once before design dispatch' \
+    'same Specifier amends it while the workflow remains specifying' \
+    'Direct and delegated-direct routes are exempt' \
+    'one automatic aggregate recovery and, only after explicit user authorization, one additional recovery' \
+    'hard stop: Aion abandons the workflow and reports the unresolved result'; do
+    grep -F "$rule" "$aion" >/dev/null || fail "Aion executable-workflow contract omitted $rule in $destination"
+  done
+  for rule in \
+    'observable SHALL requirements' \
+    'explicit acceptance criteria' \
+    'human-readable `Feature:`, `Scenario:`, `Given`, `When`, and `Then`' \
+    'material branches, no-goals, stable requirement and scenario IDs, and end-to-end traceability'; do
+    grep -F "$rule" "$specifier" >/dev/null || fail "Specifier executable-specification contract omitted $rule in $destination"
+  done
+  grep -F 'map every design decision to scenario IDs' "$designer" >/dev/null || fail "Designer traceability contract omitted in $destination"
+  grep -F 'representative vertical slice before replication' "$planner" >/dev/null || fail "TaskPlanner vertical-slice contract omitted in $destination"
+  grep -F 'replication depends on validated evidence from that slice' "$planner" >/dev/null || fail "TaskPlanner replication gate omitted in $destination"
+  grep -F 'batch all material findings into one verdict' "$reviewer" >/dev/null || fail "Reviewer batched-findings contract omitted in $destination"
+  grep -F 're-review the full scenario matrix and touched invariants' "$reviewer" >/dev/null || fail "Reviewer full-matrix contract omitted in $destination"
+  for rule in \
+    'Full-workflow specifications require observable SHALL requirements, explicit acceptance criteria, stable requirement and scenario IDs, human-readable Feature/Scenario/Given/When/Then, material branches, and no-goals.' \
+    'Trace acceptance end to end from requirement to scenario to design decision to work unit to test and evidence.' \
+    'For repeated behavior, validate one representative vertical slice before replication.' \
+    'Direct and delegated-direct routes are exempt from this specification ceremony.'; do
+    grep -F "$rule" "$contract" >/dev/null || fail "shared executable-workflow contract omitted $rule in $destination"
+  done
+}
+
 assert_authority_contract() {
   destination=$1
   daimon=$(role_path "$destination" daimon)
@@ -333,14 +370,14 @@ assert_role_prompt_budget() {
 	words=$(cat $files | wc -w | tr -d ' ')
   aion=$(role_path "$destination" aion)
   case $aion in
-    *.toml) baseline_bytes=47157 baseline_words=6521 ;;
+    *.toml) baseline_bytes=48867 baseline_words=6760 ;;
     *)
       if grep -F 'Pi native supervisor rule' "$aion" >/dev/null; then
-        baseline_bytes=49637 baseline_words=6900
+        baseline_bytes=51347 baseline_words=7139
       elif grep -F 'mode: all' "$aion" >/dev/null; then
-        baseline_bytes=47200 baseline_words=6527
+        baseline_bytes=48910 baseline_words=6766
       else
-        baseline_bytes=47053 baseline_words=6501
+        baseline_bytes=48763 baseline_words=6740
       fi
       ;;
   esac
@@ -469,6 +506,7 @@ CODEX_HOME=$public_codex OPENCODE_CONFIG_DIR=$public_opencode CLAUDE_CONFIG_DIR=
   "$public_binary" install codex > "$TMP_ROOT/public-codex.out"
 assert_codex_registry "$public_codex"
 assert_exact_maxims "$public_codex/agents"
+assert_executable_workflow_contract "$public_codex/agents"
 snapshot "$public_opencode" "$TMP_ROOT/public-opencode.after-codex"
 snapshot "$public_claude" "$TMP_ROOT/public-claude.after-codex"
 snapshot "$public_pi" "$TMP_ROOT/public-pi.after-codex"
@@ -664,6 +702,7 @@ assert_transcript_minimal_handoff_contract "$target"
 assert_role_prompt_budget "$target"
 assert_role_view_permissions "$target"
 assert_context_initializer_contract "$target"
+assert_executable_workflow_contract "$target"
 for role in $roles; do
   file=$(role_path "$target" "$role")
   assert_file "$file"
@@ -979,6 +1018,7 @@ for runtime in opencode claude pi; do
   assert_role_prompt_budget "$installed"
   assert_role_view_permissions "$installed"
   assert_context_initializer_contract "$installed"
+  assert_executable_workflow_contract "$installed"
   if [ "$runtime" = opencode ]; then
     assert_opencode_registry "$home"
     if command -v opencode >/dev/null 2>&1; then

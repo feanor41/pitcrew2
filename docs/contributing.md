@@ -60,6 +60,24 @@ no publication action. Do not add a release command, release schema, parallel st
 
 ## Development loop
 
+For a full workflow, the specification is executable guidance rather than a
+prose placeholder. Use stable requirement and scenario IDs, observable SHALL
+requirements, explicit acceptance criteria, and human-readable
+Feature/Scenario/Given/When/Then blocks. Include material branches and no-goals.
+Aion validates that shape once before design; if it is weak, the same Specifier
+amends it while the workflow is still specifying. Direct work does not gain this
+ceremony.
+
+Trace every acceptance scenario through design, a work unit, and verification.
+When a change repeats one behavior across several runtimes or surfaces, plan a
+representative vertical slice before replication and replicate only after its
+evidence is green. Review the whole matrix once, batch findings into one verdict,
+and keep the two correction scopes explicit.
+
+A selected unit-review gate permits at most one correction followed by one verification review.
+Aggregate review permits one automatic grouped recovery and one additional grouped recovery only after explicit user authorization.
+The aggregate verification reviews the full scenario matrix and touched invariants before a truthful hard stop.
+
 1. Read the relevant OpenSpec requirement and scenario.
 2. Write the smallest failing behavioral test.
 3. Implement only enough production behavior to pass.

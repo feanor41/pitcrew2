@@ -61,6 +61,14 @@ After a corrections aggregate review, the shared read-only correction projection
 
 Policy-aware `recover-aggregate` SHALL require exact aggregate CAS and blocker revision, bounded non-empty causal groups whose unique union contains existing done units, and exactly one non-empty actor assignment per unit. It SHALL append one `aggregate_correction` artifact and one `aggregate_correction_started` activity, reopen all selected units once, revoke superseded handles, and move to `implementing` atomically. Historical plans MAY use the single-unit adapter. An exact unconsumed `correction_authorization` bound to the blocker grants one transaction. No path, hash, or secret SHALL persist in facts or activities.
 
+The default orchestration budget SHALL mean one automatic aggregate recovery and, only after explicit user authorization, one additional recovery. A further corrections verdict is a hard stop: Aion abandons the workflow and reports the unresolved result instead of creating another recovery loop. This policy SHALL reuse the existing correction projection and commands; it SHALL NOT add a state, schema field, counter, or command.
+
+#### Scenario: Exhausted aggregate correction stops
+
+- GIVEN the automatic and explicitly authorized aggregate recoveries were consumed
+- WHEN another aggregate corrections verdict remains unresolved
+- THEN Aion SHALL abandon and report the blocker without another recovery
+
 #### Scenario: Recovery is a new correction cycle
 
 - GIVEN `ready_to_complete` after a corrections aggregate verdict
@@ -70,6 +78,15 @@ Policy-aware `recover-aggregate` SHALL require exact aggregate CAS and blocker r
 - AND the original correction remains inspectable
 
 ### Requirement: Stage artifact input and retention
+
+Before design dispatch, Aion SHALL validate the effective full-workflow specification once. It SHALL contain observable SHALL requirements, explicit acceptance criteria, human-readable `Feature:`, `Scenario:`, `Given`, `When`, and `Then` blocks, material branches, no-goals, stable requirement and scenario IDs, and end-to-end traceability. If weak, the same Specifier SHALL amend it while the workflow remains `specifying`. Direct and delegated-direct routes are exempt. This is an orchestration contract: the CLI SHALL NOT add a Gherkin parser, gate, state, schema field, command, or artifact kind.
+
+#### Scenario: Weak specification is amended before design
+
+- GIVEN a full-workflow specification lacks any required executable element
+- WHEN Aion performs its single pre-design validation
+- THEN the same Specifier SHALL amend it before design dispatch
+- AND direct routes and the CLI state model SHALL remain unchanged
 
 `explore`, `spec`, and `design` SHALL each read from `--input-file` exactly one JSON object:
 
