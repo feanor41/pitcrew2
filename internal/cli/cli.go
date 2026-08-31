@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/activity"
+	"github.com/fmazzalomo/pitcrew/internal/agentbrief"
 	"github.com/fmazzalomo/pitcrew/internal/consolidate"
 	"github.com/fmazzalomo/pitcrew/internal/correction"
 	"github.com/fmazzalomo/pitcrew/internal/delivery"
@@ -94,6 +95,8 @@ func Run(args []string, deps Dependencies) int {
 		return int(envelope.OK)
 	}
 	switch args[0] {
+	case "agent":
+		return runAgent(args[1:], deps)
 	case "install":
 		return runInstall(args[1:], deps)
 	case "tui":
@@ -114,6 +117,34 @@ func Run(args []string, deps Dependencies) int {
 	default:
 		return fail(deps, ErrUsage, fmt.Sprintf("unknown command %q", args[0]))
 	}
+}
+
+func runAgent(args []string, deps Dependencies) int {
+	if equalArgs(args, "--help") || equalArgs(args, "brief", "--help") {
+		writeHelp(deps.Stdout, "Usage: pitcrew agent brief --role <role> [--workflow-id <id>] [--unit-id <id>] [--json]\n")
+		return int(envelope.OK)
+	}
+	if len(args) == 0 || args[0] != "brief" {
+		return fail(deps, ErrUsage, "usage: pitcrew agent brief --role <role> [--workflow-id <id>] [--unit-id <id>] [--json]")
+	}
+	values, err := parseFlags(args[1:], flagRules{required: []string{"--role"}, optional: []string{"--workflow-id", "--unit-id"}, boolean: []string{"--json"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	brief, err := agentbrief.New(values.one("--role"), values.one("--workflow-id"), values.one("--unit-id"))
+	if err != nil {
+		return fail(deps, ErrUsage, err.Error())
+	}
+	if values.one("--json") != "" {
+		if err = json.NewEncoder(deps.Stdout).Encode(brief); err != nil {
+			return fail(deps, err, err.Error())
+		}
+		return int(envelope.OK)
+	}
+	if err = agentbrief.WriteText(deps.Stdout, brief); err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return int(envelope.OK)
 }
 
 func runInstall(args []string, deps Dependencies) int {
@@ -1231,6 +1262,7 @@ func writeHelp(w io.Writer, body string) {
 const rootHelp = `Usage: pitcrew <command> [options]
 
 Commands:
+  agent brief
   install codex|opencode|claude|pi
   project inspect|consolidate
   context inspect|initialize|record
