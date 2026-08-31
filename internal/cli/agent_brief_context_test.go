@@ -19,12 +19,12 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 	}
 	for _, statement := range []string{
 		`INSERT INTO workflows(id,revision,state,name,goal,created_at,updated_at) VALUES('wf-context',8,'ready_to_complete','Context','goal','now','now')`,
-		`INSERT INTO plans VALUES('wf-context','summary','scope',1,'{"secret_plan":"must-not-leak"}')`,
-		`INSERT INTO work_units VALUES('wu-selected','wf-context','selected description','internal/selected','["internal/selected/a.go"]','[]',20,10,'reviewing',NULL,0,3)`,
+		`INSERT INTO plans VALUES('wf-context','summary /tmp/pc2 aggregate-token','scope',1,'{"secret_plan":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}')`,
+		`INSERT INTO work_units VALUES('wu-selected','wf-context','selected /tmp/pc2 unit-secret aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','internal/selected','["internal/selected/a.go"]','[]',20,10,'reviewing',NULL,0,3)`,
 		`INSERT INTO work_units VALUES('wu-unrelated','wf-context','secret sibling','internal/secret','[]','[]',20,10,'done',NULL,0,1)`,
 		`INSERT INTO unit_coverage VALUES('wf-context','wu-selected','REQ-CTX-001','SCN-CTX-001')`,
-		`INSERT INTO evidence VALUES('wf-context','wu-selected',3,'implementer','red secret command','exit 1','green secret command','exit 0','','secret validation command','exit 0','/secret/path','now')`,
-		`INSERT INTO reviews VALUES('wf-context','wu-selected',3,'reviewer','approved','review summary','review finding','','now')`,
+		`INSERT INTO evidence VALUES('wf-context','wu-selected',3,'implementer','red /tmp/pc2 token command','secret outcome','green internal/pkg command','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','','secret validation command','exit 0','/secret/path','now')`,
+		`INSERT INTO reviews VALUES('wf-context','wu-selected',3,'reviewer','approved','review /tmp/pc2 secret summary','review internal/pkg token finding','unplanned','now')`,
 		`INSERT INTO verification_records VALUES('vr-1','wf-context','wu-selected',3,'focused','secret command','exit 0','secret-hash','["SCN-CTX-001"]',NULL,'actor','now')`,
 		`INSERT INTO handles VALUES('claim-secret','wf-context','wu-selected','active','secret-token-hash','actor','2026-08-31T10:00:00Z','2099-08-31T10:00:00Z',1,'implementation')`,
 		`INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES('wf-context','aggregate_review','secret unrelated artifact','reviewer',8,'now')`,
@@ -39,7 +39,7 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 			t.Fatal(insertErr)
 		}
 		id, _ := result.LastInsertId()
-		if _, insertErr = s.DB().Exec(`INSERT INTO normative_entries VALUES('wf-context',?,?, 'requirement',?,NULL,'add',?)`, id, phase, "REQ-"+strings.ToUpper(phase), `{"text":"accepted `+phase+`"}`); insertErr != nil {
+		if _, insertErr = s.DB().Exec(`INSERT INTO normative_entries VALUES('wf-context',?,?, 'requirement',?,NULL,'add',?)`, id, phase, "REQ-"+strings.ToUpper(phase), `{"text":"/tmp/pc2 internal/pkg phase-token cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc `+phase+`"}`); insertErr != nil {
 			t.Fatal(insertErr)
 		}
 	}
@@ -84,9 +84,21 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 	for name, value := range fullCases {
 		data, _ := json.Marshal(value)
 		text := strings.ToLower(string(data))
-		for _, forbidden := range []string{`"scope":`, `"areas":`, `"path":`, `"handle":`, `"secret":`, `"hash":`, `"audit":`, `"history":`, `"siblings":`} {
+		for _, forbidden := range []string{`"scope":`, `"areas":`, `"path":`, `"handle":`, `"secret":`, `"hash":`, `"audit":`, `"history":`, `"siblings":`, "/tmp/pc2", "internal/", "phase-token", "unit-secret", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"} {
 			if strings.Contains(text, forbidden) {
 				t.Fatalf("full %s brief leaked %q: %s", name, forbidden, data)
+			}
+		}
+		roleArgs := map[string][]string{
+			"phase":     {"pc2-designer", "--workflow-id", "wf-context"},
+			"unit":      {"pc2-implementer", "--workflow-id", "wf-context", "--unit-id", "wu-selected"},
+			"reviewer":  {"pc2-reviewer", "--workflow-id", "wf-context", "--unit-id", "wu-selected"},
+			"aggregate": {"pc2-reviewer", "--workflow-id", "wf-context"},
+		}[name]
+		result := runAt(t, root, append([]string{"agent", "brief", "--role"}, roleArgs...)...)
+		for _, forbidden := range []string{"/tmp/pc2", "internal/", "phase-token", "unit-secret", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"} {
+			if strings.Contains(strings.ToLower(result.stdout), forbidden) {
+				t.Fatalf("text %s brief leaked %q: %s", name, forbidden, result.stdout)
 			}
 		}
 	}

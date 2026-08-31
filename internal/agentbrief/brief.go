@@ -67,6 +67,9 @@ func New(role, workflowID, unitID string) (Brief, error) {
 	}
 	sum := sha256.Sum256(canonical)
 	brief := Brief{ContractVersion: ContractVersion, ContractDigest: hex.EncodeToString(sum[:]), Contract: contract, NextAction: nextAction(role, workflowID)}
+	if role == "pc2-sdd-initializer" {
+		brief.Context = &Context{Kind: "initializer", AllowedActions: []string{"context inspect"}}
+	}
 	if workflowID != "" || unitID != "" {
 		brief.Context = &Context{WorkflowID: workflowID, UnitID: unitID}
 	}
@@ -143,7 +146,7 @@ func nextAction(role, workflowID string) string {
 		}
 		return "workflow show"
 	case "pc2-sdd-initializer":
-		return "await aion context request"
+		return "context inspect"
 	case "pc2-explorer":
 		return "workflow explore"
 	case "pc2-specifier":
@@ -169,7 +172,7 @@ func contracts() map[string]StableContract {
 	return map[string]StableContract{
 		"daimon":              c("daimon", "Daimon", "no workflow or unit context", []string{"stay addressable for the user turn", "hand intent to exactly one Aion", "mutate no workflow or repository state", "relay only Aion-acknowledged facts"}, []string{"aion"}, []string{}),
 		"aion":                c("aion", "Aion", "optional workflow context; no unit context", []string{"inspect active continuity first", "admit exactly once before mutation", "retain and resume one delivery identity on interruption or CAS", "delegate only the seven specialists", "never invent status or authority"}, aionHandoffs, []string{"delivery", "workflow"}),
-		"pc2-sdd-initializer": specialist("pc2-sdd-initializer", "SDD Initializer", "no workflow or unit context", "initialize missing project context once when Aion requests it", []string{"context inspect", "context initialize", "context record"}),
+		"pc2-sdd-initializer": c("pc2-sdd-initializer", "SDD Initializer", "no workflow or unit context", []string{"inspect project context first", "return complete status to Aion", "initialize or record only after Aion's bounded request and evidence", "act only within dynamic allowed_actions", "return to Aion", "never delegate"}, []string{"aion"}, []string{"context inspect", "context initialize", "context record"}),
 		"pc2-explorer":        specialist("pc2-explorer", "Explorer", "workflow context required; no unit context", "explore the accepted workflow scope and return repository evidence", []string{"workflow show", "workflow explore"}),
 		"pc2-specifier":       specialist("pc2-specifier", "Specifier", "workflow context required; no unit context", "write executable requirements and scenarios for the accepted workflow", []string{"workflow show", "workflow spec"}),
 		"pc2-designer":        specialist("pc2-designer", "Designer", "workflow context required; no unit context", "design the accepted workflow proportionally from repository evidence", []string{"workflow show", "workflow design"}),

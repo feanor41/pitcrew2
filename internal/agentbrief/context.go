@@ -7,10 +7,9 @@ import (
 )
 
 type PhaseEntry struct {
-	ID       string          `json:"id"`
-	Kind     string          `json:"kind"`
-	ParentID string          `json:"parent_id,omitempty"`
-	Body     json.RawMessage `json:"body"`
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	ParentID string `json:"parent_id,omitempty"`
 }
 type PhaseContext struct {
 	WorkflowID string       `json:"workflow_id"`
@@ -34,22 +33,16 @@ type CoordinationContext struct {
 }
 type Coverage = history.UnitCoverage
 type ScenarioResult struct {
-	ScenarioID string `json:"scenario_id"`
-	Status     string `json:"status"`
+	ScenarioID     string `json:"scenario_id"`
+	Status         string `json:"status"`
+	VerificationID string `json:"verification_id,omitempty"`
 }
 type EvidenceSummary struct {
-	Revision          int64  `json:"revision"`
-	RedOutcome        string `json:"red_outcome"`
-	GreenOutcome      string `json:"green_outcome"`
-	RefactorSummary   string `json:"refactor_summary"`
-	ValidationOutcome string `json:"validation_outcome"`
+	Revision int64 `json:"revision"`
 }
 type ReviewSummary struct {
-	Revision   int64  `json:"revision"`
-	Verdict    string `json:"verdict"`
-	Summary    string `json:"summary"`
-	Findings   string `json:"findings"`
-	PlanImpact string `json:"plan_impact"`
+	Revision int64  `json:"revision"`
+	Verdict  string `json:"verdict"`
 }
 type UnitContext struct {
 	WorkflowID       string           `json:"workflow_id"`
@@ -57,10 +50,8 @@ type UnitContext struct {
 	UnitID           string           `json:"unit_id"`
 	UnitRevision     int64            `json:"unit_revision"`
 	State            string           `json:"state"`
-	Description      string           `json:"description"`
 	DependsOn        []string         `json:"depends_on"`
 	Coverage         []Coverage       `json:"coverage"`
-	EvidenceRequired []string         `json:"evidence_required"`
 	Evidence         *EvidenceSummary `json:"evidence,omitempty"`
 	ScenarioResults  []ScenarioResult `json:"scenario_results,omitempty"`
 	Review           *ReviewSummary   `json:"review,omitempty"`
@@ -116,7 +107,7 @@ func (b Brief) WithPhase(projection history.Projection) Brief {
 	phase := &PhaseContext{WorkflowID: projection.Workflow.ID, Revision: projection.Workflow.Revision, State: projection.Workflow.State, Entries: []PhaseEntry{}}
 	for _, entry := range projection.Phase.Normative.Entries {
 		if phases[entry.Phase] <= map[string]int{"pc2-explorer": 0, "pc2-specifier": 1, "pc2-designer": 2, "pc2-task-planner": 3}[b.Contract.Role] {
-			phase.Entries = append(phase.Entries, PhaseEntry{ID: entry.ID, Kind: entry.Kind, ParentID: entry.ParentID, Body: entry.Body})
+			phase.Entries = append(phase.Entries, PhaseEntry{ID: entry.ID, Kind: entry.Kind, ParentID: entry.ParentID})
 		}
 	}
 	b.Context = &Context{Kind: "phase", Phase: phase}
@@ -128,14 +119,14 @@ func (b Brief) WithPhase(projection history.Projection) Brief {
 
 func (b Brief) WithUnit(unitProjection, coordination, aggregate history.Projection, reviewer bool) Brief {
 	definition := unitProjection.Unit.Definition
-	unit := &UnitContext{WorkflowID: unitProjection.Workflow.ID, WorkflowRevision: unitProjection.Workflow.Revision, UnitID: definition.ID, UnitRevision: definition.Revision, State: definition.State, Description: definition.Description, DependsOn: definition.DependsOn, Coverage: coverage(definition.Coverage), EvidenceRequired: []string{"red-green TDD", "current affected-package verification", "result for every covered scenario"}}
+	unit := &UnitContext{WorkflowID: unitProjection.Workflow.ID, WorkflowRevision: unitProjection.Workflow.Revision, UnitID: definition.ID, UnitRevision: definition.Revision, State: definition.State, DependsOn: definition.DependsOn, Coverage: coverage(definition.Coverage)}
 	unit.ScenarioResults = scenarioResults(aggregate, definition.ID, definition.Revision)
 	if reviewer {
 		if evidence := unitProjection.Unit.Evidence; evidence != nil {
-			unit.Evidence = &EvidenceSummary{Revision: evidence.Revision, RedOutcome: evidence.RedOutcome, GreenOutcome: evidence.GreenOutcome, RefactorSummary: evidence.RefactorSummary, ValidationOutcome: evidence.ValidationOutcome}
+			unit.Evidence = &EvidenceSummary{Revision: evidence.Revision}
 		}
 		if review := unitProjection.Unit.Review; review != nil {
-			unit.Review = &ReviewSummary{Revision: review.Revision, Verdict: review.Verdict, Summary: review.Summary, Findings: review.Findings, PlanImpact: review.PlanImpact}
+			unit.Review = &ReviewSummary{Revision: review.Revision, Verdict: closedVerdict(review.Verdict)}
 		}
 		b.NextAction = map[bool]string{true: "workflow unit-review", false: "return to aion"}[unitProjection.Workflow.State == "implementing" && definition.State == "reviewing"]
 	} else {
@@ -195,12 +186,26 @@ func scenarioResults(projection history.Projection, unitID string, revision int6
 		_ = json.Unmarshal(run.ScenarioIDs, &ids)
 		for _, id := range ids {
 			if !seen[id] {
-				result = append(result, ScenarioResult{ScenarioID: id, Status: run.Outcome})
+				result = append(result, ScenarioResult{ScenarioID: id, Status: verificationStatus(run.Outcome), VerificationID: run.ID})
 				seen[id] = true
 			}
 		}
 	}
 	return result
+}
+
+func verificationStatus(outcome string) string {
+	if outcome == "exit 0" {
+		return "passed"
+	}
+	return "failed"
+}
+
+func closedVerdict(verdict string) string {
+	if verdict == "approved" || verdict == "corrections" {
+		return verdict
+	}
+	return "unknown"
 }
 
 func allowedActions(action string) []string {
