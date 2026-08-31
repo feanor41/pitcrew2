@@ -58,6 +58,27 @@ func TestInputFileRejectsUnsafeOrNonStrictJSONBeforeOpeningStore(t *testing.T) {
 	}
 }
 
+func TestWorkflowCompleteStructuredInputRejectsUnknownFieldsBeforeOpeningStore(t *testing.T) {
+	cases := map[string]string{
+		"top level":  `{"verdict":"approved","summary":"checked","findings":"","verification_runs":[],"checkpoint":null,"extra":true}`,
+		"run":        `{"verdict":"approved","summary":"checked","findings":"","verification_runs":[{"id":"aggregate-1","tier":"aggregate_full","command":"go test ./...","outcome":"exit 0","repository_fingerprint":"fingerprint-a","scenario_ids":[],"extra":true}],"checkpoint":null}`,
+		"checkpoint": `{"verdict":"approved","summary":"checked","findings":"","verification_runs":[],"checkpoint":{"project_id":"p","extra":true}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			input := writeInput(t, root, "aggregate.json", body)
+			result := runAt(t, root, "workflow", "complete", "--workflow-id", "wf-000000000000000000000001", "--revision", "1", "--actor", "reviewer", "--input-file", input)
+			if result.code != 2 || result.stdout != "" || !strings.Contains(result.stderr, "unknown field") {
+				t.Fatalf("result=%#v", result)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".pitcrew")); !os.IsNotExist(err) {
+				t.Fatalf("store opened before strict decode: %v", err)
+			}
+		})
+	}
+}
+
 func TestEveryWorkflowCommandRequiresItsExactFlagMatrix(t *testing.T) {
 	root := t.TempDir()
 	input := writeInput(t, root, "input.json", `{"content":"x"}`)

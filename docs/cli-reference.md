@@ -382,6 +382,44 @@ Unit review is optional: current TDD evidence plus the active implementation han
 
 `workflow complete` uses the approved review shape above, or a corrections payload without `plan_impact`. The independent reviewer compares the repository result and tests with requirements, every specification/design amendment, the approved plan and tasks, current implementation evidence, unit reviews, and the declared `aggregate_correction_policy`. Approval with no blocker records the review and completes atomically. Corrections record one review, advance workflow CAS, remain `ready_to_complete`, and consume no round. Repeating `complete` while that blocker is unresolved fails without mutation.
 
+For a workflow whose accepted plan has structured scenario coverage, approval
+transports the existing aggregate evidence types in one strict input document:
+
+```json
+{
+  "verdict": "approved",
+  "summary": "requirements satisfied",
+  "findings": "",
+  "verification_runs": [{
+    "id": "vr-aggregate",
+    "tier": "aggregate_full",
+    "command": "go test ./...",
+    "outcome": "exit 0",
+    "repository_fingerprint": "observed-fingerprint",
+    "scenario_ids": ["SCN-EXAMPLE-001"]
+  }],
+  "checkpoint": {
+    "project_id": "64-hex-project-id",
+    "checkout_root": "/absolute/checkout",
+    "base_revision": "40-hex-base-revision",
+    "head_revision": "40-hex-head-revision",
+    "result_digest": "64-hex-result-digest",
+    "dirty": false
+  }
+}
+```
+
+Each verification run also accepts optional `reused_from_id`; the checkpoint
+accepts optional `commit_ref` and `delivery_id`. Unknown fields at any level
+fail strict decoding before the store opens. The CLI maps both fields
+one-for-one into the aggregate review; the evidence service remains
+authoritative for current successful `aggregate_full` verification, current
+focused and affected-package unit evidence, identifiable checkpoint, actor,
+CAS, blocker, and terminal-state validation. Any failed validation rolls back
+the review, verification records, checkpoint, events, activities, and workflow
+transition together. Legacy unstructured approval and every corrections
+payload retain the three-field `verdict`, `summary`, and `findings` shape.
+
 New plans normalize an omitted correction policy to `{"automatic_rounds":1,"on_exhaustion":"require_user_authorization"}`; only zero or one automatic round is accepted. Historical stored plans missing the field project the same default without rewriting and retain their legacy distinction. The shared projection reports rounds used/allowed, latest unresolved blocker, `automatic|authorized|none` authority, and one next action. A successful grouped recovery or grandfathered historical single-unit recovery consumes one round; review attempts, findings, selected-unit count, and failures do not.
 
 Policy-aware `workflow recover-aggregate` requires strict input `{"aggregate_review_revision":7,"groups":[{"causal_invariant":"one boundary","findings":["finding"],"unit_ids":["wu-..."]}],"assignments":[{"unit_id":"wu-...","actor":"implementer"}]}`. Groups are bounded, unit ids form one unique union of existing done units, and assignments cover it exactly once. Authority is derived. One transaction appends one aggregate-correction artifact/activity, reopens every selected unit once, revokes superseded handles, moves to `implementing`, and returns only `data.handles` entries containing `unit_id`, `unit_revision`, `actor`, and `handle_path`. Historical plans may instead use exactly one `--unit-id`; policy-aware plans reject it, and no request accepts both forms. Files and database mutation roll back together on ordinary failure. No artifact, activity, or output exposes a secret or hash.
