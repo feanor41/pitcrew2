@@ -36,10 +36,20 @@ SHALL substitute received workflow and unit IDs in the required canonical
 flags. Generated definitions SHALL NOT duplicate maxims, routing, correction,
 release, workflow, or command manuals.
 
-The versioned binary response is the dynamic contract source. It SHALL expose
-`contract_version`, a deterministic `contract_digest`, stable role contract,
-bounded dynamic context, current `allowed_actions`, and `next_action`. Brief
-retrieval SHALL be read-only.
+The versioned binary response is the dynamic contract source. It SHALL return
+one composite brief ordered as shared operating contract, stable role contract,
+bounded dynamic context when applicable, and `next_action`. The shared contract
+SHALL expose its own `contract_version`, a deterministic `contract_digest`, and
+the complete canonical embedded `MAXIMS.md` bytes. The role contract SHALL
+retain its independent `contract_version` and deterministic `contract_digest`.
+Dynamic context, current `allowed_actions`, and `next_action` SHALL affect
+neither stable digest. Brief retrieval SHALL be read-only.
+
+The runtime installer SHALL extract only the embedded POSIX installer needed
+for execution. It SHALL NOT extract or deploy a standalone `MAXIMS.md`; the
+canonical source travels inside the binary and reaches roles through the
+composite brief. `pitcrew principles [--json]` SHALL remain the compatible
+human and diagnostic representation.
 
 #### Scenario: Every installed role retrieves current authority
 
@@ -47,6 +57,7 @@ retrieval SHALL be read-only.
 - WHEN installation succeeds and a role begins work
 - THEN all nine native definitions SHALL exist
 - AND the role SHALL retrieve its valid scoped brief before action
+- AND the brief SHALL contain the complete shared maxims contract before role authority
 - AND an invalid or unscoped request SHALL fail without mutation
 
 ### Requirement: Native least privilege and bounded graph

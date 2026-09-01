@@ -11,9 +11,17 @@ import (
 	"strings"
 
 	"github.com/fmazzalomo/pitcrew/internal/history"
+	"github.com/fmazzalomo/pitcrew/internal/maxims"
 )
 
 const ContractVersion = "1"
+const SharedContractVersion = "1"
+
+type SharedContract struct {
+	ContractVersion string `json:"contract_version"`
+	ContractDigest  string `json:"contract_digest"`
+	Maxims          string `json:"maxims"`
+}
 
 type StableContract struct {
 	Role             string   `json:"role"`
@@ -43,6 +51,7 @@ func (b Brief) WithContinuity(continuity history.ActiveContinuity) Brief {
 }
 
 type Brief struct {
+	SharedContract  SharedContract `json:"shared_contract"`
 	ContractVersion string         `json:"contract_version"`
 	ContractDigest  string         `json:"contract_digest"`
 	Contract        StableContract `json:"contract"`
@@ -66,7 +75,11 @@ func New(role, workflowID, unitID string) (Brief, error) {
 		return Brief{}, err
 	}
 	sum := sha256.Sum256(canonical)
-	brief := Brief{ContractVersion: ContractVersion, ContractDigest: hex.EncodeToString(sum[:]), Contract: contract, NextAction: nextAction(role, workflowID)}
+	shared, err := newSharedContract()
+	if err != nil {
+		return Brief{}, err
+	}
+	brief := Brief{SharedContract: shared, ContractVersion: ContractVersion, ContractDigest: hex.EncodeToString(sum[:]), Contract: contract, NextAction: nextAction(role, workflowID)}
 	if role == "pc2-sdd-initializer" {
 		brief.Context = &Context{Kind: "initializer", AllowedActions: []string{"context inspect"}}
 	}
@@ -76,9 +89,33 @@ func New(role, workflowID, unitID string) (Brief, error) {
 	return brief, nil
 }
 
+func newSharedContract() (SharedContract, error) {
+	canonical := struct {
+		ContractVersion string `json:"contract_version"`
+		Maxims          string `json:"maxims"`
+	}{ContractVersion: SharedContractVersion, Maxims: maxims.Text()}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return SharedContract{}, err
+	}
+	sum := sha256.Sum256(encoded)
+	return SharedContract{ContractVersion: canonical.ContractVersion, ContractDigest: hex.EncodeToString(sum[:]), Maxims: canonical.Maxims}, nil
+}
+
 func WriteText(w io.Writer, brief Brief) error {
 	c := brief.Contract
-	if _, err := fmt.Fprintf(w, "PitCrew agent brief\ncontract_version: %s\ncontract_digest: %s\nrole: %s\nidentity: %s\nresponsibilities: %s\nallowed_handoffs: %s\nallowed_commands: %s\ninvariants: %s\nbrief_requirement: %s\n", brief.ContractVersion, brief.ContractDigest, c.Role, c.Identity, strings.Join(c.Responsibilities, "; "), strings.Join(c.AllowedHandoffs, ", "), strings.Join(c.AllowedCommands, ", "), strings.Join(c.Invariants, "; "), c.BriefRequirement); err != nil {
+	if _, err := fmt.Fprintf(w, "PitCrew agent brief\nshared_contract_version: %s\nshared_contract_digest: %s\nshared_maxims_begin\n", brief.SharedContract.ContractVersion, brief.SharedContract.ContractDigest); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, brief.SharedContract.Maxims); err != nil {
+		return err
+	}
+	if !strings.HasSuffix(brief.SharedContract.Maxims, "\n") {
+		if _, err := io.WriteString(w, "\n"); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "shared_maxims_end\nrole_contract\ncontract_version: %s\ncontract_digest: %s\nrole: %s\nidentity: %s\nresponsibilities: %s\nallowed_handoffs: %s\nallowed_commands: %s\ninvariants: %s\nbrief_requirement: %s\n", brief.ContractVersion, brief.ContractDigest, c.Role, c.Identity, strings.Join(c.Responsibilities, "; "), strings.Join(c.AllowedHandoffs, ", "), strings.Join(c.AllowedCommands, ", "), strings.Join(c.Invariants, "; "), c.BriefRequirement); err != nil {
 		return err
 	}
 	if brief.Context != nil {

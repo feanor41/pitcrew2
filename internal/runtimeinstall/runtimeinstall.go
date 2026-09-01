@@ -97,11 +97,6 @@ func Run(target string, deps Dependencies) (code int) {
 		writeError(deps.Stderr, fmt.Errorf("extract installer: %w", err))
 		return 1
 	}
-	if err := writePrivateFile(filepath.Join(root, "MAXIMS.md"), []byte(pitcrew.MaximsText), 0o600); err != nil {
-		writeError(deps.Stderr, fmt.Errorf("extract maxims: %w", err))
-		return 1
-	}
-
 	cmd := deps.Command("/bin/sh", installerPath, target)
 	cmd.Stdin = deps.Stdin
 	cmd.Stdout = &installerStdout

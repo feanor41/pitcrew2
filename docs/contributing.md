@@ -131,7 +131,7 @@ When changing the public runtime installer or `scripts/install-templates.sh`, pr
 
 - each exact `pitcrew install codex|opencode|claude|pi` selector installs only its selected runtime, even when all other homes and override variables exist;
 - every supported runtime installs exactly nine minimal native role bootstraps in its native registry: Codex: `agents/*.toml`; OpenCode: `agents/*.md`; Claude Code: `agents/*.md`; Pi: `agents/*.md`;
-- every definition retrieves its canonical role-scoped `pitcrew agent brief` before action instead of embedding workflow policy;
+- every definition retrieves one composite role-scoped `pitcrew agent brief` before action; the response carries the complete versioned and digested shared maxims contract before role authority instead of embedding workflow policy in installed files;
 - every Aion definition resolves exactly the seven native specialist identities, while Daimon can hand off only to Aion and specialists cannot delegate;
 - runtime-native permissions give coordinators the shell and delegation tools needed to retrieve and hand off briefs, while specialists retain shell access without delegation;
 - a byte-identical reinstall is a no-op;

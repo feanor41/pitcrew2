@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/fmazzalomo/pitcrew/internal/agentbrief"
+	"github.com/fmazzalomo/pitcrew/internal/maxims"
 )
 
 func TestAgentBriefStaticSafetyDigest(t *testing.T) {
@@ -114,15 +115,34 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		sharedJSON := strings.Index(jsonResult.stdout, `"shared_contract":`)
+		roleJSON := strings.Index(jsonResult.stdout, `},"contract_version":"1","contract_digest":`)
+		if sharedJSON < 0 || roleJSON <= sharedJSON {
+			t.Fatalf("JSON brief does not place shared contract before role contract: %q", jsonResult.stdout)
+		}
 		canonical := `{"contract_version":"1","contract":{"role":"daimon","identity":"Daimon","responsibilities":["stay addressable for the user turn","hand intent to exactly one Aion","mutate no workflow or repository state","relay only Aion-acknowledged facts"],"allowed_handoffs":["aion"],"allowed_commands":[],"invariants":["technical English internally","truthful evidence and progress","never expose opaque handle contents","allowed_commands is potential interface only; current authority is conveyed only by dynamic next_action and allowed_actions"],"brief_requirement":"no workflow or unit context"}}`
 		if want := fmt.Sprintf("%x", sha256.Sum256([]byte(canonical))); brief.ContractDigest != want {
 			t.Fatalf("digest=%s want canonical digest=%s", brief.ContractDigest, want)
 		}
+		text := runBriefAt(root, "", "agent", "brief", "--role", "daimon").stdout
+		sharedStart := strings.Index(text, "shared_maxims_begin\n")
+		sharedEnd := strings.Index(text, "shared_maxims_end\n")
+		roleStart := strings.Index(text, "role_contract\n")
+		if sharedStart < 0 || sharedEnd <= sharedStart || roleStart <= sharedEnd {
+			t.Fatalf("text brief does not place shared maxims before role contract: %q", text)
+		}
+		gotMaxims := text[sharedStart+len("shared_maxims_begin\n") : sharedEnd]
+		if gotMaxims != maxims.Text() {
+			t.Fatalf("text brief maxims drifted: got %d bytes want %d", len(gotMaxims), len(maxims.Text()))
+		}
 		labels := textLabels(runBriefAt(root, "", "agent", "brief", "--role", "daimon").stdout)
-		for key, want := range map[string]string{"contract_version": brief.ContractVersion, "contract_digest": brief.ContractDigest, "role": brief.Contract.Role, "identity": brief.Contract.Identity, "responsibilities": strings.Join(brief.Contract.Responsibilities, "; "), "allowed_handoffs": strings.Join(brief.Contract.AllowedHandoffs, ", "), "allowed_commands": strings.Join(brief.Contract.AllowedCommands, ", "), "invariants": strings.Join(brief.Contract.Invariants, "; "), "brief_requirement": brief.Contract.BriefRequirement, "next_action": next} {
+		for key, want := range map[string]string{"shared_contract_version": brief.SharedContract.ContractVersion, "shared_contract_digest": brief.SharedContract.ContractDigest, "contract_version": brief.ContractVersion, "contract_digest": brief.ContractDigest, "role": brief.Contract.Role, "identity": brief.Contract.Identity, "responsibilities": strings.Join(brief.Contract.Responsibilities, "; "), "allowed_handoffs": strings.Join(brief.Contract.AllowedHandoffs, ", "), "allowed_commands": strings.Join(brief.Contract.AllowedCommands, ", "), "invariants": strings.Join(brief.Contract.Invariants, "; "), "brief_requirement": brief.Contract.BriefRequirement, "next_action": next} {
 			if labels[key] != want {
 				t.Fatalf("text %s=%q, JSON=%q", key, labels[key], want)
 			}
+		}
+		if brief.SharedContract.Maxims != maxims.Text() {
+			t.Fatal("JSON brief omitted canonical shared maxims")
 		}
 		if next != "handoff to aion" {
 			t.Fatalf("Daimon next_action=%q", next)

@@ -329,6 +329,12 @@ func TestCLIReferenceCoversCurrentAgentBriefAndBootstrapContract(t *testing.T) {
 	normalized := strings.Join(strings.Fields(doc), " ")
 	for _, want := range []string{
 		"`pitcrew agent brief` is the read-only, versioned source",
+		"Every response is one composite brief in fixed order",
+		"`shared_contract.contract_version`",
+		"`shared_contract.contract_digest`",
+		"the complete canonical embedded `MAXIMS.md` bytes",
+		"`shared_maxims_begin` and `shared_maxims_end` before `role_contract`",
+		"no standalone `MAXIMS.md` is deployed to the runtime",
 		"`contract_version`",
 		"`contract_digest`",
 		"Daimon and `pc2-sdd-initializer` accept no context",
