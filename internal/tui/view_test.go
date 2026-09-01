@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/fmazzalomo/pitcrew/internal/history"
+	"github.com/fmazzalomo/pitcrew/internal/project"
 )
 
 var updateGoldens = flag.Bool("update", false, "update TUI golden files")
@@ -323,6 +324,35 @@ func TestViewWorkflowsShowsTruthfulLoadingEmptyAndErrorStates(t *testing.T) {
 				t.Fatalf("workflow state controls are incomplete:\n%s", model.View().Content)
 			}
 		})
+	}
+}
+
+func TestViewWorkflowsExplainsRequiredLegacyConsolidation(t *testing.T) {
+	model := Model{screen: WorkflowsScreen, err: fmt.Errorf("load deliveries: %w", project.ErrMigrationRequired)}
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 16})
+	plain := ansi.Strip(model.View().Content)
+
+	for _, want := range []string{
+		"DELIVERIES",
+		"CONSOLIDATION REQUIRED",
+		"Legacy PitCrew history was found.",
+		"Run: pitcrew project inspect",
+		"Consolidate the exact candidate set, then press r.",
+		"No history was modified.",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("legacy consolidation state missing %q:\n%s", want, model.View().Content)
+		}
+	}
+	for _, unwanted := range []string{"Could not load deliveries.", project.ErrMigrationRequired.Error()} {
+		if strings.Contains(plain, unwanted) {
+			t.Fatalf("legacy consolidation state exposes generic/raw error %q:\n%s", unwanted, model.View().Content)
+		}
+	}
+	for _, line := range strings.Split(model.View().Content, "\n") {
+		if width := lipgloss.Width(line); width > 60 {
+			t.Fatalf("legacy consolidation line width %d exceeds 60: %q", width, line)
+		}
 	}
 }
 
