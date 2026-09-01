@@ -541,7 +541,7 @@ inspection, or project inspection) and the executable `next_action`.
 
 | Command family | `data` on success |
 |---|---|
-| `project inspect` | project identity, Git/checkout paths, initialization and move flags, central paths, and legacy discovery |
+| `project inspect` | project identity, Git/checkout paths, initialization and move flags, central paths, exact-set `legacy_acknowledged`, and legacy discovery |
 | `project consolidate` | `project_id` and accepted `candidate_set_id` |
 | `context inspect` / `record` | status, schema/facts/coverage/gaps, update time, and checkout root |
 | `context initialize` | `inspection` plus boolean `persisted` |
@@ -649,7 +649,7 @@ Every profile uses the same eight fields.
 **Caller and behavior:** An operator or coordinating agent invokes the command; the dispatcher accepts only the documented form.
 **Preconditions:** A safely resolvable Git common directory.
 **Inputs:** Values are long-form flags or the named positional runtime/subcommand; structured files follow the strict input contract above.
-**Success:** A JSON inspection and next action.
+**Success:** A JSON inspection and next action. `legacy_acknowledged` is true only for a safely read acknowledgement of the exact current candidate set. The next action is `project consolidate` only while that set is unacknowledged; unsafe acknowledgement reads fail closed.
 **Failures and recovery:** Usage/state/path failures are classified in the standard envelope; inspect current state before retrying a mutation.
 **Example:** `pitcrew project inspect`
 <!-- cli-docs:profile:project-inspect:end -->

@@ -287,11 +287,27 @@ func runProject(args []string, deps Dependencies) int {
 		if err != nil {
 			return fail(deps, err, err.Error())
 		}
+		legacyAcknowledged := false
+		if inspection.Initialized && len(inspection.Legacy.Candidates) != 0 {
+			opened, openErr := store.OpenProjectReadOnly(context.Background(), inspection.Project, inspection.Paths)
+			if openErr != nil {
+				return fail(deps, openErr, openErr.Error())
+			}
+			if opened.State != store.Initialized || opened.Store == nil {
+				err = fmt.Errorf("%w: initialized project state is unavailable", store.ErrInvalidState)
+				return fail(deps, err, err.Error())
+			}
+			legacyAcknowledged, err = exactLegacyAcknowledged(opened.Store, inspection.Project.ID, inspection.Legacy.CandidateSetID)
+			_ = opened.Store.Close()
+			if err != nil {
+				return fail(deps, err, err.Error())
+			}
+		}
 		next := "workflow new"
-		if len(inspection.Legacy.Candidates) != 0 {
+		if len(inspection.Legacy.Candidates) != 0 && !legacyAcknowledged {
 			next = "project consolidate"
 		}
-		data := map[string]any{"project_id": inspection.Project.ID, "git_common_dir": inspection.Project.CommonDir, "checkout_root": inspection.Project.CheckoutRoot, "initialized": inspection.Initialized, "repository_move_boundary": inspection.RepositoryMoveBoundary, "paths": map[string]string{"project_root": inspection.Paths.ProjectRoot, "state_path": inspection.Paths.StatePath, "worktree_root": inspection.Paths.WorktreeRoot, "handle_root": inspection.Paths.HandleRoot}, "legacy": inspection.Legacy}
+		data := map[string]any{"project_id": inspection.Project.ID, "git_common_dir": inspection.Project.CommonDir, "checkout_root": inspection.Project.CheckoutRoot, "initialized": inspection.Initialized, "repository_move_boundary": inspection.RepositoryMoveBoundary, "legacy_acknowledged": legacyAcknowledged, "paths": map[string]string{"project_root": inspection.Paths.ProjectRoot, "state_path": inspection.Paths.StatePath, "worktree_root": inspection.Paths.WorktreeRoot, "handle_root": inspection.Paths.HandleRoot}, "legacy": inspection.Legacy}
 		if err = writeSuccess(deps, data, next); err != nil {
 			return fail(deps, err, err.Error())
 		}
@@ -1372,16 +1388,29 @@ func readProjectStore(inspection project.Inspection) (*store.Store, error) {
 	return opened.Store, nil
 }
 func gateLegacy(s *store.Store, projectID string, discovery project.LegacyDiscovery) error {
-	acknowledged, table := 0, 0
-	_ = s.DB().QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='consolidation_acknowledgements'`).Scan(&table)
-	if table != 0 {
-		_ = s.DB().QueryRow(`SELECT count(*) FROM consolidation_acknowledgements WHERE project_id=? AND candidate_set_id=?`, projectID, discovery.CandidateSetID).Scan(&acknowledged)
+	acknowledged, err := exactLegacyAcknowledged(s, projectID, discovery.CandidateSetID)
+	if err != nil {
+		return err
 	}
 	value := ""
-	if acknowledged != 0 {
+	if acknowledged {
 		value = discovery.CandidateSetID
 	}
 	return project.GateLegacy(discovery, value)
+}
+func exactLegacyAcknowledged(s *store.Store, projectID, candidateSetID string) (bool, error) {
+	table := 0
+	if err := s.DB().QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='consolidation_acknowledgements'`).Scan(&table); err != nil {
+		return false, fmt.Errorf("inspect consolidation acknowledgements: %w", err)
+	}
+	if table == 0 {
+		return false, nil
+	}
+	acknowledged := 0
+	if err := s.DB().QueryRow(`SELECT count(*) FROM consolidation_acknowledgements WHERE project_id=? AND candidate_set_id=?`, projectID, candidateSetID).Scan(&acknowledged); err != nil {
+		return false, fmt.Errorf("inspect exact consolidation acknowledgement: %w", err)
+	}
+	return acknowledged != 0, nil
 }
 func writeSuccess(deps Dependencies, data any, next string) error {
 	return envelope.WriteSuccess(deps.Stdout, data, nil, next)
