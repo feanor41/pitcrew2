@@ -7,9 +7,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
+
+func TestAgentBriefRecoveredCorrectionClaimAuthorizesUnitTDD(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, _ := setupReviewingUnit(t, root, "implementer")
+	reviewHandle := handoffReview(t, root, wfID, unitID, "reviewer")
+	review := writeInput(t, root, "correction.json", `{"verdict":"corrections","summary":"changes required","findings":"add regression coverage","plan_impact":"inside"}`)
+	mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewHandle, "--input-file", review))
+	recoveryTime := time.Date(2026, 8, 20, 15, 16, 0, 0, time.UTC)
+
+	beforeRecovery := fullBriefAt(t, root, recoveryTime, "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID)
+	if beforeRecovery["next_action"] != "workflow recover-unit-claim" {
+		t.Fatalf("brief before recovery=%#v", beforeRecovery)
+	}
+
+	mustOK(t, runAtTime(t, root, recoveryTime, "workflow", "recover-unit-claim", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--handle-dir", filepath.Join(root, "recovered")))
+	afterRecovery := fullBriefAt(t, root, recoveryTime, "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID)
+	context := afterRecovery["context"].(map[string]any)
+	if afterRecovery["next_action"] != "workflow unit-tdd" || strings.Join(stringSlice(context["allowed_actions"]), ",") != "workflow unit-tdd" {
+		t.Fatalf("brief after recovery=%#v", afterRecovery)
+	}
+}
 
 func TestAgentBriefAionWorkflowContextIsDurableBoundedAndReadOnly(t *testing.T) {
 	root := t.TempDir()
@@ -121,6 +143,17 @@ func fullBrief(t *testing.T, root, role string, contextArgs ...string) map[strin
 	t.Helper()
 	args := append(append([]string{"agent", "brief", "--role", role}, contextArgs...), "--json")
 	result := runAt(t, root, args...)
+	return parseFullBrief(t, role, result)
+}
+
+func fullBriefAt(t *testing.T, root string, now time.Time, role string, contextArgs ...string) map[string]any {
+	t.Helper()
+	args := append(append([]string{"agent", "brief", "--role", role}, contextArgs...), "--json")
+	return parseFullBrief(t, role, runAtTime(t, root, now, args...))
+}
+
+func parseFullBrief(t *testing.T, role string, result result) map[string]any {
+	t.Helper()
 	var document map[string]any
 	if result.code != 0 || json.Unmarshal([]byte(result.stdout), &document) != nil {
 		t.Fatalf("brief %s=%#v", role, result)
