@@ -73,6 +73,22 @@ specialists. Specialists SHALL NOT delegate. The installer SHALL NOT create `pit
 stable mechanics belong to `pitcrew agent brief`,
 not a generated support file.
 
+The dynamic Daimon brief SHALL require one retained user-visible turn while
+Aion is active, host-native mailbox and user-steering waits, exactly-once relay
+of meaningful acknowledged facts, one truthful notice no later than five
+minutes into each continuous quiet interval, resumed waiting after steered
+input is forwarded as requested state, distinct completion, interruption,
+cancellation, timeout, failure, blocker, clarification, user-owned-gate, and
+abandonment outcomes, no promise of later unsolicited updates after
+finalization without a real host push channel, and truthful disclosure when
+the host lacks bounded native liveness. Codex SHALL be documented as supporting
+a bounded in-turn mailbox-and-steering wait but no post-final push. Pi SHALL be
+documented as supporting `contact_supervisor` progress relay without a stable
+native trace contract for steered dual wait. OpenCode and Claude Code SHALL be
+documented as having no repository-verified bounded dual wait or unsolicited
+push capability. Runtime bootstraps SHALL continue resolving this versioned
+contract at activation time rather than duplicating it.
+
 #### Scenario: Native graph validates before mutation
 
 - GIVEN staged definitions for a supported runtime

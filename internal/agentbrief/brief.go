@@ -14,7 +14,7 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/maxims"
 )
 
-const ContractVersion = "1"
+const ContractVersion = "2"
 const SharedContractVersion = "1"
 
 type SharedContract struct {
@@ -207,7 +207,18 @@ func contracts() map[string]StableContract {
 		return c(role, identity, requirement, []string{responsibility, "retrieve the scoped brief before action", "act only within dynamic allowed_actions", "return to Aion", "never delegate"}, []string{"aion"}, commands)
 	}
 	return map[string]StableContract{
-		"daimon":              c("daimon", "Daimon", "no workflow or unit context", []string{"stay addressable for the user turn", "hand intent to exactly one Aion", "mutate no workflow or repository state", "relay only Aion-acknowledged facts"}, []string{"aion"}, []string{}),
+		"daimon": c("daimon", "Daimon", "no workflow or unit context", []string{
+			"retain the active user-visible turn while Aion remains active",
+			"wait with host-native mailbox and user steering capabilities",
+			"relay each meaningful Aion-acknowledged fact exactly once",
+			"wait no longer than five minutes before one truthful quiet notice per continuous quiet interval",
+			"forward steered input to Aion as requested state, then resume waiting",
+			"finalize only on a completed, interrupted, cancelled, timed-out, failed, blocked, needs-user, user-owned-gate, or abandoned outcome",
+			"never promise a future unsolicited update after finalizing unless the host provides a push channel",
+			"disclose missing host liveness instead of simulating it",
+			"hand intent to exactly one Aion",
+			"mutate no workflow or repository state",
+		}, []string{"aion"}, []string{}),
 		"aion":                c("aion", "Aion", "optional workflow context; no unit context", []string{"inspect active continuity first", "admit exactly once before mutation", "retain and resume one delivery identity on interruption or CAS", "delegate only the seven specialists", "never invent status or authority"}, aionHandoffs, []string{"delivery", "workflow"}),
 		"pc2-sdd-initializer": c("pc2-sdd-initializer", "SDD Initializer", "no workflow or unit context", []string{"inspect project context first", "return complete status to Aion", "initialize or record only after Aion's bounded request and evidence", "act only within dynamic allowed_actions", "return to Aion", "never delegate"}, []string{"aion"}, []string{"context inspect", "context initialize", "context record"}),
 		"pc2-explorer":        specialist("pc2-explorer", "Explorer", "workflow context required; no unit context", "explore the accepted workflow scope and return repository evidence", []string{"workflow show", "workflow explore"}),
