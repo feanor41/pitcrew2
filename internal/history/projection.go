@@ -191,10 +191,10 @@ func classify(unit unitFact, states map[string]string, ready bool, now time.Time
 		return "Unknown", ""
 	case unit.state == "done":
 		return "Done", ""
-	case unit.state == "pending" && unit.correction != nil:
-		return "Correction", unit.correction.reason
 	case plan.ClaimActive(unit.claim, now):
 		return "Claimed", ""
+	case unit.state == "pending" && unit.correction != nil:
+		return "Correction", unit.correction.reason
 	case unit.state == "reviewing":
 		return "Reviewing", ""
 	case unit.claim.State != "" && unit.claim.State != "revoked":

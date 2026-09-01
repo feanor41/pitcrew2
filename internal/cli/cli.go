@@ -153,7 +153,7 @@ func runAgent(args []string, deps Dependencies) int {
 	}
 	if brief.Contract.Role == "aion" {
 		return withReadStore(deps, func(s *store.Store) error {
-			projection, err := history.New(s).Project(context.Background(), values.one("--workflow-id"), history.ViewCoordination, "")
+			projection, err := history.New(s, deps.Now).Project(context.Background(), values.one("--workflow-id"), history.ViewCoordination, "")
 			if err != nil {
 				return err
 			}
@@ -162,7 +162,7 @@ func runAgent(args []string, deps Dependencies) int {
 	}
 	if brief.Contract.Role != "daimon" && brief.Contract.Role != "aion" && brief.Contract.Role != "pc2-sdd-initializer" {
 		return withReadStore(deps, func(s *store.Store) error {
-			svc, ctx := history.New(s), context.Background()
+			svc, ctx := history.New(s, deps.Now), context.Background()
 			workflowID, unitID := values.one("--workflow-id"), values.one("--unit-id")
 			switch brief.Contract.Role {
 			case "pc2-explorer", "pc2-specifier", "pc2-designer", "pc2-task-planner":
