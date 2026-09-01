@@ -17,6 +17,7 @@ func TestIdentifiersUseRequiredFormatsAndEntropy(t *testing.T) {
 		{"workflow", NewWorkflow, `^wf-[0-9a-f]{24}$`},
 		{"work unit", NewWorkUnit, `^wu-[0-9a-f]{24}$`},
 		{"delivery", NewDelivery, `^dl-[0-9a-f]{24}$`},
+		{"roadmap item", NewRoadmap, `^rm-[0-9a-f]{24}$`},
 		{"claim", NewClaim, `^[0-9a-f]{32}$`},
 		{"secret", NewSecret, `^[0-9a-f]{32}$`},
 	}
