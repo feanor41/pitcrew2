@@ -315,3 +315,28 @@ Daimon SHALL interview, clarify, preserve continuity, forward accepted requests,
 - GIVEN orchestration restarts
 - WHEN replacement Aion reads `workflow show`
 - THEN it SHALL reconstruct current context without hidden process state
+
+### Requirement: Roadmap Inbox CLI
+
+The CLI SHALL expose exactly the local `capture`, `show`, `list`,
+`prepare-github`, and `acknowledge` roadmap commands. Durable inputs SHALL be
+strict regular JSON files, roadmap identities SHALL use `rm-<24hex>`, and every
+command SHALL provide deterministic text plus `--json` output with closed error
+envelopes. `prepare-github` SHALL only render canonical issue content and its
+digest. `acknowledge` SHALL atomically record an operator-published canonical
+GitHub tuple after validating that digest. Neither command SHALL create or
+mutate an external issue.
+
+#### Scenario: Roadmap CLI remains local and offline
+
+- GIVEN a project with no network credentials
+- WHEN `capture`, `show`, `list`, `prepare-github`, and `acknowledge` are invoked
+- THEN each command SHALL complete using only project-local state
+- AND preparation SHALL leave the roadmap item unchanged
+- AND acknowledgement SHALL be the explicit authority handoff to the recorded issue
+
+#### Scenario: Roadmap documentation remains executable
+
+- GIVEN the checked-in README, CLI reference, contributing guide, and CLI OpenSpec
+- WHEN the documentation drift test and full offline verification suite run
+- THEN the five command forms and external-publication boundary SHALL remain synchronized

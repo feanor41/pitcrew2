@@ -22,6 +22,11 @@ preservation.
 
 The shell suite uses temporary homes and must not modify your real runtime configuration.
 
+For Roadmap Inbox changes, run `go test ./internal/roadmap ./internal/cli` and
+the full quick-verification set above with no network credentials. The CLI must
+remain local and deterministic: external issue creation remains outside PitCrew,
+and tests must use temporary project state rather than a real publication tool.
+
 ## Recoverable release operations
 
 Project-context deployment facts are the release map only when, before any

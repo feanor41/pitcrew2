@@ -807,6 +807,23 @@ Every profile uses the same eight fields.
 **Example:** `pitcrew roadmap --help`
 <!-- cli-docs:profile:roadmap:end -->
 
+Roadmap commands use these exact forms:
+
+```text
+pitcrew roadmap capture --input-file <path> [--json]
+pitcrew roadmap show --roadmap-id rm-<24hex> [--json]
+pitcrew roadmap list [--json]
+pitcrew roadmap prepare-github --roadmap-id rm-<24hex> --input-file <path> [--json]
+pitcrew roadmap acknowledge --roadmap-id rm-<24hex> --input-file <path> [--json]
+```
+
+`capture` records a local candidate. `prepare-github` deterministically renders
+the issue title, body, marker, and digest without publishing them. PitCrew never
+creates the GitHub issue: the operator publishes it with their chosen tool and
+passes the resulting canonical repository, issue number, URL, and prepared
+digest to `acknowledge`. GitHub becomes authoritative only after acknowledgement.
+All five commands remain local and perform no network work.
+
 <!-- cli-docs:profile:tui:start -->
 <a id="profile-tui"></a>
 #### `pitcrew tui`

@@ -112,6 +112,21 @@ For a visual, read-only overview, open:
 pitcrew tui
 ```
 
+### Roadmap Inbox
+
+Capture medium- and long-term findings without turning them into immediate work:
+
+```sh
+pitcrew roadmap capture --input-file finding.json
+pitcrew roadmap prepare-github --roadmap-id rm-<24hex> --input-file github.json
+pitcrew roadmap acknowledge --roadmap-id rm-<24hex> --input-file published.json
+```
+
+The inbox is project-local and offline. `prepare-github` produces deterministic
+issue content for an operator-selected tool; PitCrew never creates the GitHub
+issue. GitHub becomes authoritative only after the operator records the
+canonical published issue with `acknowledge`.
+
 Workflow detail is an operations cockpit with four keyboard-reachable panes:
 Tree, Status, Units, and Activity. At `120x30` or larger all four panes form a
 2x2 grid; smaller supported terminals show one focused pane with tabs. Use
