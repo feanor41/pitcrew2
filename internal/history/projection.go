@@ -54,12 +54,13 @@ type Occurrence struct {
 }
 
 type unitFact struct {
-	status     UnitStatus
-	state      string
-	deps       []string
-	claim      plan.ClaimStatus
-	correction *recordFact
-	unknown    bool
+	status               UnitStatus
+	state                string
+	deps                 []string
+	claim                plan.ClaimStatus
+	claimReleasedCurrent bool
+	correction           *recordFact
+	unknown              bool
 }
 type recordFact struct {
 	outcome, reason, eventTo string
@@ -197,7 +198,7 @@ func classify(unit unitFact, states map[string]string, ready bool, now time.Time
 		return "Correction", unit.correction.reason
 	case unit.state == "reviewing":
 		return "Reviewing", ""
-	case unit.claim.State != "" && unit.claim.State != "revoked":
+	case unit.claim.State != "" && !unit.claimReleasedCurrent:
 		return "Recovery", "Latest claim expired"
 	case blockedBy(unit.deps, states):
 		return "Dependency waiting", "Waiting for " + strings.Join(unresolvedDependencies(unit.deps, states), ", ")
@@ -266,6 +267,18 @@ func (s *Service) unitFacts(ctx context.Context, workflowID string) (map[string]
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='handles'`).Scan(&handles); err != nil {
 		return nil, err
 	}
+	releaseColumn := `0`
+	var releaseTables int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('artifacts','activities')`).Scan(&releaseTables); err != nil {
+		return nil, err
+	}
+	if releaseTables == 2 {
+		releaseColumn = `EXISTS(SELECT 1 FROM artifacts a
+			JOIN activities released ON released.workflow_id=a.workflow_id AND released.action='unit_claim_released' AND released.subject_kind='artifact' AND released.subject_id=CAST(a.id AS TEXT)
+			WHERE a.workflow_id=u.workflow_id AND a.kind='unit_claim_release' AND json_valid(a.content)
+			AND json_extract(a.content,'$.unit_id')=u.id AND json_extract(a.content,'$.unit_revision_after')=u.revision
+			AND NOT EXISTS (SELECT 1 FROM activities claimed WHERE claimed.workflow_id=a.workflow_id AND claimed.unit_id=u.id AND claimed.action='unit_claimed' AND claimed.id>released.id))`
+	}
 	claimColumns, claimJoin := `'', '', 0`, ``
 	if handles != 0 {
 		var purposeColumns int
@@ -279,7 +292,8 @@ func (s *Service) unitFacts(ctx context.Context, workflowID string) (map[string]
 		claimColumns = `COALESCE(h.state,''),COALESCE(h.expires_at,''),COALESCE(h.claim_generation,0)`
 		claimJoin = ` LEFT JOIN handles h ON h.workflow_id=u.workflow_id AND h.unit_id=u.id` + purposeJoin + ` AND h.claim_generation=(SELECT MAX(h2.claim_generation) FROM handles h2 WHERE h2.workflow_id=u.workflow_id AND h2.unit_id=u.id` + purposeLatest + `)`
 	}
-	query := `SELECT u.id,u.description,u.depends_on,u.state,u.revision,COALESCE(r.verdict,''),COALESCE(r.findings,''),` + claimColumns + ` FROM work_units u LEFT JOIN reviews r ON r.workflow_id=u.workflow_id AND r.unit_id=u.id AND r.revision=u.revision-1` + claimJoin + ` WHERE u.workflow_id=? ORDER BY u.rowid`
+	query := `SELECT u.id,u.description,u.depends_on,u.state,u.revision,COALESCE(r.verdict,''),COALESCE(r.findings,''),` + claimColumns + `,` + releaseColumn + `
+		FROM work_units u LEFT JOIN reviews r ON r.workflow_id=u.workflow_id AND r.unit_id=u.id AND r.revision=u.revision-1` + claimJoin + ` WHERE u.workflow_id=? ORDER BY u.rowid`
 	rows, err := s.queryContext(ctx, query, workflowID)
 	if err != nil {
 		return nil, err
@@ -289,12 +303,13 @@ func (s *Service) unitFacts(ctx context.Context, workflowID string) (map[string]
 	for rows.Next() {
 		var id, desc, depsJSON, state, verdict, findings, claimState, expiry string
 		var rev, generation int64
-		if err := rows.Scan(&id, &desc, &depsJSON, &state, &rev, &verdict, &findings, &claimState, &expiry, &generation); err != nil {
+		var claimReleasedCurrent bool
+		if err := rows.Scan(&id, &desc, &depsJSON, &state, &rev, &verdict, &findings, &claimState, &expiry, &generation, &claimReleasedCurrent); err != nil {
 			return nil, err
 		}
 		var deps []string
 		decodeErr := json.Unmarshal([]byte(depsJSON), &deps)
-		unit := unitFact{status: UnitStatus{ID: id, Description: desc, Attempt: rev, Derived: true}, state: state, deps: deps, claim: plan.ClaimStatus{UnitID: id, State: claimState, Generation: generation}, unknown: decodeErr != nil}
+		unit := unitFact{status: UnitStatus{ID: id, Description: desc, Attempt: rev, Derived: true}, state: state, deps: deps, claim: plan.ClaimStatus{UnitID: id, State: claimState, Generation: generation}, claimReleasedCurrent: claimReleasedCurrent, unknown: decodeErr != nil}
 		if expiry != "" {
 			unit.claim.ExpiresAt, err = time.Parse(time.RFC3339Nano, expiry)
 			if err != nil {
@@ -318,7 +333,10 @@ UNION ALL SELECT 'event:'||revision_after,to_state,reason,to_state,NULL,0 FROM e
 UNION ALL SELECT 'artifact:'||id,CASE WHEN json_valid(content) THEN json_extract(content,'$.verdict') ELSE '' END,
  CASE WHEN json_valid(content) THEN json_extract(content,'$.findings') ELSE '' END,
  CASE WHEN json_valid(content) AND json_extract(content,'$.verdict')='corrections' THEN 'aggregate_corrections' ELSE '' END,
- NULL,accepted_revision FROM artifacts WHERE workflow_id=? AND kind='aggregate_review')`, detail.Workflow.ID, detail.Workflow.ID, detail.Workflow.ID, detail.Workflow.ID)
+ NULL,accepted_revision FROM artifacts WHERE workflow_id=? AND kind='aggregate_review'
+UNION ALL SELECT 'artifact:'||id,'claim released',CASE WHEN json_valid(content) THEN json_extract(content,'$.reason') ELSE '' END,'',
+ CASE WHEN json_valid(content) THEN json_extract(content,'$.released_unit_revision') ELSE NULL END,accepted_revision
+ FROM artifacts WHERE workflow_id=? AND kind='unit_claim_release')`, detail.Workflow.ID, detail.Workflow.ID, detail.Workflow.ID, detail.Workflow.ID, detail.Workflow.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +403,7 @@ func coalesce(detail *Detail, units map[string]unitFact, facts map[string]record
 	return out
 }
 func transitionFor(action string) string {
-	return map[string]string{"workflow_created": "draft", "exploration_recorded": "exploring", "specification_recorded": "specifying", "design_recorded": "designing", "plan_submitted": "planning", "plan_approved": "plan_approved", "implementation_started": "implementing", "unit_completed": "ready_to_complete", "aggregate_correction_started": "implementing", "correction_authorized": "ready_to_complete", "workflow_completed": "completed", "workflow_abandoned": "abandoned"}[action]
+	return map[string]string{"workflow_created": "draft", "exploration_recorded": "exploring", "specification_recorded": "specifying", "design_recorded": "designing", "plan_submitted": "planning", "plan_approved": "plan_approved", "implementation_started": "implementing", "unit_claim_released": "implementing", "unit_completed": "ready_to_complete", "aggregate_correction_started": "implementing", "correction_authorized": "ready_to_complete", "workflow_completed": "completed", "workflow_abandoned": "abandoned"}[action]
 }
 func phase(action string) string {
 	if action == "aggregate_correction_started" {

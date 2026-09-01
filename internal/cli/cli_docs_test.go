@@ -466,6 +466,7 @@ func TestCLIReferenceProfilesExposeTheExactProductionFlagMatrix(t *testing.T) {
 		"workflow-authorize-correction": "pitcrew workflow authorize-correction --workflow-id wf-<24hex> --revision <n> --actor <actor> --input-file <path>",
 		"workflow-abandon":              "pitcrew workflow abandon --workflow-id wf-<24hex> --revision <n> --actor <actor> --reason <text>",
 		"workflow-claim-unit":           "pitcrew workflow claim-unit --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <actor> --handle-dir <dir> [--print-claim-handle-secret-once]",
+		"workflow-release-unit-claim":   "pitcrew workflow release-unit-claim --workflow-id wf-<24hex> --workflow-revision <n> --unit-id wu-<24hex> --revision <n> --actor <actor> --claim-handle <path> --reason <text>",
 		"workflow-recover-unit-claim":   "pitcrew workflow recover-unit-claim --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <actor> --handle-dir <dir>",
 		"workflow-recover-aggregate":    "pitcrew workflow recover-aggregate --workflow-id wf-<24hex> --revision <n> --actor <actor> --handle-dir <dir> (--unit-id <id>|--input-file <path>)",
 		"workflow-handoff-review":       "pitcrew workflow handoff-review --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <reviewer> --handle-dir <dir>",

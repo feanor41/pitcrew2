@@ -96,7 +96,7 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 			{"pc2-specifier", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow spec"}},
 			{"pc2-designer", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow design"}},
 			{"pc2-task-planner", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow plan"}},
-			{"pc2-implementer", []string{"--workflow-id", "wf-x", "--unit-id", "wu-x"}, []string{"workflow show", "workflow list-ready-units", "workflow claim-unit", "workflow unit-tdd", "workflow unit-complete"}},
+			{"pc2-implementer", []string{"--workflow-id", "wf-x", "--unit-id", "wu-x"}, []string{"workflow show", "workflow list-ready-units", "workflow claim-unit", "workflow release-unit-claim", "workflow unit-tdd", "workflow unit-complete"}},
 			{"pc2-reviewer", []string{"--workflow-id", "wf-x"}, []string{"workflow show", "workflow unit-review", "workflow complete"}},
 		}
 		for _, tc := range cases {

@@ -145,13 +145,13 @@ func (b Brief) WithUnit(unitProjection, coordination, aggregate history.Projecti
 		b.NextAction = "return to aion"
 		if unitProjection.Workflow.State == "implementing" && coordination.Coordination != nil && coordination.Coordination.Current != nil && coordination.Coordination.Current.ID == definition.ID {
 			switch coordination.Coordination.Current.Status {
-			case "Correction":
+			case "Correction", "Recovery":
 				b.NextAction = "workflow recover-unit-claim"
 			case "Claimed":
 				b.NextAction = "workflow unit-tdd"
 			}
 		}
-		if unitProjection.Workflow.State == "implementing" && definition.State == "pending" && b.NextAction == "return to aion" && coordination.Coordination != nil {
+		if unitProjection.Workflow.State == "implementing" && definition.State == "pending" && !unitProjection.Unit.ClaimReleasedCurrent && b.NextAction == "return to aion" && coordination.Coordination != nil {
 			for _, ready := range coordination.Coordination.Ready {
 				if ready.ID == definition.ID {
 					b.NextAction = "workflow claim-unit"
@@ -159,7 +159,11 @@ func (b Brief) WithUnit(unitProjection, coordination, aggregate history.Projecti
 			}
 		}
 	}
-	b.Context = &Context{Kind: "unit", AllowedActions: allowedActions(b.NextAction), Unit: unit}
+	allowed := allowedActions(b.NextAction)
+	if !reviewer && b.NextAction == "workflow unit-tdd" {
+		allowed = append(allowed, "workflow release-unit-claim")
+	}
+	b.Context = &Context{Kind: "unit", AllowedActions: allowed, Unit: unit}
 	return b
 }
 

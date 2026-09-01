@@ -54,6 +54,15 @@ func (s *Service) unitProjection(ctx context.Context, workflowID, unitID string)
 	} else if err != sql.ErrNoRows {
 		return UnitProjection{}, err
 	}
+	var releases int
+	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM artifacts a
+		JOIN activities released ON released.workflow_id=a.workflow_id AND released.action='unit_claim_released' AND released.subject_kind='artifact' AND released.subject_id=CAST(a.id AS TEXT)
+		WHERE a.workflow_id=? AND a.kind='unit_claim_release' AND json_valid(a.content)
+		AND json_extract(a.content,'$.unit_id')=? AND json_extract(a.content,'$.unit_revision_after')=?
+		AND NOT EXISTS (SELECT 1 FROM activities claimed WHERE claimed.workflow_id=a.workflow_id AND claimed.unit_id=? AND claimed.action='unit_claimed' AND claimed.id>released.id)`, workflowID, unitID, unit.Definition.Revision, unitID).Scan(&releases); err != nil {
+		return UnitProjection{}, err
+	}
+	unit.ClaimReleasedCurrent = releases != 0
 	return unit, nil
 }
 

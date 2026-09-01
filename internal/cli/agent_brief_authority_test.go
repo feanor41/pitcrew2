@@ -28,7 +28,7 @@ func TestAgentBriefRecoveredCorrectionClaimAuthorizesUnitTDD(t *testing.T) {
 	mustOK(t, runAtTime(t, root, recoveryTime, "workflow", "recover-unit-claim", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--handle-dir", filepath.Join(root, "recovered")))
 	afterRecovery := fullBriefAt(t, root, recoveryTime, "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID)
 	context := afterRecovery["context"].(map[string]any)
-	if afterRecovery["next_action"] != "workflow unit-tdd" || strings.Join(stringSlice(context["allowed_actions"]), ",") != "workflow unit-tdd" {
+	if afterRecovery["next_action"] != "workflow unit-tdd" || strings.Join(stringSlice(context["allowed_actions"]), ",") != "workflow unit-tdd,workflow release-unit-claim" {
 		t.Fatalf("brief after recovery=%#v", afterRecovery)
 	}
 }
@@ -125,15 +125,18 @@ func TestAgentBriefUnitAuthorityRejectsDependencyTerminalAndPathLeakage(t *testi
 			}
 		}
 	}
-	for _, tc := range []struct{ role, workflow, unit, action string }{
-		{role: "pc2-implementer", workflow: "wf-ready", unit: "wu-ready", action: "workflow claim-unit"},
-		{role: "pc2-implementer", workflow: "wf-claimed", unit: "wu-claimed", action: "workflow unit-tdd"},
+	for _, tc := range []struct{ role, workflow, unit, action, allowed string }{
+		{role: "pc2-implementer", workflow: "wf-ready", unit: "wu-ready", action: "workflow claim-unit", allowed: "workflow claim-unit"},
+		{role: "pc2-implementer", workflow: "wf-claimed", unit: "wu-claimed", action: "workflow unit-tdd", allowed: "workflow unit-tdd,workflow release-unit-claim"},
 		{role: "pc2-implementer", workflow: "wf-correction", unit: "wu-correction", action: "workflow recover-unit-claim"},
 		{role: "pc2-reviewer", workflow: "wf-reviewing", unit: "wu-reviewing", action: "workflow unit-review"},
 	} {
+		if tc.allowed == "" {
+			tc.allowed = tc.action
+		}
 		brief := fullBrief(t, root, tc.role, "--workflow-id", tc.workflow, "--unit-id", tc.unit)
 		context := brief["context"].(map[string]any)
-		if brief["next_action"] != tc.action || strings.Join(stringSlice(context["allowed_actions"]), ",") != tc.action {
+		if brief["next_action"] != tc.action || strings.Join(stringSlice(context["allowed_actions"]), ",") != tc.allowed {
 			t.Fatalf("action case %#v=%#v", tc, brief)
 		}
 	}

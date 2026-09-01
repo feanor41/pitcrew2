@@ -118,7 +118,7 @@ Concurrent Daimon availability depends on host support for addressable agents an
 | Specifier | `spec` |
 | Designer | `design` |
 | TaskPlanner | `plan` |
-| Implementer | `list-ready-units`, `claim-unit`, `unit-tdd`, `unit-complete` |
+| Implementer | `list-ready-units`, `claim-unit`, `release-unit-claim`, `unit-tdd`, `unit-complete` |
 | Reviewer | `unit-review`, `complete` |
 
 Specialists persist full content through the control plane and return only a one-line revision-bearing status or permitted opaque handle path to Aion. The Implementer returns only the implementation handle path. When unit review is selected, Aion creates independent authority with `handoff-review` and passes only the review handle path to the Reviewer; `recover-review` preserves the original reviewer identity. Handle contents never cross role boundaries.

@@ -139,8 +139,8 @@ fi
 workflow_matrix_count=$(grep -c '^| `workflow [a-z-]*` |' docs/cli-reference.md)
 workflow_profile_count=$(grep -c '^<!-- cli-docs:profile:workflow-[a-z-]*:start -->$' docs/cli-reference.md)
 workflow_anchor_count=$(grep -c '^<a id="workflow-[a-z-]*"></a>$' docs/cli-reference.md || true)
-test "$workflow_matrix_count" -eq 24 && test "$workflow_profile_count" -eq 24 && test "$workflow_anchor_count" -eq 24 || {
-  printf 'workflow docs inventory mismatch: matrix=%s profiles=%s anchors=%s expected=24\n' "$workflow_matrix_count" "$workflow_profile_count" "$workflow_anchor_count" >&2
+test "$workflow_matrix_count" -eq 25 && test "$workflow_profile_count" -eq 25 && test "$workflow_anchor_count" -eq 25 || {
+  printf 'workflow docs inventory mismatch: matrix=%s profiles=%s anchors=%s expected=25\n' "$workflow_matrix_count" "$workflow_profile_count" "$workflow_anchor_count" >&2
   exit 1
 }
 

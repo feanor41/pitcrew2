@@ -10,7 +10,7 @@ Define the closed CLI, command inputs, envelopes, errors, and caller identity se
 ### Requirement: Closed command and input contract
 
 The CLI SHALL expose only `install`, `project`, `context`, `delivery`, `principles`, `tui`,
-global `--help`/`--version`, and the 24 `workflow` commands below. Flags SHALL be
+global `--help`/`--version`, and the 25 `workflow` commands below. Flags SHALL be
 long-form. Each listed flag is required unless bracketed; `--input-file` SHALL
 name a readable regular file containing one JSON document and SHALL be the only
 transport for delivery mutations, artifacts, operational reports, plans,
@@ -43,6 +43,7 @@ evidence, reviews, and consolidation bodies.
 | `authorize-correction` | `--workflow-id <wf-id> --revision <n> --actor <label> --input-file <path>` |
 | `abandon` | `--workflow-id <wf-id> --revision <n> --actor <label> --reason <text>` |
 | `claim-unit`, `recover-unit-claim`, `handoff-review`, `recover-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --handle-dir <dir>` |
+| `release-unit-claim` | `--workflow-id <wf-id> --workflow-revision <n> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --reason <text>` |
 | `recover-aggregate` | `--workflow-id <wf-id> --revision <n> --actor <label> --handle-dir <dir>` plus exactly one of `--input-file <path>` or historical `--unit-id <wu-id>` |
 | `unit-tdd`, `unit-review` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path> --input-file <path>` |
 | `unit-complete` | `--workflow-id <wf-id> --unit-id <wu-id> --revision <n> --actor <label> --claim-handle <path>` |
