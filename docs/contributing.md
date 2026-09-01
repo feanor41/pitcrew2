@@ -29,6 +29,24 @@ and tests must use temporary project state rather than a real publication tool.
 
 ## Recoverable release operations
 
+PitCrew distinguishes two release modes:
+
+- **Quick release** is the default for an ambiguous routine request such as
+  "bump, publish a PR, merge, and install." It performs the canonical version
+  change, focused validation sufficient for that mechanical change, commit and
+  selected publication, merge when required, an exact-merged-revision build,
+  and safe local binary installation. It does not add a tag, GitHub Release,
+  packaged artifacts, full runtime refresh, or full-workflow ceremony unless
+  one of those outcomes was explicitly requested.
+- **Official release** is selected only when the requested outcome includes an
+  official release, tag, packaged artifacts, complete runtime convergence, or
+  equivalent distribution assurance. It uses the complete mapped validation,
+  publication, rollback, and convergence procedure required by that outcome.
+
+An explicit user choice overrides the default. Do not infer official-release
+scope merely from the number of version literals or touched files, and report
+the version-bump scope separately from any broader delivery scope.
+
 Project-context deployment facts are the release map only when, before any
 release-target mutation, they record every reusable fact:
 
@@ -103,6 +121,13 @@ fully satisfies the goal, material risks, and existing constraints. Only when
 selecting stronger rigor, briefly name the protected constraint and
 explain why the simpler option is insufficient in the design-bearing output.
 Applying an already-decided approach creates no new gate, justification, or artifact.
+
+Aion selects direct, delegated-direct, or full-workflow delivery through
+contextual qualitative judgment. File count is evidence, not a classifier or
+hard route boundary. Do not add a scoring model, complexity engine, or fixed
+threshold that replaces Aion's responsibility to choose the least-demanding
+sufficient route. See [Knowledge promotion](knowledge-promotion.md) for how
+durable operational learning becomes authoritative agent guidance.
 
 - Resolve project identity from the canonical Git common directory. Use only
   `<data-home>/pitcrew/projects/<project-id>/state.db`; linked worktrees share

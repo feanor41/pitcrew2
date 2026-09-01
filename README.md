@@ -147,6 +147,11 @@ The full route is deliberately explicit, but it is not a badge of quality for
 work that does not need it. PitCrew's governing question is always whether a
 less demanding route would satisfy the expected outcome equally well.
 
+Durable operating lessons are promoted explicitly into versioned PitCrew
+surfaces rather than read from an operator's personal memory at runtime. See
+[Knowledge promotion](docs/knowledge-promotion.md) for the authority,
+classification, and bounded brief-distribution model.
+
 ## Local and inspectable by design
 
 PitCrew has a deliberately narrow boundary:
