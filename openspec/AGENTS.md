@@ -123,6 +123,16 @@ Concurrent Daimon availability depends on host support for addressable agents an
 
 Specialists persist full content through the control plane and return only a one-line revision-bearing status or permitted opaque handle path to Aion. The Implementer returns only the implementation handle path. When unit review is selected, Aion creates independent authority with `handoff-review` and passes only the review handle path to the Reviewer; `recover-review` preserves the original reviewer identity. Handle contents never cross role boundaries.
 
-Routing is proportional. Aion directly implements and verifies well-understood low-risk work affecting at most three files without claiming independent approval. Simple work affecting four or more files uses pc2-implementer followed by one independent complete-change review. Complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty require the full workflow regardless of file count.
+Routing is proportional and contextual. Aion selects the least-demanding route
+that fully satisfies the outcome, material risks, and constraints:
+`direct_inline` for safe, well-understood coordinator work; `delegated_direct`
+when a bounded specialist handoff materially helps straightforward work; and
+`full_workflow` when durable exploration, specification, design, planning,
+evidence, or independent aggregate assurance is materially necessary. File
+count is evidence, never a classifier: the same count may justify different
+routes when risk or uncertainty differs, and a larger mechanical,
+already-decided change may remain direct. Stronger routing names the protected
+constraint and why the simpler route is materially insufficient. The CLI
+records Aion's selection and rationale; it does not classify work.
 
 Unit review is selective. Every full workflow ends with an independent aggregate review against requirements, specifications, design, tasks, implementation evidence, and tests. On exit 3 or 4, Aion runs `workflow show` once and never repeats an identical command against unchanged state. It may abandon an obstructive non-terminal workflow with a recorded reason, but may not forge review, bypass aggregate review, disclose handle contents or secrets, discard evidence, or mutate terminal workflows. Terminal work continues only through `workflow continue --from`.

@@ -57,6 +57,12 @@ sed 's/mutate no workflow or repository state/mutate workflow and repository sta
 expect_rejection 'removed Daimon no-mutation invariant'
 mv "$fixture_parent/brief.saved" "$contract"
 
+cp "$contract" "$fixture_parent/brief.saved"
+sed 's/file count is evidence, never a classifier/file count determines the route/' \
+  "$fixture_parent/brief.saved" >"$contract"
+expect_rejection 'replaced qualitative Aion routing with file-count classification'
+mv "$fixture_parent/brief.saved" "$contract"
+
 # Installed role bootstraps and graph are verified through a real standalone
 # install, not by duplicating installer prose in this fixture.
 installer=$fixture_root/scripts/install-templates.sh

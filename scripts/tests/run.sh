@@ -731,7 +731,7 @@ for obstruction_rule in 'On exit 3 or 4' 'inspect once' 'harness obstructs legit
   grep -F "$obstruction_rule" "$aion_file" >/dev/null || fail "Aion obstruction rule omitted $obstruction_rule"
   grep -F "$obstruction_rule" "$contract_file" >/dev/null || fail "agent contract obstruction rule omitted $obstruction_rule"
 done
-for route in 'at most three files' 'four or more files' 'risk overrides file count' 'delegated direct' 'full workflow' 'exploration: pc2-explorer' 'specification: pc2-specifier' 'design: pc2-designer' 'task planning: pc2-task-planner' 'implementation: pc2-implementer' 'aggregate review: pc2-reviewer' 'Never delegate a workflow role to General or general'; do
+for route in 'least-demanding sufficient route' 'file count is evidence, never a classifier' 'same file count may select different routes' 'larger mechanical already-decided change may remain direct' 'delegated_direct' 'full_workflow' 'protected constraint' 'exploration: pc2-explorer' 'specification: pc2-specifier' 'design: pc2-designer' 'task planning: pc2-task-planner' 'implementation: pc2-implementer' 'aggregate review: pc2-reviewer' 'Never delegate a workflow role to General or general'; do
   grep -F "$route" "$aion_file" >/dev/null || fail "Aion routing omitted $route"
   grep -F "$route" "$contract_file" >/dev/null || fail "agent contract routing omitted $route"
 done

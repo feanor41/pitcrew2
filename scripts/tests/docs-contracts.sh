@@ -85,12 +85,19 @@ require docs/cli-reference.md 'no standalone `MAXIMS.md` is deployed to the runt
 require docs/contributing.md 'nine minimal native role bootstraps'
 require docs/contributing.md 'role-scoped `pitcrew agent brief` before action'
 require docs/contributing.md 'recognized prior managed `pitcrew/agent-contract.md`'
+require docs/contributing.md 'File count is evidence, not a classifier'
+require openspec/AGENTS.md 'count is evidence, never a classifier'
+require openspec/AGENTS.md 'larger mechanical,'
+require openspec/AGENTS.md 'Stronger routing names the protected'
 require openspec/AGENTS.md '<data-home>/pitcrew/projects/<project-id>/state.db'
 require openspec/specs/event-store/spec.md 'SHA-256 of the canonical Git common-directory path'
 require openspec/specs/tui-inspection/spec.md 'central state database read-only'
 require openspec/specs/cli-surface/spec.md '`project inspect`'
 require openspec/specs/cli-surface/spec.md '`project consolidate`'
 require openspec/specs/claim-handles/spec.md '<data-home>/pitcrew/projects/<project-id>/handles/'
+require openspec/specs/tdd-and-review/spec.md 'Equal file counts permit different routes'
+require openspec/specs/tdd-and-review/spec.md 'Larger mechanical work remains direct'
+require openspec/specs/tdd-and-review/spec.md 'Bounded handoff materially helps'
 require openspec/specs/runtime-install/spec.md 'Minimal executable role bootstraps'
 require openspec/specs/runtime-install/spec.md 'SHALL NOT create `pitcrew/agent-contract.md`'
 require openspec/specs/runtime-install/spec.md 'one composite brief ordered as shared operating contract'
@@ -121,6 +128,11 @@ fi
 
 if grep -Fq 'A corrections verdict itself persists a new pending revision while the aggregate' docs/cli-reference.md; then
   echo 'CLI reference attributes aggregate recovery revision changes to the verdict' >&2
+  exit 1
+fi
+
+if grep -Eq 'at most three files|four or more files' openspec/AGENTS.md openspec/specs/tdd-and-review/spec.md; then
+  echo 'normative routing still contains deterministic file-count thresholds' >&2
   exit 1
 fi
 
