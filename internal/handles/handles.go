@@ -72,6 +72,30 @@ type IssueResult struct {
 	Secret       string
 }
 
+type ReleaseIntentRequest struct {
+	WorkflowID       string
+	WorkflowRevision int64
+	UnitID           string
+	UnitRevision     int64
+	Actor            string
+	HandlePath       string
+	Reason           string
+}
+
+type ReleaseIntentResult struct {
+	WorkflowRevision  int64  `json:"workflow_revision"`
+	UnitRevision      int64  `json:"unit_revision"`
+	UnitState         string `json:"unit_state"`
+	HandleFileRemoved bool   `json:"handle_file_removed"`
+}
+
+type unitClaimReleaseArtifact struct {
+	UnitID               string `json:"unit_id"`
+	ReleasedUnitRevision int64  `json:"released_unit_revision"`
+	UnitRevisionAfter    int64  `json:"unit_revision_after"`
+	Reason               string `json:"reason"`
+}
+
 type CorrectionGroup struct {
 	CausalInvariant string   `json:"causal_invariant"`
 	Findings        []string `json:"findings"`
@@ -153,6 +177,164 @@ func (m *Manager) RecoverReviewAt(ctx context.Context, workflowID, unitID string
 // authority; callers must use the returned handle for new TDD evidence.
 func (m *Manager) RecoverAggregateAt(ctx context.Context, workflowID, unitID string, revision int64, actor, dir string) (IssueResult, error) {
 	return m.issue(ctx, workflowID, unitID, revision, actor, dir, PurposeImplementation, true, false, activity.UnitAggregateRecovered)
+}
+
+// ReleaseIntentAt transactionally revokes a current implementation intent
+// claim. Eligibility is derived exclusively from persisted control-plane facts.
+func (m *Manager) ReleaseIntentAt(ctx context.Context, request ReleaseIntentRequest) (ReleaseIntentResult, error) {
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.Reason == "" || utf8.RuneCountInString(request.Reason) > 1024 {
+		return ReleaseIntentResult{}, fmt.Errorf("%w: release reason must contain 1 to 1024 runes", ErrInvalidState)
+	}
+	if strings.TrimSpace(request.Actor) == "" {
+		return ReleaseIntentResult{}, ErrIdentityCollision
+	}
+	h, err := readSecure(request.HandlePath)
+	if err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if h.WorkflowID != request.WorkflowID || h.UnitID != request.UnitID || h.State != Intent {
+		return ReleaseIntentResult{}, ErrInvalid
+	}
+
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	defer tx.Rollback()
+	var workflowState string
+	var workflowRevision int64
+	if err = tx.QueryRowContext(ctx, `SELECT state,revision FROM workflows WHERE id=?`, request.WorkflowID).Scan(&workflowState, &workflowRevision); err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if workflowRevision != request.WorkflowRevision {
+		return ReleaseIntentResult{}, store.ErrCASMismatch
+	}
+	if workflowState != "implementing" {
+		return ReleaseIntentResult{}, fmt.Errorf("%w: current workflow state %s; expected implementing", ErrInvalidState, workflowState)
+	}
+	var unitState string
+	var unitRevision int64
+	if err = tx.QueryRowContext(ctx, `SELECT state,revision FROM work_units WHERE workflow_id=? AND id=?`, request.WorkflowID, request.UnitID).Scan(&unitState, &unitRevision); err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if unitRevision != request.UnitRevision {
+		return ReleaseIntentResult{}, store.ErrCASMismatch
+	}
+	if unitState != "pending" {
+		return ReleaseIntentResult{}, fmt.Errorf("%w: current unit state %s; expected pending", ErrInvalidState, unitState)
+	}
+
+	var dbState State
+	var hash, owner, expires string
+	var purpose Purpose
+	var generation, latestGeneration int
+	err = tx.QueryRowContext(ctx, `SELECT state,secret_hash,actor_identity,expires_at,claim_generation,purpose FROM handles WHERE claim_id=? AND workflow_id=? AND unit_id=?`, h.ClaimID, request.WorkflowID, request.UnitID).
+		Scan(&dbState, &hash, &owner, &expires, &generation, &purpose)
+	if errors.Is(err, sql.ErrNoRows) || dbState == "revoked" {
+		return ReleaseIntentResult{}, ErrInvalid
+	}
+	if err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if purpose != PurposeImplementation || dbState != Intent || hash != h.SecretHash || expires != h.ExpiresAt {
+		return ReleaseIntentResult{}, ErrInvalid
+	}
+	if owner != request.Actor {
+		return ReleaseIntentResult{}, ErrIdentityCollision
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(claim_generation),0) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='implementation'`, request.WorkflowID, request.UnitID).Scan(&latestGeneration); err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if generation != latestGeneration {
+		return ReleaseIntentResult{}, ErrInvalid
+	}
+	expiresAt, parseErr := time.Parse(timestampLayout, expires)
+	if parseErr != nil {
+		return ReleaseIntentResult{}, ErrInvalid
+	}
+	if !m.now().Before(expiresAt) {
+		return ReleaseIntentResult{}, ErrExpired
+	}
+	var controlPlaneFacts int
+	if err = tx.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM evidence WHERE workflow_id=? AND unit_id=? AND revision=?)+
+		(SELECT count(*) FROM reviews WHERE workflow_id=? AND unit_id=? AND revision=?)+
+		(SELECT count(*) FROM verification_records WHERE workflow_id=? AND unit_id=? AND unit_revision=?)+
+		(SELECT count(*) FROM activities fact
+			WHERE fact.workflow_id=? AND fact.unit_id=?
+			AND fact.action IN ('unit_tdd_recorded','unit_review_handed_off','unit_review_recovered','unit_review_recorded','unit_completed')
+			AND fact.id > coalesce((SELECT max(claimed.id) FROM activities claimed
+				WHERE claimed.workflow_id=fact.workflow_id AND claimed.unit_id=fact.unit_id
+				AND claimed.action IN ('unit_claimed','unit_claim_recovered','unit_aggregate_recovered')),0))`,
+		request.WorkflowID, request.UnitID, request.UnitRevision,
+		request.WorkflowID, request.UnitID, request.UnitRevision,
+		request.WorkflowID, request.UnitID, request.UnitRevision,
+		request.WorkflowID, request.UnitID).Scan(&controlPlaneFacts); err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if controlPlaneFacts != 0 {
+		return ReleaseIntentResult{}, fmt.Errorf("%w: implementation facts already exist", ErrInvalidState)
+	}
+
+	updated, err := tx.ExecContext(ctx, `UPDATE handles SET state='revoked' WHERE claim_id=? AND workflow_id=? AND unit_id=? AND purpose='implementation' AND state='intent' AND claim_generation=?`, h.ClaimID, request.WorkflowID, request.UnitID, generation)
+	if err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if changed, changeErr := updated.RowsAffected(); changeErr != nil || changed != 1 {
+		if changeErr != nil {
+			return ReleaseIntentResult{}, changeErr
+		}
+		return ReleaseIntentResult{}, store.ErrCASMismatch
+	}
+	updated, err = tx.ExecContext(ctx, `UPDATE work_units SET revision=revision+1 WHERE workflow_id=? AND id=? AND state='pending' AND revision=?`, request.WorkflowID, request.UnitID, request.UnitRevision)
+	if err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if changed, changeErr := updated.RowsAffected(); changeErr != nil || changed != 1 {
+		if changeErr != nil {
+			return ReleaseIntentResult{}, changeErr
+		}
+		return ReleaseIntentResult{}, store.ErrCASMismatch
+	}
+	now := m.now()
+	at := ids.FormatTime(now)
+	updated, err = tx.ExecContext(ctx, `UPDATE workflows SET revision=revision+1,updated_at=? WHERE id=? AND state='implementing' AND revision=?`, at, request.WorkflowID, request.WorkflowRevision)
+	if err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if changed, changeErr := updated.RowsAffected(); changeErr != nil || changed != 1 {
+		if changeErr != nil {
+			return ReleaseIntentResult{}, changeErr
+		}
+		return ReleaseIntentResult{}, store.ErrCASMismatch
+	}
+	body, err := json.Marshal(unitClaimReleaseArtifact{request.UnitID, request.UnitRevision, request.UnitRevision + 1, request.Reason})
+	if err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,'unit_claim_release',?,?,?,?)`, request.WorkflowID, string(body), request.Actor, request.WorkflowRevision+1, at)
+	if err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	artifactID, err := inserted.LastInsertId()
+	if err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO events(workflow_id,from_state,to_state,actor,reason,revision_after,at) VALUES(?,'implementing','implementing',?,'unit_claim_released',?,?)`, request.WorkflowID, request.Actor, request.WorkflowRevision+1, at); err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if err = activity.AppendTx(ctx, tx, activity.New(request.WorkflowID, request.UnitID, activity.UnitClaimReleased, request.Actor, now, activity.ArtifactSubject(artifactID))); err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return ReleaseIntentResult{}, err
+	}
+	removed := true
+	if err = os.Remove(request.HandlePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		removed = false
+	}
+	return ReleaseIntentResult{WorkflowRevision: request.WorkflowRevision + 1, UnitRevision: request.UnitRevision + 1, UnitState: "pending", HandleFileRemoved: removed}, nil
 }
 
 // RecoverAggregateBatchAt atomically reopens one bounded causal correction batch.
@@ -507,22 +689,43 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 			return IssueResult{}, err
 		}
 	} else if existing != 0 {
-		if action != activity.UnitReviewHandedOff {
+		if purpose == PurposeImplementation {
+			var live int
+			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='implementation' AND state!='revoked'`, workflowID, unitID).Scan(&live); err != nil {
+				return IssueResult{}, err
+			}
+			if live != 0 {
+				return IssueResult{}, ErrAlreadyClaimed
+			}
+			var releasedCurrent int
+			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM artifacts a
+				JOIN activities released ON released.workflow_id=a.workflow_id AND released.action='unit_claim_released' AND released.subject_kind='artifact' AND released.subject_id=CAST(a.id AS TEXT)
+				WHERE a.workflow_id=? AND a.kind='unit_claim_release' AND json_valid(a.content)
+				AND json_extract(a.content,'$.unit_id')=? AND json_extract(a.content,'$.unit_revision_after')=?
+				AND NOT EXISTS (SELECT 1 FROM activities claimed WHERE claimed.workflow_id=a.workflow_id AND claimed.unit_id=? AND claimed.action='unit_claimed' AND claimed.id>released.id)`, workflowID, unitID, unitRevision, unitID).Scan(&releasedCurrent); err != nil {
+				return IssueResult{}, err
+			}
+			if releasedCurrent == 0 {
+				return IssueResult{}, ErrAlreadyClaimed
+			}
+		} else if action != activity.UnitReviewHandedOff {
 			return IssueResult{}, ErrAlreadyClaimed
 		}
-		var live, previousCorrections int
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review' AND state!='revoked'`, workflowID, unitID).Scan(&live); err != nil {
-			return IssueResult{}, err
-		}
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews WHERE workflow_id=? AND unit_id=? AND revision=? AND verdict='corrections'`, workflowID, unitID, unitRevision-1).Scan(&previousCorrections); err != nil {
-			return IssueResult{}, err
-		}
-		var latestHandoff, previousReview int64
-		if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(CASE WHEN action='unit_review_handed_off' THEN id END),0),coalesce(max(CASE WHEN action='unit_review_recorded' AND subject_id=? THEN id END),0) FROM activities WHERE workflow_id=? AND unit_id=?`, fmt.Sprintf("%s@%d", unitID, unitRevision-1), workflowID, unitID).Scan(&latestHandoff, &previousReview); err != nil {
-			return IssueResult{}, err
-		}
-		if live != 0 || previousCorrections != 1 || previousReview <= latestHandoff {
-			return IssueResult{}, ErrAlreadyClaimed
+		if purpose == PurposeReview {
+			var live, previousCorrections int
+			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM handles WHERE workflow_id=? AND unit_id=? AND purpose='review' AND state!='revoked'`, workflowID, unitID).Scan(&live); err != nil {
+				return IssueResult{}, err
+			}
+			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews WHERE workflow_id=? AND unit_id=? AND revision=? AND verdict='corrections'`, workflowID, unitID, unitRevision-1).Scan(&previousCorrections); err != nil {
+				return IssueResult{}, err
+			}
+			var latestHandoff, previousReview int64
+			if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(CASE WHEN action='unit_review_handed_off' THEN id END),0),coalesce(max(CASE WHEN action='unit_review_recorded' AND subject_id=? THEN id END),0) FROM activities WHERE workflow_id=? AND unit_id=?`, fmt.Sprintf("%s@%d", unitID, unitRevision-1), workflowID, unitID).Scan(&latestHandoff, &previousReview); err != nil {
+				return IssueResult{}, err
+			}
+			if live != 0 || previousCorrections != 1 || previousReview <= latestHandoff {
+				return IssueResult{}, ErrAlreadyClaimed
+			}
 		}
 	}
 	if err = prepareDirectory(dir); err != nil {

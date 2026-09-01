@@ -43,9 +43,10 @@ type UnitReview struct {
 }
 
 type UnitProjection struct {
-	Definition UnitDefinition `json:"definition"`
-	Evidence   *UnitEvidence  `json:"evidence,omitempty"`
-	Review     *UnitReview    `json:"review,omitempty"`
+	Definition           UnitDefinition `json:"definition"`
+	Evidence             *UnitEvidence  `json:"evidence,omitempty"`
+	Review               *UnitReview    `json:"review,omitempty"`
+	ClaimReleasedCurrent bool           `json:"-"`
 }
 
 type PlanProjection struct {

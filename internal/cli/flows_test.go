@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fmazzalomo/pitcrew/internal/handles"
 	"github.com/fmazzalomo/pitcrew/internal/history"
 	"github.com/fmazzalomo/pitcrew/internal/project"
 	"github.com/fmazzalomo/pitcrew/internal/store"
@@ -95,6 +96,123 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 	got, subjects := storedActivities(t, root, wfID)
 	if strings.Join(got, ",") != strings.Join(wantActions, ",") || strings.Join(subjects, ",") != strings.Join(wantSubjects, ",") {
 		t.Fatalf("activities=%v want=%v", got, wantActions)
+	}
+}
+
+func TestReleaseUnitClaimRestoresReadyFlowWithoutLeakingAuthority(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, workflowRev := setupImplementingUnit(t, root)
+	claim := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--handle-dir", filepath.Join(root, "handles")))
+	handlePath := stringField(t, claim, "handle_path")
+
+	released := mustOK(t, runAt(t, root, "workflow", "release-unit-claim",
+		"--workflow-id", wfID, "--workflow-revision", itoa(workflowRev), "--unit-id", unitID, "--revision", "1",
+		"--actor", "implementer", "--claim-handle", handlePath, "--reason", "reassign bounded work"))
+	if !strings.Contains(string(released), `"workflow_revision":8`) || !strings.Contains(string(released), `"unit_revision":2`) ||
+		!strings.Contains(string(released), `"unit_state":"pending"`) || !strings.Contains(string(released), `"next_action":"return to aion"`) {
+		t.Fatalf("release=%s", released)
+	}
+	if strings.Contains(string(released), handlePath) || strings.Contains(string(released), "claim_id") || strings.Contains(string(released), "secret") {
+		t.Fatalf("release leaked authority: %s", released)
+	}
+	ready := mustOK(t, runAt(t, root, "workflow", "list-ready-units", "--workflow-id", wfID))
+	if !strings.Contains(string(ready), unitID) {
+		t.Fatalf("released unit is not ready: %s", ready)
+	}
+	postRelease := fullBrief(t, root, "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID)
+	postContext := postRelease["context"].(map[string]any)
+	if postRelease["next_action"] != "return to aion" || len(stringSlice(postContext["allowed_actions"])) != 0 {
+		t.Fatalf("released authority remained in brief: %#v", postRelease)
+	}
+	shown := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID, "--view", "audit"))
+	if strings.Count(string(shown), `"Activity":"unit_claim_released"`) != 1 || strings.Contains(string(shown), handlePath) || strings.Contains(string(shown), "secret_hash") {
+		t.Fatalf("release history is not singular and sanitized: %s", shown)
+	}
+
+	replay := runAt(t, root, "workflow", "release-unit-claim", "--workflow-id", wfID, "--workflow-revision", "8", "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--claim-handle", handlePath, "--reason", "replay")
+	if replay.code != 5 || replay.stdout != "" {
+		t.Fatalf("replay=%#v", replay)
+	}
+	second := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--handle-dir", filepath.Join(root, "handles-2")))
+	if stringField(t, second, "handle_path") == "" {
+		t.Fatal("reclaim omitted handle path")
+	}
+	// Brief projection uses its wall clock rather than the injected CLI test
+	// clock, so keep this synthetic claim live for the authority assertion.
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.DB().Exec(`UPDATE handles SET expires_at='2099-08-31T10:00:00Z' WHERE workflow_id=? AND unit_id=? AND claim_generation=2`, wfID, unitID)
+	_ = s.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed := fullBrief(t, root, "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID)
+	allowed := strings.Join(stringSlice(claimed["context"].(map[string]any)["allowed_actions"]), ",")
+	if claimed["next_action"] != "workflow unit-tdd" || allowed != "workflow unit-tdd,workflow release-unit-claim" {
+		t.Fatalf("reclaimed authority=%#v", claimed)
+	}
+}
+
+func TestReleasedReclaimRequiresRecoveryAfterRevocationOrExpiry(t *testing.T) {
+	for _, mode := range []string{"explicit revoke", "expiry"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			wfID, unitID, workflowRev := setupImplementingUnit(t, root)
+			first := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--handle-dir", filepath.Join(root, "first")))
+			mustOK(t, runAt(t, root, "workflow", "release-unit-claim",
+				"--workflow-id", wfID, "--workflow-revision", itoa(workflowRev), "--unit-id", unitID, "--revision", "1",
+				"--actor", "implementer", "--claim-handle", stringField(t, first, "handle_path"), "--reason", "reassign bounded work"))
+			reclaimed := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--handle-dir", filepath.Join(root, "reclaimed")))
+			reclaimedPath := stringField(t, reclaimed, "handle_path")
+
+			switch mode {
+			case "explicit revoke":
+				s, err := store.Open(context.Background(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				manager := handles.New(s, func() time.Time { return time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC) }, nil)
+				if err = manager.Revoke(context.Background(), reclaimedPath, "implementer"); err != nil {
+					s.Close()
+					t.Fatal(err)
+				}
+				if err = s.Close(); err != nil {
+					t.Fatal(err)
+				}
+			case "expiry":
+				tdd := writeInput(t, root, "expired-reclaim-tdd.json", `{"red_command":"red","red_outcome":"exit 1","green_command":"green","green_outcome":"exit 0","refactor_summary":"","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)
+				expired := runAtTime(t, root, time.Date(2026, 8, 20, 15, 16, 0, 0, time.UTC), "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--claim-handle", reclaimedPath, "--input-file", tdd)
+				if expired.code != 5 || expired.stdout != "" {
+					t.Fatalf("expiry=%#v", expired)
+				}
+			}
+
+			ordinary := runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--handle-dir", filepath.Join(root, "ordinary"))
+			if ordinary.code != 3 || ordinary.stdout != "" {
+				t.Fatalf("ordinary reclaim after %s=%#v", mode, ordinary)
+			}
+			shown := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID, "--view", "coordination"))
+			var projection struct {
+				Data history.Projection `json:"data"`
+			}
+			if err := json.Unmarshal(shown, &projection); err != nil {
+				t.Fatal(err)
+			}
+			current := projection.Data.Coordination.Current
+			if current == nil || current.ID != unitID || current.Status != "Recovery" || len(projection.Data.Coordination.Ready) != 0 {
+				t.Fatalf("coordination after %s=%s", mode, shown)
+			}
+			brief := fullBrief(t, root, "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID)
+			if brief["next_action"] != "workflow recover-unit-claim" || strings.Join(stringSlice(brief["context"].(map[string]any)["allowed_actions"]), ",") != "workflow recover-unit-claim" {
+				t.Fatalf("brief after %s=%#v", mode, brief)
+			}
+			recovered := mustOK(t, runAt(t, root, "workflow", "recover-unit-claim", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "2", "--actor", "implementer", "--handle-dir", filepath.Join(root, "recovery")))
+			if stringField(t, recovered, "handle_path") == "" {
+				t.Fatalf("recovery after %s omitted handle path", mode)
+			}
+		})
 	}
 }
 

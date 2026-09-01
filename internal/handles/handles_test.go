@@ -68,6 +68,195 @@ func TestIssueWritesOpaqueIntentHandleWithStrictOwnershipAndModes(t *testing.T) 
 	}
 }
 
+func TestReleaseIntentAtAtomicallyRestoresReadyAuthority(t *testing.T) {
+	m, db, _, wfID, unitID := testManager(t)
+	issued, err := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "handles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := m.ReleaseIntentAt(context.Background(), ReleaseIntentRequest{
+		WorkflowID: wfID, WorkflowRevision: 1, UnitID: unitID, UnitRevision: 1,
+		Actor: "implementer", HandlePath: issued.Path, Reason: "reassign bounded work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WorkflowRevision != 2 || result.UnitRevision != 2 || result.UnitState != "pending" || !result.HandleFileRemoved {
+		t.Fatalf("result=%#v", result)
+	}
+	if _, err = os.Stat(issued.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("released handle file remains: %v", err)
+	}
+
+	var workflowRevision, unitRevision int64
+	var workflowState, unitState, handleState string
+	if err = db.DB().QueryRow(`SELECT revision,state FROM workflows WHERE id=?`, wfID).Scan(&workflowRevision, &workflowState); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.DB().QueryRow(`SELECT revision,state FROM work_units WHERE workflow_id=? AND id=?`, wfID, unitID).Scan(&unitRevision, &unitState); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.DB().QueryRow(`SELECT state FROM handles WHERE claim_id=?`, issued.ClaimID).Scan(&handleState); err != nil {
+		t.Fatal(err)
+	}
+	if workflowRevision != 2 || workflowState != "implementing" || unitRevision != 2 || unitState != "pending" || handleState != "revoked" {
+		t.Fatalf("workflow=%s@%d unit=%s@%d handle=%s", workflowState, workflowRevision, unitState, unitRevision, handleState)
+	}
+	var artifactBody, eventReason, action, subjectKind, subjectID string
+	if err = db.DB().QueryRow(`SELECT content FROM artifacts WHERE workflow_id=? AND kind='unit_claim_release'`, wfID).Scan(&artifactBody); err != nil {
+		t.Fatal(err)
+	}
+	if artifactBody != `{"unit_id":"wu-000000000000000000000001","released_unit_revision":1,"unit_revision_after":2,"reason":"reassign bounded work"}` {
+		t.Fatalf("artifact=%s", artifactBody)
+	}
+	if err = db.DB().QueryRow(`SELECT reason FROM events WHERE workflow_id=? AND revision_after=2`, wfID).Scan(&eventReason); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.DB().QueryRow(`SELECT action,subject_kind,subject_id FROM activities WHERE workflow_id=? ORDER BY id DESC LIMIT 1`, wfID).Scan(&action, &subjectKind, &subjectID); err != nil {
+		t.Fatal(err)
+	}
+	if eventReason != "unit_claim_released" || action != "unit_claim_released" || subjectKind != "artifact" || subjectID == "" {
+		t.Fatalf("event=%q activity=%s/%s/%s", eventReason, action, subjectKind, subjectID)
+	}
+	if _, err = m.ReleaseIntentAt(context.Background(), ReleaseIntentRequest{WorkflowID: wfID, WorkflowRevision: 2, UnitID: unitID, UnitRevision: 2, Actor: "implementer", HandlePath: issued.Path, Reason: "replay"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("replay error=%v", err)
+	}
+}
+
+func TestReleaseIntentAtRejectsIneligibleFactsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *store.Store, *mutableClock, string, string, IssueResult)
+		change func(*ReleaseIntentRequest)
+		want   error
+	}{
+		{name: "wrong owner", change: func(r *ReleaseIntentRequest) { r.Actor = "other" }, want: ErrIdentityCollision},
+		{name: "stale workflow", change: func(r *ReleaseIntentRequest) { r.WorkflowRevision = 2 }, want: store.ErrCASMismatch},
+		{name: "stale unit", change: func(r *ReleaseIntentRequest) { r.UnitRevision = 2 }, want: store.ErrCASMismatch},
+		{name: "expired", mutate: func(_ *testing.T, _ *store.Store, c *mutableClock, _, _ string, _ IssueResult) {
+			c.advance(16 * time.Minute)
+		}, want: ErrExpired},
+		{name: "active", mutate: func(t *testing.T, s *store.Store, _ *mutableClock, _, _ string, issued IssueResult) {
+			if _, err := s.DB().Exec(`UPDATE handles SET state='active' WHERE claim_id=?`, issued.ClaimID); err != nil {
+				t.Fatal(err)
+			}
+			var h Handle
+			data, _ := os.ReadFile(issued.Path)
+			if err := json.Unmarshal(data, &h); err != nil {
+				t.Fatal(err)
+			}
+			h.State = Active
+			if err := writeAtomic(issued.Path, h); err != nil {
+				t.Fatal(err)
+			}
+		}, want: ErrInvalid},
+		{name: "current evidence", mutate: func(t *testing.T, s *store.Store, _ *mutableClock, wf, unit string, _ IssueResult) {
+			_, err := s.DB().Exec(`INSERT INTO evidence(workflow_id,unit_id,revision,red_command,red_outcome,green_command,green_outcome,refactor_summary,validation_command,validation_outcome,changed_paths,actor,recorded_at) VALUES(?,?,1,'red','exit 1','green','exit 0','','all','exit 0','internal','implementer','now')`, wf, unit)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}, want: ErrInvalidState},
+		{name: "durable implementation activity after claim", mutate: func(t *testing.T, s *store.Store, _ *mutableClock, wf, unit string, _ IssueResult) {
+			_, err := s.DB().Exec(`INSERT INTO activities(workflow_id,unit_id,action,actor,at,subject_kind,subject_id) VALUES(?,?,'unit_tdd_recorded','implementer','now','evidence',?)`, wf, unit, unit+"@1")
+			if err != nil {
+				t.Fatal(err)
+			}
+		}, want: ErrInvalidState},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m, s, clock, wfID, unitID := testManager(t)
+			issued, err := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "handles"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(issued.Path)
+			if tc.mutate != nil {
+				tc.mutate(t, s, clock, wfID, unitID, issued)
+			}
+			request := ReleaseIntentRequest{WorkflowID: wfID, WorkflowRevision: 1, UnitID: unitID, UnitRevision: 1, Actor: "implementer", HandlePath: issued.Path, Reason: "reassign"}
+			if tc.change != nil {
+				tc.change(&request)
+			}
+			if _, err = m.ReleaseIntentAt(context.Background(), request); !errors.Is(err, tc.want) {
+				t.Fatalf("error=%v want %v", err, tc.want)
+			}
+			var wfRev, unitRev int64
+			var handleState string
+			_ = s.DB().QueryRow(`SELECT revision FROM workflows WHERE id=?`, wfID).Scan(&wfRev)
+			_ = s.DB().QueryRow(`SELECT revision FROM work_units WHERE workflow_id=? AND id=?`, wfID, unitID).Scan(&unitRev)
+			_ = s.DB().QueryRow(`SELECT state FROM handles WHERE claim_id=?`, issued.ClaimID).Scan(&handleState)
+			after, readErr := os.ReadFile(issued.Path)
+			if wfRev != 1 || unitRev != 1 || handleState == "revoked" || readErr != nil || len(after) == 0 || len(before) == 0 {
+				t.Fatalf("mutation wf=%d unit=%d handle=%s file=%v", wfRev, unitRev, handleState, readErr)
+			}
+		})
+	}
+}
+
+func TestReleaseIntentAtActivityFailureRollsBackEveryDurableEffect(t *testing.T) {
+	m, s, _, wfID, unitID := testManager(t)
+	issued, err := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "handles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB().Exec(`CREATE TRIGGER reject_release_activity BEFORE INSERT ON activities WHEN NEW.action='unit_claim_released' BEGIN SELECT RAISE(ABORT,'reject release'); END`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.ReleaseIntentAt(context.Background(), ReleaseIntentRequest{WorkflowID: wfID, WorkflowRevision: 1, UnitID: unitID, UnitRevision: 1, Actor: "implementer", HandlePath: issued.Path, Reason: "reassign"})
+	if err == nil {
+		t.Fatal("activity failure was accepted")
+	}
+	var wfRev, unitRev int64
+	var handleState string
+	var artifacts, events int
+	_ = s.DB().QueryRow(`SELECT revision FROM workflows WHERE id=?`, wfID).Scan(&wfRev)
+	_ = s.DB().QueryRow(`SELECT revision FROM work_units WHERE workflow_id=? AND id=?`, wfID, unitID).Scan(&unitRev)
+	_ = s.DB().QueryRow(`SELECT state FROM handles WHERE claim_id=?`, issued.ClaimID).Scan(&handleState)
+	_ = s.DB().QueryRow(`SELECT count(*) FROM artifacts WHERE workflow_id=? AND kind='unit_claim_release'`, wfID).Scan(&artifacts)
+	_ = s.DB().QueryRow(`SELECT count(*) FROM events WHERE workflow_id=? AND reason='unit_claim_released'`, wfID).Scan(&events)
+	if wfRev != 1 || unitRev != 1 || handleState != "intent" || artifacts != 0 || events != 0 {
+		t.Fatalf("wf=%d unit=%d handle=%s artifacts=%d events=%d", wfRev, unitRev, handleState, artifacts, events)
+	}
+	if _, err = os.Stat(issued.Path); err != nil {
+		t.Fatalf("claim file changed: %v", err)
+	}
+}
+
+func TestReleaseAuthorizationIsConsumedByImmediateReclaim(t *testing.T) {
+	m, s, clock, wfID, unitID := testManager(t)
+	dir := filepath.Join(t.TempDir(), "handles")
+	first, err := m.Issue(context.Background(), wfID, unitID, "implementer", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.ReleaseIntentAt(context.Background(), ReleaseIntentRequest{WorkflowID: wfID, WorkflowRevision: 1, UnitID: unitID, UnitRevision: 1, Actor: "implementer", HandlePath: first.Path, Reason: "reassign"}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.IssueAt(context.Background(), wfID, unitID, 2, "implementer", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(16 * time.Minute)
+	if _, err = m.UseFor(context.Background(), second.Path, wfID, unitID, 2, "implementer", TDD); !errors.Is(err, ErrExpired) {
+		t.Fatalf("expire immediate reclaim: %v", err)
+	}
+	if _, err = m.IssueAt(context.Background(), wfID, unitID, 2, "implementer", dir); !errors.Is(err, ErrAlreadyClaimed) {
+		t.Fatalf("reused release authorization: %v", err)
+	}
+	var handles, claims int
+	if err = s.DB().QueryRow(`SELECT count(*) FROM handles WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&handles); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB().QueryRow(`SELECT count(*) FROM activities WHERE workflow_id=? AND unit_id=? AND action='unit_claimed'`, wfID, unitID).Scan(&claims); err != nil {
+		t.Fatal(err)
+	}
+	if handles != 2 || claims != 2 {
+		t.Fatalf("handles=%d claims=%d", handles, claims)
+	}
+}
+
 func TestIssueRequiresImplementationToBeginWithoutHandleEffects(t *testing.T) {
 	m, db, _, wfID, unitID := testManager(t)
 	if _, err := db.DB().Exec(`UPDATE workflows SET state='plan_approved' WHERE id=?`, wfID); err != nil {

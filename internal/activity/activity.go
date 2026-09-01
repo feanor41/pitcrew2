@@ -37,6 +37,7 @@ const (
 	WorkflowAbandoned          Action      = "workflow_abandoned"
 	UnitClaimed                Action      = "unit_claimed"
 	UnitClaimRecovered         Action      = "unit_claim_recovered"
+	UnitClaimReleased          Action      = "unit_claim_released"
 	UnitTDDRecorded            Action      = "unit_tdd_recorded"
 	UnitReviewHandedOff        Action      = "unit_review_handed_off"
 	UnitReviewRecovered        Action      = "unit_review_recovered"
@@ -64,7 +65,7 @@ var (
 	allowed    = map[Action]SubjectKind{
 		WorkflowCreated: Workflow, ExplorationRecorded: Artifact, SpecificationRecorded: Artifact, DesignRecorded: Artifact,
 		PlanSubmitted: Plan, PlanApproved: Plan, ImplementationStarted: Event, WorkflowCompleted: Event,
-		WorkflowAbandoned: Event, UnitClaimed: WorkUnit, UnitClaimRecovered: WorkUnit, UnitTDDRecorded: Evidence, UnitReviewHandedOff: WorkUnit, UnitReviewRecovered: WorkUnit,
+		WorkflowAbandoned: Event, UnitClaimed: WorkUnit, UnitClaimRecovered: WorkUnit, UnitClaimReleased: Artifact, UnitTDDRecorded: Evidence, UnitReviewHandedOff: WorkUnit, UnitReviewRecovered: WorkUnit,
 		UnitReviewRecorded: Review, UnitCompleted: WorkUnit, UnitAggregateRecovered: WorkUnit, AggregateReviewRecorded: Artifact, AggregateCorrectionStarted: Artifact, CorrectionAuthorized: Artifact, ContinuationRecorded: Artifact, ProgressRecorded: Artifact, CapabilityRequested: Artifact,
 	}
 )
@@ -90,7 +91,7 @@ func AppendTx(ctx context.Context, tx *sql.Tx, e Entry) error {
 	if !workflowID.MatchString(e.WorkflowID) || strings.TrimSpace(e.Actor) == "" || e.At == "" || allowed[e.Action] != e.Subject.Kind || !validSubject(e.Subject) {
 		return fmt.Errorf("invalid activity")
 	}
-	requiresUnit := e.Subject.Kind == WorkUnit || e.Subject.Kind == Evidence || e.Subject.Kind == Review
+	requiresUnit := e.Subject.Kind == WorkUnit || e.Subject.Kind == Evidence || e.Subject.Kind == Review || e.Action == UnitClaimReleased
 	if requiresUnit != (e.UnitID != "") || (e.UnitID != "" && !unitID.MatchString(e.UnitID)) {
 		return fmt.Errorf("invalid activity unit")
 	}

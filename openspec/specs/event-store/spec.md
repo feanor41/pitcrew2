@@ -6,6 +6,17 @@ Define central per-project SQLite persistence, durable records, migrations, and 
 
 ## Requirements
 
+### Requirement: Durable claim-release fact
+
+An eligible `release-unit-claim` SHALL append exactly one structured
+`unit_claim_release` artifact, one `implementing -> implementing` event with
+constant reason `unit_claim_released`, and one unit-scoped
+`unit_claim_released` activity pointing to that artifact in the same transaction
+that revokes authority and advances revisions. History SHALL coalesce these into
+one semantic occurrence showing only the unit, actor, released attempt, bounded
+reason, and resulting revision; it SHALL NOT persist or project a handle path,
+claim id, hash, expiry, secret, or raw handle payload.
+
 ### Requirement: Additive economical direct traces
 
 The central store SHALL persist direct inline and delegated direct deliveries in

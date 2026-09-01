@@ -235,7 +235,7 @@ func contracts() map[string]StableContract {
 		"pc2-specifier":       specialist("pc2-specifier", "Specifier", "workflow context required; no unit context", "write executable requirements and scenarios for the accepted workflow", []string{"workflow show", "workflow spec"}),
 		"pc2-designer":        specialist("pc2-designer", "Designer", "workflow context required; no unit context", "design the accepted workflow proportionally from repository evidence", []string{"workflow show", "workflow design"}),
 		"pc2-task-planner":    specialist("pc2-task-planner", "Task Planner", "workflow context required; no unit context", "create short dependency-ordered work units with explicit coverage", []string{"workflow show", "workflow plan"}),
-		"pc2-implementer":     specialist("pc2-implementer", "Implementer", "workflow and unit context required", "implement one claimed unit with current TDD evidence", []string{"workflow show", "workflow list-ready-units", "workflow claim-unit", "workflow unit-tdd", "workflow unit-complete"}),
+		"pc2-implementer":     specialist("pc2-implementer", "Implementer", "workflow and unit context required", "implement one claimed unit with current TDD evidence", []string{"workflow show", "workflow list-ready-units", "workflow claim-unit", "workflow release-unit-claim", "workflow unit-tdd", "workflow unit-complete"}),
 		"pc2-reviewer":        specialist("pc2-reviewer", "Reviewer", "workflow context required; optional unit context", "independently review one unit or the aggregate result", []string{"workflow show", "workflow unit-review", "workflow complete"}),
 	}
 }

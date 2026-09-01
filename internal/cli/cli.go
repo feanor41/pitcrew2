@@ -394,7 +394,7 @@ func runPrinciples(args []string, deps Dependencies) int {
 	return 0
 }
 
-var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "request-capability": true, "explore": true, "spec": true, "design": true, "plan": true, "amend-plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "authorize-correction": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "recover-aggregate": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
+var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "request-capability": true, "explore": true, "spec": true, "design": true, "plan": true, "amend-plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "authorize-correction": true, "abandon": true, "claim-unit": true, "release-unit-claim": true, "recover-unit-claim": true, "recover-aggregate": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
 var workflowIDPattern = regexp.MustCompile(`^wf-[0-9a-f]{24}$`)
 var deliveryIDPattern = regexp.MustCompile(`^(dl|wf)-[0-9a-f]{24}$`)
 var roadmapIDPattern = regexp.MustCompile(`^rm-[0-9a-f]{24}$`)
@@ -701,6 +701,8 @@ func runWorkflow(args []string, deps Dependencies) int {
 		return runRecoverAggregate(rest, deps)
 	case "claim-unit", "recover-unit-claim", "recover-review":
 		return runClaim(command, rest, deps)
+	case "release-unit-claim":
+		return runReleaseUnitClaim(rest, deps)
 	case "handoff-review":
 		return runHandoffReview(rest, deps)
 	case "unit-tdd":
@@ -860,7 +862,7 @@ func runWorkflowShow(args []string, deps Dependencies) int {
 		if err != nil {
 			return err
 		}
-		return writeSuccess(deps, map[string]any{"workflow": current, "synopsis": detail.Synopsis, "artifacts": artifacts, "records": detail.Records, "timeline": detail.Timeline}, detail.Synopsis.NextAction)
+		return writeSuccess(deps, map[string]any{"workflow": current, "synopsis": detail.Synopsis, "artifacts": artifacts, "records": detail.Records, "timeline": detail.Timeline, "occurrences": detail.Occurrences}, detail.Synopsis.NextAction)
 	})
 }
 
@@ -1150,6 +1152,36 @@ func runClaim(command string, args []string, deps Dependencies) int {
 			next = "workflow unit-review"
 		}
 		return writeSuccess(deps, data, next)
+	})
+}
+
+func runReleaseUnitClaim(args []string, deps Dependencies) int {
+	values, err := parseFlags(args, flagRules{required: []string{"--workflow-id", "--workflow-revision", "--unit-id", "--revision", "--actor", "--claim-handle", "--reason"}})
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	workflowRevision, err := values.int64("--workflow-revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	unitRevision, err := values.int64("--revision")
+	if err != nil {
+		return fail(deps, err, err.Error())
+	}
+	return withStore(deps, func(s *store.Store) error {
+		result, releaseErr := handles.New(s, deps.Now, deps.Entropy).ReleaseIntentAt(context.Background(), handles.ReleaseIntentRequest{
+			WorkflowID: values.one("--workflow-id"), WorkflowRevision: workflowRevision,
+			UnitID: values.one("--unit-id"), UnitRevision: unitRevision, Actor: values.one("--actor"),
+			HandlePath: values.one("--claim-handle"), Reason: values.one("--reason"),
+		})
+		if releaseErr != nil {
+			return releaseErr
+		}
+		var warnings []string
+		if !result.HandleFileRemoved {
+			warnings = []string{"claim authority was released; stale handle file cleanup did not complete"}
+		}
+		return envelope.WriteSuccess(deps.Stdout, result, warnings, "return to aion")
 	})
 }
 
@@ -1480,7 +1512,7 @@ Commands:
   principles
   workflow new|continue|show|progress|request-capability|explore|spec|design|plan|amend-plan|approve-plan
   workflow list-ready-units|begin-implementation|complete|authorize-correction|abandon
-  workflow claim-unit|recover-unit-claim|recover-aggregate|handoff-review|recover-review|unit-tdd|unit-review|unit-complete
+  workflow claim-unit|release-unit-claim|recover-unit-claim|recover-aggregate|handoff-review|recover-review|unit-tdd|unit-review|unit-complete
 
 Global options:
   --help
@@ -1489,7 +1521,7 @@ Global options:
 const workflowHelp = `Usage: pitcrew workflow <subcommand> [options]
 
 Commands: new, continue, show, progress, request-capability, explore, spec, design, plan, amend-plan, approve-plan, list-ready-units,
-  begin-implementation, complete, authorize-correction, abandon, claim-unit, recover-unit-claim, recover-aggregate, handoff-review, recover-review,
+  begin-implementation, complete, authorize-correction, abandon, claim-unit, release-unit-claim, recover-unit-claim, recover-aggregate, handoff-review, recover-review,
   unit-tdd, unit-review, unit-complete
 `
 const deliveryHelp = `Usage: pitcrew delivery <subcommand> [options]

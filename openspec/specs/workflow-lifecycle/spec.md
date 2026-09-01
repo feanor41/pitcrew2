@@ -42,6 +42,7 @@ Only these transitions SHALL succeed; others SHALL return exit code `3` without 
 | `designing` | `plan` | `planning` |
 | `planning` | `approve-plan` | `plan_approved` |
 | `plan_approved` | `begin-implementation` | `implementing` |
+| `implementing` | eligible `release-unit-claim` | `implementing` |
 | `implementing` | final `unit-complete` | `ready_to_complete` |
 | `ready_to_complete` | approved `complete` | `completed` |
 | `ready_to_complete` | corrections `complete` | `ready_to_complete` |

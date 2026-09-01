@@ -330,6 +330,7 @@ stateDiagram-v2
     state "Persisted: pending" as pending
     state "Persisted: reviewing" as reviewing
     state "Persisted: done" as done
+    pending --> pending: release-unit-claim; next revision
     pending --> reviewing: unit-tdd with implementation handle
     reviewing --> pending: unit-review corrections; next revision
     reviewing --> reviewing: unit-review approved
@@ -342,6 +343,11 @@ short-lived implementation authority; `handoff-review` grants review authority
 to a different actor. `recover-review` is identity-bound to the original reviewer.
 An approved review does not complete a unit: `unit-complete` consumes the
 implementation handle. The last unit atomically advances the workflow to `ready_to_complete`.
+An owner may use `release-unit-claim` only while the current implementation
+handle remains an intent and PitCrew has recorded no implementation evidence,
+review, unit verification, or authoritative unit mutation/result activity after
+that claim. Inconsistent activity/result projections fail closed. This proves only that the claim is
+control-plane-untouched; it does not inspect Git or assert repository cleanliness.
 <!-- cli-docs:diagram:unit-authority:end -->
 
 <a id="command-catalog"></a>
@@ -391,6 +397,7 @@ implementation handle. The last unit atomically advances the workflow to `ready_
 | `workflow authorize-correction` | `--workflow-id --revision --actor --input-file` | persist user authority |
 | `workflow abandon` | `--workflow-id --revision --actor --reason` | terminate workflow |
 | `workflow claim-unit` | `--workflow-id --unit-id --revision --actor --handle-dir` | issue implementation handle |
+| `workflow release-unit-claim` | `--workflow-id --workflow-revision --unit-id --revision --actor --claim-handle --reason` | revoke untouched intent and restore readiness |
 | `workflow recover-unit-claim` | `--workflow-id --unit-id --revision --actor --handle-dir` | recover implementation handle |
 | `workflow recover-aggregate` | aggregate flags plus exactly one selection form | reopen corrected units |
 | `workflow handoff-review` | `--workflow-id --unit-id --revision --actor --handle-dir` | issue review handle |
@@ -538,6 +545,15 @@ exit 5 when invalid, expired, unsafe, or used for the wrong identity or purpose.
 review identities must differ. Every current handle lease is capped at 15
 minutes and use never extends it. The debug-secret form deletes its staged file
 and revokes the database claim before returning the secret.
+
+`release-unit-claim` requires exact workflow and unit revisions, the current
+owner, and the exact latest unexpired implementation intent handle. It advances
+both revisions once, records a sanitized reason, revokes authority before
+best-effort file cleanup, and returns no handle metadata. A committed release
+remains successful if cleanup cannot remove the now-harmless stale file.
+The release fact authorizes exactly the immediate ordinary reclaim; that claim's
+durable `unit_claimed` activity consumes the fact, so later expiry or revocation
+must use the normal recovery path rather than reusing the release.
 
 `recover-aggregate` returns `data.handles[]` entries with `unit_id`,
 `unit_revision`, `actor`, and `handle_path`. `unit-tdd` returns
@@ -1110,6 +1126,19 @@ All five commands remain local and perform no network work.
 **Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
 **Example:** `pitcrew workflow claim-unit --help`
 <!-- cli-docs:profile:workflow-claim-unit:end -->
+
+<!-- cli-docs:profile:workflow-release-unit-claim:start -->
+<a id="workflow-release-unit-claim"></a>
+#### `pitcrew workflow release-unit-claim`
+**Purpose:** Release a control-plane-untouched implementation intent for coordinator redispatch.
+**Syntax:** `pitcrew workflow release-unit-claim --workflow-id wf-<24hex> --workflow-revision <n> --unit-id wu-<24hex> --revision <n> --actor <actor> --claim-handle <path> --reason <text>`
+**Caller and behavior:** The current implementer releases only its exact bounded claim; Aion owns subsequent redispatch.
+**Preconditions:** Implementing workflow, pending unit, latest live implementation handle still in intent state, and no current evidence, review, unit verification, or authoritative unit mutation/result activity after the latest claim boundary.
+**Inputs:** Both positive revisions are CAS expectations; reason is trimmed, nonblank, and at most 1,024 runes; the handle is opaque path transport.
+**Success:** Revoked authority, incremented workflow and unit revisions, pending ready unit, sanitized durable release fact, and `return to aion`.
+**Failures and recovery:** Exit 4 requires exact reinspection; exit 5 requires fresh authority. No failure proves anything about Git or editor state.
+**Example:** `pitcrew workflow release-unit-claim --help`
+<!-- cli-docs:profile:workflow-release-unit-claim:end -->
 
 <!-- cli-docs:profile:workflow-recover-unit-claim:start -->
 <a id="workflow-recover-unit-claim"></a>

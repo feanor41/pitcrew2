@@ -101,6 +101,7 @@ func TestEveryWorkflowCommandRequiresItsExactFlagMatrix(t *testing.T) {
 		"authorize-correction": append(append([]string{}, base...), "--input-file", input),
 		"abandon":              append(append([]string{}, base...), "--reason", "stop"),
 		"claim-unit":           append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
+		"release-unit-claim":   append(append([]string{}, base...), "--workflow-revision", "1", "--unit-id", "wu-000000000000000000000001", "--claim-handle", filepath.Join(root, "handle.json"), "--reason", "reassign"),
 		"recover-unit-claim":   append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
 		"recover-aggregate":    append(append([]string{}, base...), "--input-file", input, "--handle-dir", filepath.Join(root, "handles")),
 		"handoff-review":       append(append([]string{}, base...), "--unit-id", "wu-000000000000000000000001", "--handle-dir", filepath.Join(root, "handles")),
