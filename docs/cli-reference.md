@@ -175,11 +175,21 @@ projection. Phase specialists require a workflow ID. `pc2-implementer`
 requires workflow and unit IDs. `pc2-reviewer` requires a workflow ID and uses
 an optional unit ID to select unit rather than aggregate review context.
 
-Text and JSON outputs expose the same stable `contract_version` and
-deterministic `contract_digest`. The digest covers only the stable role
-contract; dynamic context, `allowed_actions`, and `next_action` do not change
-it. Callers must obey the returned authority rather than infer permission from
-the stable CLI surface.
+Every response is one composite brief in fixed order: a shared operating
+contract, the stable role contract, bounded dynamic context when applicable,
+and `next_action`. The shared contract carries
+`shared_contract.contract_version`, an independently deterministic
+`shared_contract.contract_digest`, and the complete canonical embedded
+`MAXIMS.md` bytes. The text representation places the same maxims between
+`shared_maxims_begin` and `shared_maxims_end` before `role_contract`.
+
+Text and JSON outputs expose the same role `contract_version` and deterministic
+`contract_digest`. The role digest covers only the stable role contract; the
+shared maxims identity is digested separately, and dynamic context,
+`allowed_actions`, and `next_action` change neither digest. Callers must obey
+the returned authority rather than infer permission from the stable CLI
+surface. Installed native definitions remain minimal and do not duplicate the
+maxims; no standalone `MAXIMS.md` is deployed to the runtime.
 
 ## Project inspection and consolidation
 
@@ -593,7 +603,7 @@ Every profile uses the same eight fields.
 **Caller and behavior:** Daimon, Aion, or a named specialist reads its own brief; the command selects no-context, continuity, coordination, phase, unit, or aggregate data strictly from the role/context combination.
 **Preconditions:** Daimon and the initializer use no IDs; Aion optionally uses a workflow; phase roles require a workflow; implementer requires workflow and unit; reviewer requires workflow and optionally unit.
 **Inputs:** Supported roles are `daimon`, `aion`, `pc2-explorer`, `pc2-specifier`, `pc2-designer`, `pc2-task-planner`, `pc2-implementer`, `pc2-reviewer`, and `pc2-sdd-initializer`.
-**Success:** Text by default, or `data.brief` with `--json`; both include identical `contract_version` and `contract_digest` and the same effective authority.
+**Success:** Text by default, or `data.brief` with `--json`; both return one composite brief containing the complete shared maxims contract before the role contract, identical shared and role versions/digests, and the same effective authority.
 **Failures and recovery:** Unsupported roles, malformed IDs, and forbidden context combinations fail before project inspection; missing required state or projections fail without mutation.
 **Example:** `pitcrew agent brief --role pc2-reviewer --workflow-id wf-<24hex> --json`
 <!-- cli-docs:profile:agent-brief:end -->

@@ -15,11 +15,6 @@ func TestRunExtractsCanonicalFilesPrivatelyAndPreservesProcessContract(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalMaxims, err := os.ReadFile(filepath.Join("..", "..", "MAXIMS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	base := t.TempDir()
 	cwd := t.TempDir()
 	var extractedRoot string
@@ -49,7 +44,9 @@ func TestRunExtractsCanonicalFilesPrivatelyAndPreservesProcessContract(t *testin
 				}
 			}
 			assertFile(args[0], canonicalInstaller, 0o700)
-			assertFile(filepath.Join(extractedRoot, "MAXIMS.md"), canonicalMaxims, 0o600)
+			if _, err := os.Stat(filepath.Join(extractedRoot, "MAXIMS.md")); !os.IsNotExist(err) {
+				t.Fatalf("unused MAXIMS.md was extracted: %v", err)
+			}
 			info, statErr := os.Stat(extractedRoot)
 			if statErr != nil || info.Mode().Perm() != 0o700 {
 				t.Fatalf("private directory mode = %v, %v", info.Mode().Perm(), statErr)

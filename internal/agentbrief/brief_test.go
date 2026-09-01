@@ -1,9 +1,58 @@
 package agentbrief
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/fmazzalomo/pitcrew/internal/maxims"
 )
+
+func TestEveryBriefCarriesTheCanonicalSharedMaximsContract(t *testing.T) {
+	roles := []struct {
+		role, workflowID, unitID string
+	}{
+		{role: "daimon"},
+		{role: "aion"},
+		{role: "pc2-explorer", workflowID: "wf-x"},
+		{role: "pc2-specifier", workflowID: "wf-x"},
+		{role: "pc2-designer", workflowID: "wf-x"},
+		{role: "pc2-task-planner", workflowID: "wf-x"},
+		{role: "pc2-implementer", workflowID: "wf-x", unitID: "wu-x"},
+		{role: "pc2-reviewer", workflowID: "wf-x"},
+		{role: "pc2-sdd-initializer"},
+	}
+
+	var sharedDigest string
+	for _, tc := range roles {
+		brief, err := New(tc.role, tc.workflowID, tc.unitID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shared := brief.SharedContract
+		if shared.ContractVersion != SharedContractVersion || shared.Maxims != maxims.Text() || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(shared.ContractDigest) {
+			t.Fatalf("%s shared contract = %#v", tc.role, shared)
+		}
+		canonical, err := json.Marshal(struct {
+			ContractVersion string `json:"contract_version"`
+			Maxims          string `json:"maxims"`
+		}{ContractVersion: SharedContractVersion, Maxims: maxims.Text()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := fmt.Sprintf("%x", sha256.Sum256(canonical)); shared.ContractDigest != want {
+			t.Fatalf("%s shared digest=%s want=%s", tc.role, shared.ContractDigest, want)
+		}
+		if sharedDigest == "" {
+			sharedDigest = shared.ContractDigest
+		} else if shared.ContractDigest != sharedDigest {
+			t.Fatalf("%s shared digest=%s want common=%s", tc.role, shared.ContractDigest, sharedDigest)
+		}
+	}
+}
 
 func TestStableContractsCarryBootstrapMechanicsNotRuntimePrompts(t *testing.T) {
 	cases := []struct {
