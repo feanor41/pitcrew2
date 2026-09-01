@@ -794,6 +794,36 @@ Every profile uses the same eight fields.
 **Example:** `pitcrew delivery active`
 <!-- cli-docs:profile:delivery-active:end -->
 
+<!-- cli-docs:profile:roadmap:start -->
+<a id="profile-roadmap"></a>
+#### `pitcrew roadmap <capture|show|list|prepare-github|acknowledge> [options]`
+**Purpose:** Capture project-local roadmap candidates and explicitly acknowledge an externally created GitHub issue.
+**Syntax:** `pitcrew roadmap <capture|show|list|prepare-github|acknowledge> [options]`
+**Caller and behavior:** An operator or coordinating agent performs only local capture, query, preparation, and acknowledgement; PitCrew never publishes externally.
+**Preconditions:** A resolvable project and each command-specific `rm-*` identity or input shown in its exact syntax below.
+**Inputs:** `capture`, `prepare-github`, and `acknowledge` use strict regular JSON input files; `show` uses only its roadmap identifier and `list` takes no input file. `--json` selects the success envelope.
+**Success:** Deterministic text or JSON describes the local item, list, or prepared publication and its next action.
+**Failures and recovery:** Usage, state, and stale-digest CAS failures use the closed error envelope without external work.
+**Example:** `pitcrew roadmap --help`
+<!-- cli-docs:profile:roadmap:end -->
+
+Roadmap commands use these exact forms:
+
+```text
+pitcrew roadmap capture --input-file <path> [--json]
+pitcrew roadmap show --roadmap-id rm-<24hex> [--json]
+pitcrew roadmap list [--json]
+pitcrew roadmap prepare-github --roadmap-id rm-<24hex> --input-file <path> [--json]
+pitcrew roadmap acknowledge --roadmap-id rm-<24hex> --input-file <path> [--json]
+```
+
+`capture` records a local candidate. `prepare-github` deterministically renders
+the issue title, body, marker, and digest without publishing them. PitCrew never
+creates the GitHub issue: the operator publishes it with their chosen tool and
+passes the resulting canonical repository, issue number, URL, and prepared
+digest to `acknowledge`. GitHub becomes authoritative only after acknowledgement.
+All five commands remain local and perform no network work.
+
 <!-- cli-docs:profile:tui:start -->
 <a id="profile-tui"></a>
 #### `pitcrew tui`

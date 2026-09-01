@@ -537,3 +537,50 @@ func TestCLIReferenceCoversMaterialPayloadParserStorageAndOutputInvariants(t *te
 		}
 	}
 }
+
+func TestRoadmapDocumentationTracksExactLocalAuthorityHandoff(t *testing.T) {
+	files := map[string][]string{
+		"../../docs/cli-reference.md": {
+			"pitcrew roadmap capture --input-file <path> [--json]",
+			"pitcrew roadmap show --roadmap-id rm-<24hex> [--json]",
+			"pitcrew roadmap list [--json]",
+			"pitcrew roadmap prepare-github --roadmap-id rm-<24hex> --input-file <path> [--json]",
+			"pitcrew roadmap acknowledge --roadmap-id rm-<24hex> --input-file <path> [--json]",
+			"PitCrew never creates the GitHub issue",
+			"GitHub becomes authoritative only after acknowledgement",
+			"capture`, `prepare-github`, and `acknowledge` use strict regular JSON input files",
+			"show` uses only its roadmap identifier and `list` takes no input file",
+		},
+		"../../README.md": {
+			"pitcrew roadmap capture", "pitcrew roadmap prepare-github", "pitcrew roadmap acknowledge",
+			"PitCrew never creates the GitHub issue",
+		},
+		"../../docs/contributing.md": {
+			"go test ./internal/roadmap ./internal/cli", "no network credentials", "external issue creation remains outside PitCrew",
+		},
+		"../../openspec/specs/cli-surface/spec.md": {
+			"Requirement: Roadmap Inbox CLI", "Scenario: Roadmap CLI remains local and offline",
+			"capture`, `show`, `list`, `prepare-github`, and `acknowledge`",
+			"mid-flight conversational/runtime inbox",
+			"does not prohibit the durable project-local Roadmap registry",
+		},
+	}
+	forbidden := map[string]string{
+		"../../docs/cli-reference.md": "Structured mutations and projections use strict regular JSON input files",
+	}
+	for path, required := range files {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		normalized := strings.Join(strings.Fields(string(body)), " ")
+		for _, want := range required {
+			if !strings.Contains(normalized, strings.Join(strings.Fields(want), " ")) {
+				t.Fatalf("%s is missing Roadmap contract %q", path, want)
+			}
+		}
+		if unwanted := forbidden[path]; unwanted != "" && strings.Contains(normalized, unwanted) {
+			t.Fatalf("%s retains contradictory Roadmap contract %q", path, unwanted)
+		}
+	}
+}

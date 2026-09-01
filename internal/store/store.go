@@ -306,4 +306,24 @@ CREATE TABLE reviewed_checkpoints (
     recorded_at TEXT NOT NULL,
     PRIMARY KEY(workflow_id, aggregate_revision)
 );
+`}, {Version: 7, Name: "roadmap inbox", SQL: `
+CREATE TABLE roadmap_items (
+    id TEXT PRIMARY KEY CHECK(length(id) = 27 AND id GLOB 'rm-*' AND substr(id, 4) NOT GLOB '*[^0-9a-f]*'),
+    title TEXT NOT NULL CHECK(length(trim(title)) > 0),
+    body TEXT NOT NULL CHECK(length(trim(body)) > 0),
+    provenance_json TEXT NOT NULL CHECK(json_valid(provenance_json) AND json_type(provenance_json) = 'object'),
+    created_at TEXT NOT NULL,
+    local_lifecycle TEXT NOT NULL CHECK(local_lifecycle IN ('captured', 'acknowledged'))
+);
+CREATE TABLE roadmap_bindings (
+    roadmap_id TEXT PRIMARY KEY REFERENCES roadmap_items(id),
+    provider TEXT NOT NULL,
+    namespace TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    url TEXT NOT NULL UNIQUE,
+    prepared_digest TEXT NOT NULL,
+    acknowledged_at TEXT NOT NULL,
+    UNIQUE(provider, namespace, external_id)
+);
+CREATE INDEX roadmap_items_created ON roadmap_items(created_at DESC, id);
 `}}

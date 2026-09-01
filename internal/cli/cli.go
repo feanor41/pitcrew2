@@ -24,6 +24,7 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/maxims"
 	"github.com/fmazzalomo/pitcrew/internal/plan"
 	"github.com/fmazzalomo/pitcrew/internal/project"
+	"github.com/fmazzalomo/pitcrew/internal/roadmap"
 	"github.com/fmazzalomo/pitcrew/internal/runtimeinstall"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 	"github.com/fmazzalomo/pitcrew/internal/tui"
@@ -112,6 +113,8 @@ func Run(args []string, deps Dependencies) int {
 		return runContext(args[1:], deps)
 	case "delivery":
 		return runDelivery(args[1:], deps)
+	case "roadmap":
+		return runRoadmap(args[1:], deps)
 	case "workflow":
 		return runWorkflow(args[1:], deps)
 	default:
@@ -378,6 +381,118 @@ func runPrinciples(args []string, deps Dependencies) int {
 var workflowCommands = map[string]bool{"new": true, "continue": true, "show": true, "progress": true, "request-capability": true, "explore": true, "spec": true, "design": true, "plan": true, "amend-plan": true, "approve-plan": true, "list-ready-units": true, "begin-implementation": true, "complete": true, "authorize-correction": true, "abandon": true, "claim-unit": true, "recover-unit-claim": true, "recover-aggregate": true, "handoff-review": true, "recover-review": true, "unit-tdd": true, "unit-review": true, "unit-complete": true}
 var workflowIDPattern = regexp.MustCompile(`^wf-[0-9a-f]{24}$`)
 var deliveryIDPattern = regexp.MustCompile(`^(dl|wf)-[0-9a-f]{24}$`)
+var roadmapIDPattern = regexp.MustCompile(`^rm-[0-9a-f]{24}$`)
+
+func runRoadmap(args []string, deps Dependencies) int {
+	if equalArgs(args, "--help") {
+		writeHelp(deps.Stdout, roadmapHelp)
+		return 0
+	}
+	if len(args) == 0 {
+		return fail(deps, ErrUsage, "roadmap subcommand is required")
+	}
+	command, rest := args[0], args[1:]
+	if equalArgs(rest, "--help") {
+		for _, supported := range []string{"capture", "show", "list", "prepare-github", "acknowledge"} {
+			if command == supported {
+				writeHelp(deps.Stdout, roadmapHelp)
+				return 0
+			}
+		}
+	}
+	ctx := context.Background()
+	switch command {
+	case "capture":
+		values, err := parseFlags(rest, flagRules{required: []string{"--input-file"}, boolean: []string{"--json"}})
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		input, err := decodeInputFile[roadmap.CaptureInput](values.one("--input-file"))
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		return withStore(deps, func(s *store.Store) error {
+			item, err := roadmap.NewService(s, deps.Now).Capture(ctx, input)
+			return writeRoadmapResult(deps, values.one("--json") != "", map[string]any{"roadmap_item": item}, renderRoadmapItem(item), "roadmap prepare-github", err)
+		})
+	case "show":
+		values, err := roadmapFlags(rest, false)
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		return withReadStore(deps, func(s *store.Store) error {
+			item, err := roadmap.NewService(s, deps.Now).Show(ctx, values.one("--roadmap-id"))
+			next := "roadmap prepare-github"
+			if item.Authority == roadmap.External {
+				next = "manage the bound GitHub issue"
+			}
+			return writeRoadmapResult(deps, values.one("--json") != "", map[string]any{"roadmap_item": item}, renderRoadmapItem(item), next, err)
+		})
+	case "list":
+		values, err := parseFlags(rest, flagRules{boolean: []string{"--json"}})
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		return withReadStore(deps, func(s *store.Store) error {
+			items, err := roadmap.NewService(s, deps.Now).List(ctx)
+			return writeRoadmapResult(deps, values.one("--json") != "", map[string]any{"roadmap_items": items}, renderRoadmapList(items), "roadmap show", err)
+		})
+	case "prepare-github", "acknowledge":
+		values, err := roadmapFlags(rest, true)
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		jsonOutput := values.one("--json") != ""
+		if command == "prepare-github" {
+			input, err := decodeInputFile[roadmap.PrepareInput](values.one("--input-file"))
+			if err != nil {
+				return fail(deps, err, err.Error())
+			}
+			return withReadStore(deps, func(s *store.Store) error {
+				service := roadmap.NewService(s, deps.Now)
+				publication, err := service.PrepareGitHub(ctx, values.one("--roadmap-id"), input)
+				return writeRoadmapResult(deps, jsonOutput, map[string]any{"publication": publication}, renderRoadmapPublication(publication), "create the GitHub issue outside PitCrew, then roadmap acknowledge", err)
+			})
+		}
+		input, err := decodeInputFile[roadmap.AcknowledgeInput](values.one("--input-file"))
+		if err != nil {
+			return fail(deps, err, err.Error())
+		}
+		return withStore(deps, func(s *store.Store) error {
+			service := roadmap.NewService(s, deps.Now)
+			item, err := service.Acknowledge(ctx, values.one("--roadmap-id"), input)
+			return writeRoadmapResult(deps, jsonOutput, map[string]any{"roadmap_item": item}, renderRoadmapItem(item), "manage the bound GitHub issue", err)
+		})
+	default:
+		return fail(deps, ErrUsage, fmt.Sprintf("unknown roadmap subcommand %q", command))
+	}
+}
+
+func roadmapFlags(args []string, input bool) (flagValues, error) {
+	required := []string{"--roadmap-id"}
+	if input {
+		required = append(required, "--input-file")
+	}
+	values, err := parseFlags(args, flagRules{required: required, boolean: []string{"--json"}})
+	if err == nil && !roadmapIDPattern.MatchString(values.one("--roadmap-id")) {
+		err = fmt.Errorf("%w: --roadmap-id must be an rm-* roadmap ID", ErrUsage)
+	}
+	return values, err
+}
+
+func writeRoadmapResult(deps Dependencies, jsonOutput bool, data any, text, next string, err error) error {
+	if err != nil {
+		if errors.Is(err, store.ErrCASMismatch) {
+			return err
+		}
+		return fmt.Errorf("%w: %v", ErrState, err)
+	}
+	if jsonOutput {
+		return writeSuccess(deps, data, next)
+	}
+	_, err = fmt.Fprintf(deps.Stdout, "%sNext action: %s\n", text, next)
+	return err
+}
 
 func runDelivery(args []string, deps Dependencies) int {
 	if equalArgs(args, "--help") {
@@ -1320,6 +1435,7 @@ Commands:
   project inspect|consolidate
   context inspect|initialize|record
   delivery start|update|show|search|active
+  roadmap capture|show|list|prepare-github|acknowledge
   tui
   principles
   workflow new|continue|show|progress|request-capability|explore|spec|design|plan|amend-plan|approve-plan
@@ -1339,6 +1455,10 @@ Commands: new, continue, show, progress, request-capability, explore, spec, desi
 const deliveryHelp = `Usage: pitcrew delivery <subcommand> [options]
 
 Commands: start, update, show, search, active
+`
+const roadmapHelp = `Usage: pitcrew roadmap <capture|show|list|prepare-github|acknowledge> [options]
+
+Commands: capture|show|list|prepare-github|acknowledge
 `
 const principlesHelp = `Usage: pitcrew principles [--json]
 `

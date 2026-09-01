@@ -317,8 +317,8 @@ func TestMigrationV6AddsBoundedCoordinationFoundationsWithoutRewritingV5(t *test
 		}
 	}
 	var migrations int
-	if err := migrated.DB().QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != 6 {
-		t.Fatalf("migrations=%d err=%v; want 6", migrations, err)
+	if err := migrated.DB().QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != len(schemaMigrations) {
+		t.Fatalf("migrations=%d err=%v; want %d", migrations, err, len(schemaMigrations))
 	}
 }
 
