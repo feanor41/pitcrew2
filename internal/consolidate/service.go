@@ -41,7 +41,7 @@ func (Service) Consolidate(ctx context.Context, destination *sql.DB, resolved pr
 	if err != nil || current.CandidateSetID != discovery.CandidateSetID {
 		return ErrInvalidManifest
 	}
-	selected, err := selectGraphs(snapshots, manifest)
+	selected, legacyDivergent, err := selectGraphs(snapshots, manifest)
 	if err != nil {
 		return err
 	}
@@ -54,6 +54,10 @@ func (Service) Consolidate(ctx context.Context, destination *sql.DB, resolved pr
 		return err
 	}
 	ids := make([]string, 0, len(selected))
+	retained := map[string]bool{}
+	for _, workflowID := range manifest.RetainExisting {
+		retained[workflowID] = true
+	}
 	for id := range selected {
 		ids = append(ids, id)
 	}
@@ -65,14 +69,30 @@ func (Service) Consolidate(ctx context.Context, destination *sql.DB, resolved pr
 		}
 		if count == 1 {
 			existing, err := LoadGraph(ctx, tx, workflowID)
-			if err != nil || existing.Hash != selected[workflowID].Hash {
+			if err != nil {
+				return ErrConflict
+			}
+			if retained[workflowID] {
+				if existing.Hash == selected[workflowID].Hash && !legacyDivergent[workflowID] {
+					return ErrConflict
+				}
+				delete(retained, workflowID)
+				continue
+			}
+			if existing.Hash != selected[workflowID].Hash {
 				return ErrConflict
 			}
 			continue
 		}
+		if retained[workflowID] {
+			return ErrConflict
+		}
 		if err := insertGraph(ctx, tx, selected[workflowID]); err != nil {
 			return err
 		}
+	}
+	if len(retained) != 0 {
+		return ErrConflict
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO consolidation_acknowledgements(project_id,candidate_set_id) VALUES(?,?)`, resolved.ID, discovery.CandidateSetID); err != nil {
 		return err
@@ -139,7 +159,7 @@ func closeSnapshots(items []snapshot) {
 		_ = item.db.Close()
 	}
 }
-func selectGraphs(snapshots []snapshot, manifest Manifest) (map[string]Graph, error) {
+func selectGraphs(snapshots []snapshot, manifest Manifest) (map[string]Graph, map[string]bool, error) {
 	byWorkflow := map[string][]sourceGraph{}
 	for _, item := range snapshots {
 		for _, graph := range item.graphs {
@@ -150,7 +170,12 @@ func selectGraphs(snapshots []snapshot, manifest Manifest) (map[string]Graph, er
 	for _, choice := range manifest.Choices {
 		choices[choice.WorkflowID] = choice.CandidateID
 	}
+	retained := map[string]bool{}
+	for _, workflowID := range manifest.RetainExisting {
+		retained[workflowID] = true
+	}
 	selected := map[string]Graph{}
+	divergent := map[string]bool{}
 	for workflowID, copies := range byWorkflow {
 		sort.Slice(copies, func(i, j int) bool { return copies[i].candidateID < copies[j].candidateID })
 		hashes := map[string]bool{}
@@ -159,9 +184,14 @@ func selectGraphs(snapshots []snapshot, manifest Manifest) (map[string]Graph, er
 		}
 		chosen := copies[0]
 		if len(hashes) > 1 {
+			divergent[workflowID] = true
+			if retained[workflowID] {
+				selected[workflowID] = chosen.graph
+				continue
+			}
 			candidateID, ok := choices[workflowID]
 			if !ok {
-				return nil, ErrConflict
+				return nil, nil, ErrConflict
 			}
 			found := false
 			for _, copy := range copies {
@@ -170,16 +200,16 @@ func selectGraphs(snapshots []snapshot, manifest Manifest) (map[string]Graph, er
 				}
 			}
 			if !found {
-				return nil, ErrConflict
+				return nil, nil, ErrConflict
 			}
 			delete(choices, workflowID)
 		}
 		selected[workflowID] = chosen.graph
 	}
 	if len(choices) != 0 {
-		return nil, ErrConflict
+		return nil, nil, ErrConflict
 	}
-	return selected, nil
+	return selected, divergent, nil
 }
 func insertGraph(ctx context.Context, tx *sql.Tx, graph Graph) error {
 	var artifactID, activityID int64
