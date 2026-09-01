@@ -109,6 +109,81 @@ func TestProjectInspectConsolidateAndLinkedWorkflowShareCentralState(t *testing.
 	}
 }
 
+func TestProjectInspectReportsExactLegacyAcknowledgement(t *testing.T) {
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(checkout, ".pitcrew"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, ".pitcrew", "state.db"), []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dataHome := filepath.Join(t.TempDir(), "data")
+	inspection, err := project.Inspect(checkout, dataHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertInspect := func(wantAcknowledged bool, wantNext string) {
+		t.Helper()
+		got := runCentral(t, checkout, dataHome, "project", "inspect")
+		if got.code != 0 || got.stderr != "" {
+			t.Fatalf("inspect = %#v", got)
+		}
+		var envelope struct {
+			Data struct {
+				LegacyAcknowledged bool `json:"legacy_acknowledged"`
+			} `json:"data"`
+			NextAction string `json:"next_action"`
+		}
+		if err := json.Unmarshal([]byte(got.stdout), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if envelope.Data.LegacyAcknowledged != wantAcknowledged || envelope.NextAction != wantNext {
+			t.Fatalf("inspection = %#v", envelope)
+		}
+	}
+
+	assertInspect(false, "project consolidate")
+	central, err := store.OpenProject(context.Background(), inspection.Project, inspection.Paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = central.DB().Exec(`CREATE TABLE consolidation_acknowledgements(project_id TEXT NOT NULL,candidate_set_id TEXT NOT NULL); INSERT INTO consolidation_acknowledgements VALUES(?,?)`, inspection.Project.ID, "stale-set"); err != nil {
+		t.Fatal(err)
+	}
+	_ = central.Close()
+	assertInspect(false, "project consolidate")
+	central, err = store.OpenProject(context.Background(), inspection.Project, inspection.Paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = central.DB().Exec(`INSERT INTO consolidation_acknowledgements VALUES(?,?)`, inspection.Project.ID, inspection.Legacy.CandidateSetID); err != nil {
+		t.Fatal(err)
+	}
+	_ = central.Close()
+	assertInspect(true, "workflow new")
+
+	if err := os.WriteFile(filepath.Join(checkout, ".pitcrew", "state.db"), []byte("changed legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertInspect(false, "project consolidate")
+
+	central, err = store.OpenProject(context.Background(), inspection.Project, inspection.Paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = central.DB().Exec(`DROP TABLE consolidation_acknowledgements; CREATE TABLE consolidation_acknowledgements(project_id TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = central.Close()
+	if got := runCentral(t, checkout, dataHome, "project", "inspect"); got.code == 0 || got.stdout != "" {
+		t.Fatalf("unsafe acknowledgement read did not fail closed: %#v", got)
+	}
+}
+
 func runCentral(t *testing.T, root, dataHome string, args ...string) result {
 	var stdout, stderr bytes.Buffer
 	code := Run(args, Dependencies{Stdout: &stdout, Stderr: &stderr, ProjectRoot: root, DataHome: dataHome, Now: time.Now})
