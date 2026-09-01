@@ -308,7 +308,7 @@ The advisory role map SHALL be: Daimon (user interviews, intent, continuity, and
 
 ### Requirement: User intent and runtime boundary
 
-Daimon SHALL interview, clarify, preserve continuity, forward accepted requests, and communicate only Aion-acknowledged facts or clarification requests. Mid-flight input SHALL remain requested, not applied, until Aion admits it against current workflow and repository state. Aion SHALL be the sole orchestration authority and own workflow context, mutations, specialist dispatch, approvals, recovery, continuation, capability coordination, and completion. PitCrew SHALL NOT add a daemon, service, IPC, polling, network API, durable inbox, database state, or lifecycle; concurrent Daimon availability depends on host support for addressable agents.
+Daimon SHALL interview, clarify, preserve continuity, forward accepted requests, and communicate only Aion-acknowledged facts or clarification requests. Mid-flight input SHALL remain requested, not applied, until Aion admits it against current workflow and repository state. Aion SHALL be the sole orchestration authority and own workflow context, mutations, specialist dispatch, approvals, recovery, continuation, capability coordination, and completion. PitCrew SHALL NOT add a daemon, service, IPC, polling, network API, or database-backed mid-flight conversational/runtime inbox or lifecycle; concurrent Daimon availability depends on host support for addressable agents. This prohibition does not prohibit the durable project-local Roadmap registry defined below: that registry records explicit capture commands and never silently applies mid-flight input.
 
 #### Scenario: Replacement Aion recovers from durable state
 

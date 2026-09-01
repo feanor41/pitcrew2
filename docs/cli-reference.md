@@ -800,8 +800,8 @@ Every profile uses the same eight fields.
 **Purpose:** Capture project-local roadmap candidates and explicitly acknowledge an externally created GitHub issue.
 **Syntax:** `pitcrew roadmap <capture|show|list|prepare-github|acknowledge> [options]`
 **Caller and behavior:** An operator or coordinating agent performs only local capture, query, preparation, and acknowledgement; PitCrew never publishes externally.
-**Preconditions:** A resolvable project and the exact command-specific `rm-*` identity or regular JSON input file.
-**Inputs:** Structured mutations and projections use strict regular JSON input files; `--json` selects the success envelope.
+**Preconditions:** A resolvable project and each command-specific `rm-*` identity or input shown in its exact syntax below.
+**Inputs:** `capture`, `prepare-github`, and `acknowledge` use strict regular JSON input files; `show` uses only its roadmap identifier and `list` takes no input file. `--json` selects the success envelope.
 **Success:** Deterministic text or JSON describes the local item, list, or prepared publication and its next action.
 **Failures and recovery:** Usage, state, and stale-digest CAS failures use the closed error envelope without external work.
 **Example:** `pitcrew roadmap --help`
