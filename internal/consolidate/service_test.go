@@ -100,6 +100,61 @@ func TestServiceAcceptsStableClosedWALSource(t *testing.T) {
 	}
 }
 
+func TestServiceExplicitlyRetainsDivergentExistingCentralGraph(t *testing.T) {
+	ctx := context.Background()
+	main, _ := consolidationCheckouts(t)
+	source := mustStore(t, main)
+	seedGraph(t, source, 7, 11, "stale-legacy")
+	resolved, err := project.Resolve(main)
+	must(t, err)
+	discovery, err := project.DiscoverLegacy(resolved)
+	must(t, err)
+	manifest := consolidate.Manifest{
+		ProjectID:      resolved.ID,
+		CandidateIDs:   []string{discovery.Candidates[0].ID},
+		RetainExisting: []string{graphWorkflowID},
+	}
+
+	destination := mustStore(t, t.TempDir())
+	defer destination.Close()
+	seedGraph(t, destination, 70, 110, "evolved-central")
+	before, err := consolidate.LoadGraph(ctx, destination.DB(), graphWorkflowID)
+	must(t, err)
+	service := consolidate.Service{}
+	must(t, service.Consolidate(ctx, destination.DB(), resolved, manifest))
+	after, err := consolidate.LoadGraph(ctx, destination.DB(), graphWorkflowID)
+	must(t, err)
+
+	var content string
+	must(t, destination.DB().QueryRow(`SELECT content FROM artifacts WHERE workflow_id=?`, graphWorkflowID).Scan(&content))
+	var acknowledged int
+	must(t, destination.DB().QueryRow(`SELECT count(*) FROM consolidation_acknowledgements WHERE project_id=? AND candidate_set_id=?`, resolved.ID, discovery.CandidateSetID).Scan(&acknowledged))
+	if content != "evolved-central" || acknowledged != 1 || before.Hash != after.Hash {
+		t.Fatalf("content=%q acknowledged=%d hashes=(%q,%q)", content, acknowledged, before.Hash, after.Hash)
+	}
+
+	for name, prepare := range map[string]func(*store.Store){
+		"missing central": func(*store.Store) {},
+		"non-divergent central": func(s *store.Store) {
+			seedGraph(t, s, 700, 1100, "stale-legacy")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			other := mustStore(t, t.TempDir())
+			defer other.Close()
+			prepare(other)
+			if err := service.Consolidate(ctx, other.DB(), resolved, manifest); !errors.Is(err, consolidate.ErrConflict) {
+				t.Fatalf("unused retention error = %v", err)
+			}
+			var count int
+			must(t, other.DB().QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='consolidation_acknowledgements'`).Scan(&count))
+			if count != 0 {
+				t.Fatalf("failed retention recorded %d acknowledgements", count)
+			}
+		})
+	}
+}
+
 func TestServiceRejectsManifestAfterLegacyPermissionsBecomeUnsafe(t *testing.T) {
 	ctx := context.Background()
 	main, _ := consolidationCheckouts(t)

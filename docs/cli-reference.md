@@ -207,13 +207,18 @@ When candidates exist, pass a strict manifest to
   "candidate_ids": ["<64 lowercase hex>"],
   "choices": [
     {"workflow_id": "wf-<24 lowercase hex>", "candidate_id": "<64 lowercase hex>"}
-  ]
+  ],
+  "retain_existing": ["wf-<24 lowercase hex>"]
 }
 ```
 
 The candidate set must exactly equal the latest inspection. Each duplicate
 workflow ID must be assigned at most once to one listed candidate. Consolidation
-copies complete workflow graphs atomically. Source databases and WAL files are never deleted or rewritten.
+can explicitly retain a divergent complete graph that already exists in central
+state by listing its workflow ID in `retain_existing`; each instruction must
+resolve a real central-versus-legacy conflict and cannot overlap `choices`.
+Consolidation copies complete workflow graphs atomically. Source databases and
+WAL files are never deleted or rewritten.
 
 ## Delivery routing and admission
 

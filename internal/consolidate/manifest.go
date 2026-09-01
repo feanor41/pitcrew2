@@ -17,9 +17,10 @@ type Choice struct {
 	CandidateID string `json:"candidate_id"`
 }
 type Manifest struct {
-	ProjectID    string   `json:"project_id"`
-	CandidateIDs []string `json:"candidate_ids"`
-	Choices      []Choice `json:"choices"`
+	ProjectID      string   `json:"project_id"`
+	CandidateIDs   []string `json:"candidate_ids"`
+	Choices        []Choice `json:"choices"`
+	RetainExisting []string `json:"retain_existing,omitempty"`
 }
 
 func DecodeManifest(reader io.Reader) (Manifest, error) {
@@ -50,6 +51,12 @@ func (m Manifest) basicValidation() error {
 			return ErrInvalidManifest
 		}
 		seenWorkflows[choice.WorkflowID] = true
+	}
+	for _, workflowID := range m.RetainExisting {
+		if !workflowIDPattern.MatchString(workflowID) || seenWorkflows[workflowID] {
+			return ErrInvalidManifest
+		}
+		seenWorkflows[workflowID] = true
 	}
 	return nil
 }
