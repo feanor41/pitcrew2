@@ -308,7 +308,32 @@ The advisory role map SHALL be: Daimon (user interviews, intent, continuity, and
 
 ### Requirement: User intent and runtime boundary
 
-Daimon SHALL interview, clarify, preserve continuity, forward accepted requests, and communicate only Aion-acknowledged facts or clarification requests. Mid-flight input SHALL remain requested, not applied, until Aion admits it against current workflow and repository state. Aion SHALL be the sole orchestration authority and own workflow context, mutations, specialist dispatch, approvals, recovery, continuation, capability coordination, and completion. PitCrew SHALL NOT add a daemon, service, IPC, polling, network API, or database-backed mid-flight conversational/runtime inbox or lifecycle; concurrent Daimon availability depends on host support for addressable agents. This prohibition does not prohibit the durable project-local Roadmap registry defined below: that registry records explicit capture commands and never silently applies mid-flight input.
+Daimon SHALL interview, clarify, preserve continuity, and forward accepted requests. While Aion remains active, Daimon SHALL retain the current user-visible turn with host-native mailbox and user-steering waits, relay each meaningful Aion-acknowledged fact exactly once, emit one truthful notice no later than five minutes into each continuous quiet interval, forward steered input to Aion as requested state, and resume waiting. Daimon SHALL distinguish completion, interruption, cancellation, host timeout, failure, blocker, clarification, user-owned gate, and abandonment before finalizing. After finalization it SHALL NOT promise a future unsolicited update unless the selected host supplies an actual push channel. A host without bounded native waits SHALL be disclosed truthfully instead of simulated. Mid-flight input SHALL remain requested, not applied, until Aion admits it against current workflow and repository state. Aion SHALL be the sole orchestration authority and own workflow context, mutations, specialist dispatch, approvals, recovery, continuation, capability coordination, and completion. PitCrew SHALL NOT add a daemon, service, IPC, polling, network API, or database-backed mid-flight conversational/runtime inbox or lifecycle; concurrent Daimon availability depends on host support for addressable agents. This prohibition does not prohibit the durable project-local Roadmap registry defined below: that registry records explicit capture commands and never silently applies mid-flight input.
+
+#### Scenario: Daimon retains one live delivery turn
+
+- GIVEN Aion remains active after an acknowledged progress fact
+- WHEN Daimon relays that fact or forwards steered user input as requested state
+- THEN Daimon SHALL resume its host-native wait in the same user-visible turn
+- AND it SHALL NOT replay the fact or emit more than one notice in one continuous quiet interval
+- AND its first quiet notice SHALL occur no later than five minutes after the interval begins
+- AND it SHALL finalize only for a distinct terminal outcome
+
+#### Scenario: Final outcomes and promises stay truthful
+
+- GIVEN the retained turn ends because of interruption, cancellation, timeout, failure, blocker, clarification, a user-owned gate, completion, or abandonment
+- WHEN Daimon emits its final response
+- THEN it SHALL name the observed outcome without collapsing it into another outcome
+- AND it SHALL NOT promise a later unsolicited update unless the selected host provides a real push channel
+
+#### Scenario: Host liveness limitation stays truthful
+
+- GIVEN the selected host cannot provide a bounded native mailbox and user-steering wait
+- WHEN Daimon cannot remain addressable during Aion work
+- THEN Daimon SHALL disclose that limitation
+- AND it SHALL NOT fabricate progress or add a replacement transport or persistent relay state
+
+Codex provides a bounded mailbox wait that accepts steered input while the root turn remains open, but no post-final push. Pi provides Aion-to-Daimon `contact_supervisor` progress relays, while its steered dual wait has no stable native trace contract. OpenCode and Claude Code have no repository-verified bounded dual wait or unsolicited push capability.
 
 #### Scenario: Replacement Aion recovers from durable state
 

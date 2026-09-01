@@ -65,6 +65,7 @@ stateDiagram-v2
     state "Durable fact acknowledged" as fact_acknowledged
     state "Aion coordinates returned fact" as aion_coordination
     state "Daimon prepares user relay" as user_relay
+    state "Daimon waits in retained turn" as active_wait
     state "Inspect exact identity" as identity_inspection
     state "Recover scoped authority" as authority_recovery
     [*] --> waiting_for_user
@@ -85,19 +86,21 @@ stateDiagram-v2
     fact_acknowledged --> aion_coordination: role returns revision-bearing status
     aion_coordination --> current_brief: more work
     aion_coordination --> user_relay: acknowledged progress, blocker, or terminal fact
-    user_relay --> waiting_for_user: Daimon relays Aion-acknowledged fact
+    user_relay --> active_wait: Daimon relays fact and resumes waiting
+    active_wait --> aion_coordination: Aion fact or steered user input
+    active_wait --> user_relay: bounded quiet interval notice
+    active_wait --> waiting_for_user: terminal outcome or host limitation
 ```
-**Text fallback.** These call states are transient orchestration states, not persisted Control Plane lifecycle states. The user supplies intent to Daimon;
-Daimon reads its unscoped brief and hands the request to exactly one Aion. Aion
-reads active continuity, asks for clarification when several identities match,
-otherwise resumes or admits one identity, and selects the next role and
-context. For direct work, Aion re-reads unscoped continuity; full-workflow
-specialists read workflow- or unit-scoped authority. The role acts only when
-`allowed_actions` authorizes the call, invokes the CLI, and returns the
-revision-bearing result to Aion. Aion either dispatches more work or returns an
-acknowledged fact through Daimon. Exit `3` or `4` causes one exact identity
-inspection; exit `5` requires fresh scoped authority rather than replay.
+**Text fallback.** These call states are transient orchestration states, not persisted Control Plane lifecycle states. The user supplies intent to Daimon; Daimon reads its unscoped brief and hands the request to exactly one Aion.
+Aion reads active continuity, asks for clarification when several identities match, otherwise resumes or admits one identity, and selects the next role and context.
+For direct work, Aion re-reads unscoped continuity; full-workflow specialists read workflow- or unit-scoped authority. The role acts only when `allowed_actions` authorizes the call, invokes the CLI, and returns the revision-bearing result to Aion.
+Aion either dispatches more work or returns an acknowledged fact through Daimon. Daimon retains the active user-visible turn while Aion remains active, using host-native mailbox and user steering capabilities.
+It relays each meaningful acknowledged fact exactly once, emits one truthful quiet notice no later than five minutes into each continuous quiet interval, forwards steered input as requested state, and resumes waiting.
+It finalizes only after distinguishing interruption, cancellation, timeout, failure, blocker, clarification, user-owned gate, completion, or abandonment; it never promises a later unsolicited update after finalizing unless that host supplies a push channel, and missing bounded host liveness is disclosed rather than simulated.
+Exit `3` or `4` causes one exact identity inspection; exit `5` requires fresh scoped authority rather than replay.
 <!-- cli-docs:diagram:control-plane-calls:end -->
+
+Host capabilities are deliberately not flattened. Codex exposes a bounded mailbox wait that also accepts steered user input, so it can retain the current turn but cannot push after finalization. Pi exposes Aion-to-Daimon `contact_supervisor` progress relays, while its steered user-input dual wait has no stable native trace contract. OpenCode and Claude Code have no repository-verified bounded dual-wait or unsolicited push capability; Daimon must disclose that limitation rather than imply live delivery.
 
 The concrete call boundaries are:
 

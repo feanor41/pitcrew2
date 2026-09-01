@@ -261,6 +261,102 @@ function verify(root, transcriptSources) {
   return 'passed';
 }
 
+function verifyRetainedTurn(events) {
+  let active = false;
+  let activeAion = '';
+  let terminal = '';
+  let finalReports = 0;
+  let quietNotice = false;
+  let pendingSteer = '';
+  let pendingGate = null;
+  let gateAwaitingFact = false;
+  let gateFactKey = '';
+  const facts = new Set();
+  const relayed = new Set();
+  let prematureFinalAttempts = 0;
+  let relaysAfterPrematureFinal = 0;
+  for (const event of events) {
+    object(event, 'retained-turn event is malformed');
+    switch (event.type) {
+    case 'start':
+      if (active || terminal) fail('retained turn started more than once');
+      active = true;
+      if (event.aion !== undefined) {
+        if (typeof event.aion !== 'string' || !event.aion) fail('active Aion identity is missing');
+        activeAion = event.aion;
+      }
+      break;
+    case 'quiet-notice':
+      if (!active || quietNotice || !Number.isFinite(event.elapsedMinutes) || event.elapsedMinutes <= 0 || event.elapsedMinutes > 5) fail('quiet interval notice exceeded the finite five-minute bound');
+      quietNotice = true;
+      break;
+    case 'fact':
+      if (!active || typeof event.key !== 'string' || !event.key || facts.has(event.key)) fail('acknowledged fact is missing or duplicated');
+      if (gateAwaitingFact) {
+        if (!activeAion || event.aion !== activeAion) fail('post-gate fact did not come from the same active Aion');
+        gateAwaitingFact = false;
+        gateFactKey = event.key;
+      }
+      facts.add(event.key);
+      quietNotice = false;
+      break;
+    case 'relay':
+      if (!active || !facts.has(event.key) || relayed.has(event.key)) fail('fact relay is fabricated or replayed');
+      relayed.add(event.key);
+      if (prematureFinalAttempts > 0) relaysAfterPrematureFinal += 1;
+      break;
+    case 'steer':
+      if (!active || pendingSteer || pendingGate || typeof event.request !== 'string' || !event.request) fail('steered input is not attributable');
+      pendingSteer = event.request;
+      break;
+    case 'forward-requested':
+      if (!active || event.request !== pendingSteer) fail('steered input was not forwarded as requested state');
+      pendingSteer = '';
+      quietNotice = false;
+      break;
+    case 'gate-presented':
+      if (!active || pendingSteer || pendingGate || !activeAion || event.aion !== activeAion ||
+          typeof event.gate !== 'string' || !event.gate) fail('clarification or approval gate was not presented by the active Aion');
+      pendingGate = { gate: event.gate, answer: '', stage: 'presented' };
+      break;
+    case 'user-answer':
+      if (!active || !pendingGate || pendingGate.stage !== 'presented' || event.gate !== pendingGate.gate ||
+          typeof event.answer !== 'string' || !event.answer) fail('user gate answer is missing or unattributable');
+      pendingGate.answer = event.answer;
+      pendingGate.stage = 'answered';
+      break;
+    case 'answer-forwarded':
+      if (!active || !pendingGate || pendingGate.stage !== 'answered' || event.aion !== activeAion ||
+          event.gate !== pendingGate.gate || event.answer !== pendingGate.answer) fail('user answer was not forwarded to the same active Aion');
+      pendingGate.stage = 'forwarded';
+      break;
+    case 'resume-wait':
+      if (!active || !pendingGate || pendingGate.stage !== 'forwarded' || event.aion !== activeAion) fail('Daimon did not resume waiting on the same active Aion');
+      pendingGate = null;
+      gateAwaitingFact = true;
+      quietNotice = false;
+      break;
+    case 'premature-final-attempt':
+      if (!active || typeof event.outcome !== 'string' || !event.outcome) fail('premature final attempt is malformed');
+      prematureFinalAttempts += 1;
+      break;
+    case 'terminal':
+      if (!active || pendingSteer || pendingGate || gateAwaitingFact || !['completed', 'interrupted', 'cancelled', 'timed-out', 'failed', 'blocked', 'needs-user', 'user-owned-gate', 'abandoned'].includes(event.outcome)) fail('terminal outcome is invalid or premature');
+      active = false;
+      terminal = event.outcome;
+      break;
+    case 'final':
+      if (active || !terminal || ++finalReports !== 1 || event.outcome !== terminal) fail('final response does not match one terminal outcome');
+      break;
+    default:
+      fail(`unknown retained-turn event ${event.type}`);
+    }
+  }
+  if (active || !terminal || finalReports !== 1) fail('retained turn ended without one terminal response');
+  if (gateFactKey && !relayed.has(gateFactKey)) fail('post-gate Aion fact was not relayed exactly once');
+  if (prematureFinalAttempts > 0 && relaysAfterPrematureFinal === 0) fail('premature final prevented a later queued milestone relay');
+}
+
 if (mode === 'regression' || mode === 'regression-red') {
   const injectedPrompt = `${ACK} ${RAW} ${MARKER} ${HOST_NOT_LIVE} contact_supervisor progress_update`;
   const promptOnly = parseJsonl('prompt-only fixture', [
@@ -302,6 +398,63 @@ if (mode === 'regression' || mode === 'regression-red') {
     catch (_) { process.stdout.write(`${label}=rejected\n`); return; }
     fail(`${label} satisfied runtime evidence checks`);
   };
+
+  const retainedTurn = [
+    { type: 'start' },
+    { type: 'quiet-notice', elapsedMinutes: 5 },
+    { type: 'fact', key: 'workflow:wf-smoke:progress:1' },
+    { type: 'relay', key: 'workflow:wf-smoke:progress:1' },
+    { type: 'steer', request: 'publish after review' },
+    { type: 'forward-requested', request: 'publish after review' },
+    { type: 'quiet-notice', elapsedMinutes: 5 },
+    { type: 'terminal', outcome: 'completed' },
+    { type: 'final', outcome: 'completed' },
+  ];
+  verifyRetainedTurn(retainedTurn);
+  process.stdout.write('retained-turn-with-steering=passed\n');
+  const answerableGate = [
+    { type: 'start', aion: 'aion-run' },
+    { type: 'gate-presented', aion: 'aion-run', gate: 'approve publication' },
+    { type: 'user-answer', gate: 'approve publication', answer: 'approved' },
+    { type: 'answer-forwarded', aion: 'aion-run', gate: 'approve publication', answer: 'approved' },
+    { type: 'resume-wait', aion: 'aion-run' },
+    { type: 'fact', aion: 'aion-run', key: 'workflow:wf-smoke:terminal:gate-approved' },
+    { type: 'relay', key: 'workflow:wf-smoke:terminal:gate-approved' },
+    { type: 'terminal', outcome: 'completed' },
+    { type: 'final', outcome: 'completed' },
+  ];
+  verifyRetainedTurn(answerableGate);
+  process.stdout.write('answerable-gate-round-trip=passed\n');
+  assertRejected('gate-answer-forwarded-to-different-aion', () => verifyRetainedTurn(answerableGate.map(event =>
+    event.type === 'answer-forwarded' ? { ...event, aion: 'replacement-aion-run' } : event)));
+  assertRejected('gate-answer-without-resumed-wait', () => verifyRetainedTurn(answerableGate.filter(event => event.type !== 'resume-wait')));
+  assertRejected('replayed-retained-turn-fact', () => verifyRetainedTurn([
+    ...retainedTurn.slice(0, 4),
+    { type: 'relay', key: 'workflow:wf-smoke:progress:1' },
+    ...retainedTurn.slice(4),
+  ]));
+  assertRejected('duplicate-quiet-notice', () => verifyRetainedTurn([
+    retainedTurn[0], retainedTurn[1], retainedTurn[1], ...retainedTurn.slice(2),
+  ]));
+  assertRejected('late-quiet-notice', () => verifyRetainedTurn([
+    retainedTurn[0], { type: 'quiet-notice', elapsedMinutes: 6 }, ...retainedTurn.slice(2),
+  ]));
+  const afterPrematureFinal = [
+    { type: 'start' },
+    { type: 'fact', key: 'workflow:wf-smoke:progress:1' },
+    { type: 'relay', key: 'workflow:wf-smoke:progress:1' },
+    { type: 'premature-final-attempt', outcome: 'completed' },
+    { type: 'fact', key: 'workflow:wf-smoke:progress:2' },
+    { type: 'relay', key: 'workflow:wf-smoke:progress:2' },
+    { type: 'terminal', outcome: 'completed' },
+    { type: 'final', outcome: 'completed' },
+  ];
+  verifyRetainedTurn(afterPrematureFinal);
+  process.stdout.write('premature-final-later-milestone=passed\n');
+  for (const outcome of ['interrupted', 'cancelled', 'timed-out', 'failed', 'blocked', 'needs-user', 'user-owned-gate', 'abandoned']) {
+    verifyRetainedTurn([{ type: 'start' }, { type: 'terminal', outcome }, { type: 'final', outcome }]);
+    process.stdout.write(`terminal-${outcome}=passed\n`);
+  }
   if (verify(validRoot, transcripts) !== 'passed') fail('valid fixture did not satisfy runtime evidence checks');
   process.stdout.write('valid-runtime-evidence=passed\n');
   const silent = (label, rootEvents, transcriptEvents) => {

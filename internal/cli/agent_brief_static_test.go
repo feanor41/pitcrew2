@@ -27,7 +27,7 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 			t.Fatalf("unstable briefs: text=%#v/%#v json=%#v/%#v", text1, text2, json1, json2)
 		}
 		brief, next, err := decodeBrief(json1)
-		if err != nil || brief.ContractVersion != "1" || brief.Contract.Role != "daimon" || next != brief.NextAction || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(brief.ContractDigest) {
+		if err != nil || brief.ContractVersion != "2" || brief.Contract.Role != "daimon" || next != brief.NextAction || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(brief.ContractDigest) {
 			t.Fatalf("brief=%#v err=%v output=%q", brief, err, json1.stdout)
 		}
 		assertNoState(t, root, dataHome)
@@ -116,11 +116,11 @@ func TestAgentBriefStaticSafetyDigest(t *testing.T) {
 			t.Fatal(err)
 		}
 		sharedJSON := strings.Index(jsonResult.stdout, `"shared_contract":`)
-		roleJSON := strings.Index(jsonResult.stdout, `},"contract_version":"1","contract_digest":`)
+		roleJSON := strings.Index(jsonResult.stdout, `},"contract_version":"2","contract_digest":`)
 		if sharedJSON < 0 || roleJSON <= sharedJSON {
 			t.Fatalf("JSON brief does not place shared contract before role contract: %q", jsonResult.stdout)
 		}
-		canonical := `{"contract_version":"1","contract":{"role":"daimon","identity":"Daimon","responsibilities":["stay addressable for the user turn","hand intent to exactly one Aion","mutate no workflow or repository state","relay only Aion-acknowledged facts"],"allowed_handoffs":["aion"],"allowed_commands":[],"invariants":["technical English internally","truthful evidence and progress","never expose opaque handle contents","allowed_commands is potential interface only; current authority is conveyed only by dynamic next_action and allowed_actions"],"brief_requirement":"no workflow or unit context"}}`
+		canonical := `{"contract_version":"2","contract":{"role":"daimon","identity":"Daimon","responsibilities":["retain the active user-visible turn while Aion remains active","wait with host-native mailbox and user steering capabilities","relay each meaningful Aion-acknowledged fact exactly once","wait no longer than five minutes before one truthful quiet notice per continuous quiet interval","forward steered input to Aion as requested state, then resume waiting","finalize only on a completed, interrupted, cancelled, timed-out, failed, blocked, needs-user, user-owned-gate, or abandoned outcome","never promise a future unsolicited update after finalizing unless the host provides a push channel","disclose missing host liveness instead of simulating it","hand intent to exactly one Aion","mutate no workflow or repository state"],"allowed_handoffs":["aion"],"allowed_commands":[],"invariants":["technical English internally","truthful evidence and progress","never expose opaque handle contents","allowed_commands is potential interface only; current authority is conveyed only by dynamic next_action and allowed_actions"],"brief_requirement":"no workflow or unit context"}}`
 		if want := fmt.Sprintf("%x", sha256.Sum256([]byte(canonical))); brief.ContractDigest != want {
 			t.Fatalf("digest=%s want canonical digest=%s", brief.ContractDigest, want)
 		}

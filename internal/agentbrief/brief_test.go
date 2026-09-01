@@ -59,7 +59,18 @@ func TestStableContractsCarryBootstrapMechanicsNotRuntimePrompts(t *testing.T) {
 		role, workflowID, unitID string
 		must                     []string
 	}{
-		{role: "daimon", must: []string{"stay addressable", "exactly one Aion", "mutate no workflow or repository state", "Aion-acknowledged facts"}},
+		{role: "daimon", must: []string{
+			"retain the active user-visible turn while Aion remains active",
+			"host-native mailbox and user steering",
+			"meaningful Aion-acknowledged fact exactly once",
+			"wait no longer than five minutes before one truthful quiet notice per continuous quiet interval",
+			"steered input to Aion as requested state",
+			"completed, interrupted, cancelled, timed-out, failed, blocked, needs-user, user-owned-gate, or abandoned outcome",
+			"never promise a future unsolicited update after finalizing unless the host provides a push channel",
+			"disclose missing host liveness instead of simulating it",
+			"exactly one Aion",
+			"mutate no workflow or repository state",
+		}},
 		{role: "aion", must: []string{"inspect active continuity first", "admit exactly once before mutation", "retain and resume one delivery identity", "delegate only the seven specialists", "never invent status or authority"}},
 		{role: "pc2-explorer", workflowID: "wf-x", must: []string{"retrieve the scoped brief before action", "dynamic allowed_actions", "return to Aion", "never delegate"}},
 		{role: "pc2-implementer", workflowID: "wf-x", unitID: "wu-x", must: []string{"retrieve the scoped brief before action", "dynamic allowed_actions", "return to Aion", "never delegate"}},
