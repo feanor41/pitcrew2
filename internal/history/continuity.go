@@ -1,6 +1,10 @@
 package history
 
-import "context"
+import (
+	"context"
+
+	"github.com/fmazzalomo/pitcrew/internal/delivery"
+)
 
 type ActiveCandidate struct {
 	DeliveryID string `json:"delivery_id"`
@@ -28,15 +32,25 @@ func (s *Service) ActiveContinuity(ctx context.Context) (ActiveContinuity, error
 	}
 	result := EmptyActiveContinuity()
 	result.Count, result.Deliveries = len(deliveries), deliveries
-	for _, delivery := range deliveries {
+	for i, item := range deliveries {
 		kind := "direct_delivery"
-		if delivery.Route == FullWorkflow {
+		nextAction := item.NextAction
+		if item.Route == FullWorkflow {
 			kind = "workflow"
+		} else if item.InspectedRevision == item.Revision {
+			nextAction = delivery.UpdateCommand(item.ID, item.Revision)
+		} else {
+			nextAction = "delivery show --delivery-id " + item.ID
 		}
-		result.Candidates = append(result.Candidates, ActiveCandidate{delivery.ID, kind, delivery.Revision, delivery.Status, delivery.NextAction})
+		result.Deliveries[i].NextAction = nextAction
+		result.Candidates = append(result.Candidates, ActiveCandidate{item.ID, kind, item.Revision, item.Status, nextAction})
 	}
 	if result.Count == 1 {
-		result.NextAction = "delivery show --delivery-id " + result.Candidates[0].DeliveryID
+		candidate := result.Candidates[0]
+		result.NextAction = "delivery show --delivery-id " + candidate.DeliveryID
+		if candidate.Kind == "direct_delivery" && result.Deliveries[0].InspectedRevision == candidate.Revision {
+			result.NextAction = candidate.NextAction
+		}
 	}
 	if result.Count > 1 {
 		result.NextAction = "aion clarify delivery identity"

@@ -6,11 +6,114 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fmazzalomo/pitcrew/internal/history"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
+
+func TestAionDirectDeliveryContinuityRequiresInspectionThenAuthorizesRevisionBoundUpdate(t *testing.T) {
+	root := t.TempDir()
+	start := writeInput(t, root, "start.json", `{"operation_key":"issue-177","route":"direct_inline","goal":"repair direct authority","route_reason":"bounded control-plane bug"}`)
+	started := mustOK(t, runAt(t, root, "delivery", "start", "--actor", "aion", "--input-file", start))
+	id := deliveryID(t, started)
+	show := "delivery show --delivery-id " + id
+	updateRevision1 := "delivery update --delivery-id " + id + " --revision 1 --actor aion --input-file <path>"
+
+	assertAionContinuityAction(t, root, show)
+	shown := mustOK(t, runAt(t, root, "delivery", "show", "--delivery-id", id))
+	if !strings.Contains(string(shown), `"next_action":"delivery update --delivery-id `+id+` --revision 1 --actor aion --input-file`) {
+		t.Fatalf("inspection did not return update authority: %s", shown)
+	}
+	assertAionContinuityAction(t, root, updateRevision1)
+	assertAionContinuityAction(t, root, updateRevision1)
+
+	checkpoint := writeInput(t, root, "checkpoint.json", `{"status":"in_progress","summary":"root cause verified","next_action":"implement fix"}`)
+	mustOK(t, runAt(t, root, "delivery", "update", "--delivery-id", id, "--revision", "1", "--actor", "aion", "--input-file", checkpoint))
+	assertAionContinuityAction(t, root, "delivery show --delivery-id "+id)
+
+	mustOK(t, runAt(t, root, "delivery", "show", "--delivery-id", id))
+	updateRevision2 := "delivery update --delivery-id " + id + " --revision 2 --actor aion --input-file <path>"
+	assertAionContinuityAction(t, root, updateRevision2)
+	if stale := runAt(t, root, "delivery", "update", "--delivery-id", id, "--revision", "1", "--actor", "aion", "--input-file", checkpoint); stale.code != 4 || !strings.Contains(stale.stderr, "delivery show --delivery-id "+id) {
+		t.Fatalf("stale update did not return inspection recovery: %#v", stale)
+	}
+
+	completed := writeInput(t, root, "completed.json", `{"status":"completed","summary":"verified","next_action":"none"}`)
+	mustOK(t, runAt(t, root, "delivery", "update", "--delivery-id", id, "--revision", "2", "--actor", "aion", "--input-file", completed))
+	assertAionContinuityAction(t, root, "aion admit new delivery")
+
+	daimon := runAt(t, root, "agent", "brief", "--role", "daimon", "--json")
+	var daimonDocument struct {
+		Data struct {
+			Brief struct {
+				Context  any `json:"context"`
+				Contract struct {
+					AllowedCommands []string `json:"allowed_commands"`
+				} `json:"contract"`
+			} `json:"brief"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(daimon.stdout), &daimonDocument); daimon.code != 0 || err != nil || daimonDocument.Data.Brief.Context != nil || len(daimonDocument.Data.Brief.Contract.AllowedCommands) != 0 {
+		t.Fatalf("daimon gained direct mutation authority: %#v", daimon)
+	}
+}
+
+func TestAionContinuityReadsPreInspectionSchemaBeforeShowMigratesIt(t *testing.T) {
+	root := t.TempDir()
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB().Exec(`INSERT INTO direct_delivery_traces(id,operation_key,route,goal,route_reason,status,summary,next_action,revision,creator_actor,updater_actor,created_at,updated_at,finished_at) VALUES('dl-111111111111111111111111','legacy-v7','direct_inline','legacy continuity','bounded','in_progress','','',1,'aion','aion','created','updated',NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB().Exec(`DROP TABLE direct_delivery_inspections`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB().Exec(`DELETE FROM schema_migrations WHERE version=8`); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	id := "dl-111111111111111111111111"
+	assertAionContinuityAction(t, root, "delivery show --delivery-id "+id)
+	mustOK(t, runAt(t, root, "delivery", "show", "--delivery-id", id))
+	assertAionContinuityAction(t, root, "delivery update --delivery-id "+id+" --revision 1 --actor aion --input-file <path>")
+}
+
+func assertAionContinuityAction(t *testing.T, root, want string) {
+	t.Helper()
+	jsonBrief := runAt(t, root, "agent", "brief", "--role", "aion", "--json")
+	textBrief := runAt(t, root, "agent", "brief", "--role", "aion")
+	if jsonBrief.code != 0 || textBrief.code != 0 {
+		t.Fatalf("json=%#v text=%#v", jsonBrief, textBrief)
+	}
+	var document struct {
+		Data struct {
+			Brief struct {
+				Context struct {
+					AllowedActions []string `json:"allowed_actions"`
+				} `json:"context"`
+				NextAction string `json:"next_action"`
+			} `json:"brief"`
+		} `json:"data"`
+		NextAction string `json:"next_action"`
+	}
+	if err := json.Unmarshal([]byte(jsonBrief.stdout), &document); err != nil {
+		t.Fatal(err)
+	}
+	brief := document.Data.Brief
+	if brief.NextAction != want || document.NextAction != want || strings.Join(brief.Context.AllowedActions, ",") != want {
+		t.Fatalf("json authority=%s want=%q", jsonBrief.stdout, want)
+	}
+	if !strings.Contains(textBrief.stdout, "next_action: "+want+"\n") || !strings.Contains(textBrief.stdout, `"allowed_actions":["`+strings.TrimSuffix(want, "<path>")) {
+		t.Fatalf("text authority=%s want=%q", textBrief.stdout, want)
+	}
+}
 
 func TestAgentBriefAndDeliveryActiveShareDurableContinuity(t *testing.T) {
 	zeroRoot := t.TempDir()

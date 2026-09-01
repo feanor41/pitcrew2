@@ -41,6 +41,10 @@ func (e *RevisionConflict) Error() string {
 }
 func (e *RevisionConflict) Unwrap() error { return store.ErrCASMismatch }
 
+func UpdateCommand(id string, revision int64) string {
+	return fmt.Sprintf("delivery update --delivery-id %s --revision %d --actor aion --input-file <path>", id, revision)
+}
+
 type Route string
 type Status string
 
@@ -204,6 +208,31 @@ func (s *Service) Update(ctx context.Context, id string, expected int64, actor s
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Trace, error) { return get(ctx, s.db, "id", id) }
+
+// RecordInspection durably acknowledges the exact direct-delivery revision
+// that Aion inspected before resumed mutation. Updating the delivery invalidates
+// the acknowledgement naturally because the trace revision advances.
+func (s *Service) RecordInspection(ctx context.Context, id string, expected int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := get(ctx, tx, "id", id)
+	if err != nil {
+		return err
+	}
+	if current.Revision != expected {
+		return &RevisionConflict{DeliveryID: id, Expected: expected, Current: current.Revision}
+	}
+	if terminal(current.Status) {
+		return nil
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO direct_delivery_inspections(delivery_id,revision) VALUES(?,?) ON CONFLICT(delivery_id) DO UPDATE SET revision=excluded.revision`, id, expected); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 func (s *Service) List(ctx context.Context) ([]Trace, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,operation_key,route,goal,route_reason,status,summary,next_action,revision,creator_actor,updater_actor,created_at,updated_at,finished_at FROM direct_delivery_traces ORDER BY updated_at DESC,id`)

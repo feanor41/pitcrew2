@@ -75,8 +75,8 @@ func TestRoadmapV7RowsRemainInsideCanonicalProjectStore(t *testing.T) {
 func assertRoadmapV7(t *testing.T, s *Store) {
 	t.Helper()
 	var migrations int
-	if err := s.DB().QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != 7 {
-		t.Fatalf("migration count = %d, %v; want 7", migrations, err)
+	if err := s.DB().QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != len(schemaMigrations) {
+		t.Fatalf("migration count = %d, %v; want %d", migrations, err, len(schemaMigrations))
 	}
 	var name string
 	if err := s.DB().QueryRow(`SELECT name FROM schema_migrations WHERE version=7`).Scan(&name); err != nil || name != "roadmap inbox" {
