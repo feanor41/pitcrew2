@@ -245,6 +245,11 @@ is reported through the surrounding coordinator and never creates a separate per
 `operation_key` is idempotent: Identical replay returns the same delivery identity;
 reusing the key with different route, goal, reason, or creator is rejected.
 
+The diagram is decision guidance, not a classifier. Aion owns contextual,
+qualitative route selection: file count may contribute evidence but does not
+determine the route. A stronger route is justified by material risk,
+uncertainty, or an assurance need that the simpler route cannot satisfy.
+
 <!-- cli-docs:diagram:direct-delivery:start -->
 ```mermaid
 stateDiagram-v2
