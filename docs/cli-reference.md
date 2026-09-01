@@ -217,8 +217,7 @@ workflow ID must be assigned at most once to one listed candidate. Consolidation
 can explicitly retain a divergent complete graph that already exists in central
 state by listing its workflow ID in `retain_existing`; each instruction must
 resolve a real central-versus-legacy conflict and cannot overlap `choices`.
-Consolidation copies complete workflow graphs atomically. Source databases and
-WAL files are never deleted or rewritten.
+Consolidation copies complete workflow graphs atomically. Source databases and WAL files are never deleted or rewritten.
 
 ## Delivery routing and admission
 
