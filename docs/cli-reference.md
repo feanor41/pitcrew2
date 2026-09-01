@@ -270,8 +270,13 @@ stateDiagram-v2
 ```
 **Text fallback.** Any non-terminal persisted status may change to any
 non-terminal or terminal status. No-change updates are rejected. Completed,
-cancelled, and failed deliveries are immutable. A stale CAS requires one identity-specific inspection
-with `delivery show` before deciding what to do.
+cancelled, and failed deliveries are immutable. Aion continuity first projects
+an identity-specific `delivery show`. That inspection records only the exact
+revision observed; the next Aion brief then exposes the revision-bound
+`delivery update` action. Any successful update advances the revision and
+therefore requires a fresh inspection before another mutation. A stale CAS requires one identity-specific inspection with `delivery show` before deciding
+what to do, and returns that inspection as recovery. Daimon and specialist
+briefs never project direct-delivery mutation authority.
 <!-- cli-docs:diagram:direct-delivery:end -->
 
 ## Full workflow lifecycle

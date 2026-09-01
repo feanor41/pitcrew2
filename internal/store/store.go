@@ -326,4 +326,9 @@ CREATE TABLE roadmap_bindings (
     UNIQUE(provider, namespace, external_id)
 );
 CREATE INDEX roadmap_items_created ON roadmap_items(created_at DESC, id);
+`}, {Version: 8, Name: "direct delivery inspections", SQL: `
+CREATE TABLE direct_delivery_inspections (
+    delivery_id TEXT PRIMARY KEY REFERENCES direct_delivery_traces(id),
+    revision INTEGER NOT NULL CHECK(revision > 0)
+);
 `}}

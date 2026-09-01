@@ -592,13 +592,24 @@ func runDeliveryShow(args []string, deps Dependencies) int {
 	if !deliveryIDPattern.MatchString(values.one("--delivery-id")) {
 		return fail(deps, ErrUsage, "--delivery-id must be a delivery or workflow ID")
 	}
-	return withReadStore(deps, func(s *store.Store) error {
+	id := values.one("--delivery-id")
+	show := func(s *store.Store, recordInspection bool) error {
 		detail, err := history.New(s).GetDelivery(context.Background(), values.one("--delivery-id"))
 		if err != nil {
 			return err
 		}
+		if recordInspection && detail.Delivery.FinishedAt == "" {
+			if err = delivery.NewService(s, deps.Now).RecordInspection(context.Background(), detail.Delivery.ID, detail.Delivery.Revision); err != nil {
+				return deliveryStateError(err)
+			}
+			detail.Delivery.NextAction = delivery.UpdateCommand(detail.Delivery.ID, detail.Delivery.Revision)
+		}
 		return writeSuccess(deps, detail, detail.Delivery.NextAction)
-	})
+	}
+	if strings.HasPrefix(id, "wf-") {
+		return withReadStore(deps, func(s *store.Store) error { return show(s, false) })
+	}
+	return withStore(deps, func(s *store.Store) error { return show(s, true) })
 }
 
 func runDeliverySearch(args []string, deps Dependencies) int {

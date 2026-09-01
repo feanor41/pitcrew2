@@ -30,19 +30,20 @@ const FullWorkflow = "full_workflow"
 // Delivery is the shared read projection for one physical direct trace or one
 // existing workflow graph. Workflow-only APIs remain available below.
 type Delivery struct {
-	ID          string `json:"id"`
-	Revision    int64  `json:"revision"`
-	Route       string `json:"route"`
-	Status      string `json:"status"`
-	Name        string `json:"name"`
-	NameDerived bool   `json:"name_derived"`
-	Goal        string `json:"goal"`
-	RouteReason string `json:"route_reason,omitempty"`
-	Summary     string `json:"summary,omitempty"`
-	NextAction  string `json:"next_action,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
-	FinishedAt  string `json:"finished_at,omitempty"`
+	ID                string `json:"id"`
+	Revision          int64  `json:"revision"`
+	Route             string `json:"route"`
+	Status            string `json:"status"`
+	Name              string `json:"name"`
+	NameDerived       bool   `json:"name_derived"`
+	Goal              string `json:"goal"`
+	RouteReason       string `json:"route_reason,omitempty"`
+	Summary           string `json:"summary,omitempty"`
+	NextAction        string `json:"next_action,omitempty"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+	FinishedAt        string `json:"finished_at,omitempty"`
+	InspectedRevision int64  `json:"-"`
 }
 
 type DeliveryDetail struct {
@@ -151,14 +152,22 @@ func (s *Service) ListDeliveries(ctx context.Context) ([]Delivery, error) {
 	if err != nil || !hasDirect {
 		return deliveries, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,revision,route,status,goal,route_reason,summary,next_action,created_at,updated_at,COALESCE(finished_at,'') FROM direct_delivery_traces`)
+	hasInspections, err := s.hasTable(ctx, "direct_delivery_inspections")
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT d.id,d.revision,d.route,d.status,d.goal,d.route_reason,d.summary,d.next_action,d.created_at,d.updated_at,COALESCE(d.finished_at,''),0 FROM direct_delivery_traces d`
+	if hasInspections {
+		query = `SELECT d.id,d.revision,d.route,d.status,d.goal,d.route_reason,d.summary,d.next_action,d.created_at,d.updated_at,COALESCE(d.finished_at,''),COALESCE(i.revision,0) FROM direct_delivery_traces d LEFT JOIN direct_delivery_inspections i ON i.delivery_id=d.id`
+	}
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item Delivery
-		if err := rows.Scan(&item.ID, &item.Revision, &item.Route, &item.Status, &item.Goal, &item.RouteReason, &item.Summary, &item.NextAction, &item.CreatedAt, &item.UpdatedAt, &item.FinishedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Revision, &item.Route, &item.Status, &item.Goal, &item.RouteReason, &item.Summary, &item.NextAction, &item.CreatedAt, &item.UpdatedAt, &item.FinishedAt, &item.InspectedRevision); err != nil {
 			return nil, err
 		}
 		item.Name, item.NameDerived = workflowdomain.DisplayName(sql.NullString{}, item.Goal)
@@ -225,9 +234,17 @@ func (s *Service) GetDelivery(ctx context.Context, id string) (DeliveryDetail, e
 	if !hasDirect {
 		return DeliveryDetail{}, sql.ErrNoRows
 	}
+	hasInspections, err := s.hasTable(ctx, "direct_delivery_inspections")
+	if err != nil {
+		return DeliveryDetail{}, err
+	}
 	var item Delivery
-	err = s.db.QueryRowContext(ctx, `SELECT id,revision,route,status,goal,route_reason,summary,next_action,created_at,updated_at,COALESCE(finished_at,'') FROM direct_delivery_traces WHERE id=?`, id).
-		Scan(&item.ID, &item.Revision, &item.Route, &item.Status, &item.Goal, &item.RouteReason, &item.Summary, &item.NextAction, &item.CreatedAt, &item.UpdatedAt, &item.FinishedAt)
+	query := `SELECT d.id,d.revision,d.route,d.status,d.goal,d.route_reason,d.summary,d.next_action,d.created_at,d.updated_at,COALESCE(d.finished_at,''),0 FROM direct_delivery_traces d WHERE d.id=?`
+	if hasInspections {
+		query = `SELECT d.id,d.revision,d.route,d.status,d.goal,d.route_reason,d.summary,d.next_action,d.created_at,d.updated_at,COALESCE(d.finished_at,''),COALESCE(i.revision,0) FROM direct_delivery_traces d LEFT JOIN direct_delivery_inspections i ON i.delivery_id=d.id WHERE d.id=?`
+	}
+	err = s.db.QueryRowContext(ctx, query, id).
+		Scan(&item.ID, &item.Revision, &item.Route, &item.Status, &item.Goal, &item.RouteReason, &item.Summary, &item.NextAction, &item.CreatedAt, &item.UpdatedAt, &item.FinishedAt, &item.InspectedRevision)
 	if err != nil {
 		return DeliveryDetail{}, err
 	}
