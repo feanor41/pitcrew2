@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/fmazzalomo/pitcrew/internal/history"
+	"github.com/fmazzalomo/pitcrew/internal/project"
 )
 
 const minWidth, minHeight = 60, 16
@@ -182,6 +183,9 @@ func (m Model) workflowsView() string {
 		return strings.Join(append(lines, "Loading deliveries…"), "\n")
 	}
 	if m.err != nil && (!m.loadPreserves || !hasData) {
+		if errors.Is(m.err, project.ErrMigrationRequired) {
+			return m.legacyConsolidationView(lines)
+		}
 		return strings.Join(append(lines, "Could not load deliveries.", ellipsize(m.err.Error(), m.width)), "\n")
 	}
 	if !hasData {
@@ -194,6 +198,19 @@ func (m Model) workflowsView() string {
 	}
 	gridHeight := max(4, m.height-6-len(lines))
 	return strings.Join(append(lines, m.workflowGrid(gridHeight)), "\n")
+}
+
+func (m Model) legacyConsolidationView(lines []string) string {
+	lines = append(lines, flight.warn.Render(ellipsize("CONSOLIDATION REQUIRED", m.width)))
+	for _, line := range []string{
+		"Legacy PitCrew history was found.",
+		"Run: pitcrew project inspect",
+		"Consolidate the exact candidate set, then press r.",
+		"No history was modified.",
+	} {
+		lines = append(lines, ellipsize(line, m.width))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) workflowGrid(height int) string {
