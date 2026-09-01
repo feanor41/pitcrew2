@@ -71,7 +71,18 @@ func TestStableContractsCarryBootstrapMechanicsNotRuntimePrompts(t *testing.T) {
 			"exactly one Aion",
 			"mutate no workflow or repository state",
 		}},
-		{role: "aion", must: []string{"inspect active continuity first", "admit exactly once before mutation", "retain and resume one delivery identity", "delegate only the seven specialists", "never invent status or authority"}},
+		{role: "aion", must: []string{
+			"inspect active continuity first",
+			"admit exactly once before mutation",
+			"retain and resume one delivery identity",
+			"contextually select the least-demanding sufficient route",
+			"file count is evidence, never a classifier",
+			"same file count may select different routes when risk or uncertainty differs",
+			"larger mechanical already-decided change may remain direct",
+			"name the protected constraint and why the simpler route is materially insufficient",
+			"delegate only the seven specialists",
+			"never invent status or authority",
+		}},
 		{role: "pc2-explorer", workflowID: "wf-x", must: []string{"retrieve the scoped brief before action", "dynamic allowed_actions", "return to Aion", "never delegate"}},
 		{role: "pc2-implementer", workflowID: "wf-x", unitID: "wu-x", must: []string{"retrieve the scoped brief before action", "dynamic allowed_actions", "return to Aion", "never delegate"}},
 		{role: "pc2-reviewer", workflowID: "wf-x", must: []string{"retrieve the scoped brief before action", "dynamic allowed_actions", "return to Aion", "never delegate"}},
@@ -86,6 +97,33 @@ func TestStableContractsCarryBootstrapMechanicsNotRuntimePrompts(t *testing.T) {
 			if !strings.Contains(contract, required) {
 				t.Fatalf("%s stable contract omitted %q: %s", tc.role, required, contract)
 			}
+		}
+	}
+}
+
+func TestAionContractOwnsQualitativeContextualRouting(t *testing.T) {
+	brief, err := New("aion", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := strings.Join(brief.Contract.Responsibilities, "; ")
+	for _, required := range []string{
+		"contextually select the least-demanding sufficient route",
+		"direct_inline for safe well-understood coordinator work",
+		"delegated_direct when a bounded specialist handoff materially helps straightforward work",
+		"full_workflow when durable reasoning, evidence, or independent aggregate assurance is materially necessary",
+		"file count is evidence, never a classifier",
+		"same file count may select different routes when risk or uncertainty differs",
+		"larger mechanical already-decided change may remain direct",
+		"name the protected constraint and why the simpler route is materially insufficient",
+	} {
+		if !strings.Contains(contract, required) {
+			t.Fatalf("Aion routing contract omitted %q: %s", required, contract)
+		}
+	}
+	for _, forbidden := range []string{"at most three files", "four or more files"} {
+		if strings.Contains(contract, forbidden) {
+			t.Fatalf("Aion routing contract retained deterministic threshold %q: %s", forbidden, contract)
 		}
 	}
 }

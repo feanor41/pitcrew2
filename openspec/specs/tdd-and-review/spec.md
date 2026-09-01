@@ -124,7 +124,39 @@ Structured aggregate approval SHALL require successful current `focused` and `af
 
 ### Requirement: Proportional external routing
 
-Aion SHALL directly implement and verify well-understood low-risk work affecting at most three files without claiming independent approval. Simple work affecting four or more files SHALL use direct delegation to pc2-implementer followed by one independent complete-change review. Complexity, impact, requirements, architecture, security, migrations, persistence, irreversibility, or uncertainty SHALL require the full workflow regardless of size. The CLI SHALL NOT classify routes. Aion SHALL coordinate corrections and fresh aggregate review without blindly retrying unchanged state or CAS failures.
+Aion SHALL contextually select the least-demanding route that fully satisfies
+the outcome, material risks, and constraints. Aion SHALL select `direct_inline`
+for safe, well-understood coordinator work; `delegated_direct` when a bounded
+specialist handoff materially helps straightforward work; and `full_workflow`
+when durable exploration, specification, design, planning, evidence, or
+independent aggregate assurance is materially necessary. File count MAY inform
+the judgment but SHALL NOT determine it. When selecting a stronger route, Aion
+SHALL record the protected constraint and why the simpler route is materially
+insufficient. The CLI SHALL record the selected route and rationale and SHALL
+NOT classify work. Aion SHALL coordinate corrections and fresh aggregate
+review without blindly retrying unchanged state or CAS failures.
+
+#### Scenario: Equal file counts permit different routes
+
+- GIVEN two changes affect the same number of files
+- AND one is safe, mechanical, and already decided while the other carries material uncertainty
+- WHEN Aion selects their routes
+- THEN Aion MAY select a direct route for the first and `full_workflow` for the second
+- AND the stronger selection SHALL name the uncertainty and why direct work is insufficient
+
+#### Scenario: Larger mechanical work remains direct
+
+- GIVEN an already-decided mechanical change affects a larger set of files
+- AND no material risk, uncertainty, durable reasoning need, or independent aggregate assurance requires a stronger route
+- WHEN Aion selects the least-demanding sufficient route
+- THEN Aion MAY keep the change direct regardless of file count
+
+#### Scenario: Bounded handoff materially helps
+
+- GIVEN straightforward work would materially benefit from one bounded specialist handoff
+- AND durable full-workflow reasoning and aggregate assurance are unnecessary
+- WHEN Aion selects the route
+- THEN Aion MAY select `delegated_direct` and record why inline work is insufficient
 
 #### Scenario: Trivial bypass is external
 
