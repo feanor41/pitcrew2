@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fmazzalomo/pitcrew/internal/activity"
@@ -75,6 +77,15 @@ func (s *Service) Submit(ctx context.Context, workflowID string, expected int64,
 		for _, coverage := range unit.Coverage {
 			for _, scenarioID := range coverage.ScenarioIDs {
 				if _, err = tx.ExecContext(ctx, `INSERT INTO unit_coverage(workflow_id,unit_id,requirement_id,scenario_id) VALUES(?,?,?,?)`, workflowID, unit.ID, coverage.RequirementID, scenarioID); err != nil {
+					return workflow.Workflow{}, err
+				}
+			}
+		}
+	}
+	for _, unit := range p.Units {
+		for _, consumption := range unit.DependencyConsumptions {
+			for _, scenarioID := range consumption.ScenarioIDs {
+				if _, err = tx.ExecContext(ctx, `INSERT INTO unit_dependency_consumptions(workflow_id,consumer_unit_id,producer_unit_id,scenario_id) VALUES(?,?,?,?)`, workflowID, unit.ID, consumption.ProducerUnitID, scenarioID); err != nil {
 					return workflow.Workflow{}, err
 				}
 			}
@@ -222,7 +233,6 @@ func (s *Service) Ready(ctx context.Context, workflowID string) ([]WorkUnit, err
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var claim ClaimStatus
 		var expiry string
@@ -235,7 +245,56 @@ func (s *Service) Ready(ctx context.Context, workflowID string) ([]WorkUnit, err
 		}
 		claims = append(claims, claim)
 	}
-	return ReadyUnitsAt(p, claims, s.now()), rows.Err()
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	satisfied, err := s.satisfiedDependencyResults(ctx, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	return readyUnits(p, ActiveClaims(claims, s.now()), satisfied), nil
+}
+
+func (s *Service) satisfiedDependencyResults(ctx context.Context, workflowID string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT c.consumer_unit_id,c.producer_unit_id,c.scenario_id,p.state,v.outcome
+FROM unit_dependency_consumptions c
+JOIN work_units p ON p.workflow_id=c.workflow_id AND p.id=c.producer_unit_id
+LEFT JOIN verification_records v ON v.workflow_id=c.workflow_id AND v.unit_id=c.producer_unit_id AND v.unit_revision=p.revision
+ AND EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(v.scenario_ids_json) THEN v.scenario_ids_json ELSE '[]' END) WHERE value=c.scenario_id)
+ AND EXISTS(SELECT 1 FROM evidence e WHERE e.workflow_id=v.workflow_id AND e.unit_id=v.unit_id AND e.revision=v.unit_revision)
+WHERE c.workflow_id=?`, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string]bool{}
+	for rows.Next() {
+		var consumer, producer, scenario string
+		var state UnitState
+		var outcome sql.NullString
+		if err = rows.Scan(&consumer, &producer, &scenario, &state, &outcome); err != nil {
+			return nil, err
+		}
+		if state == Done && outcome.Valid && passingOutcome(outcome.String) {
+			result[dependencyResultKey(consumer, producer, scenario)] = true
+		}
+	}
+	return result, rows.Err()
+}
+
+func passingOutcome(outcome string) bool {
+	text := strings.TrimSpace(outcome)
+	if !strings.HasPrefix(text, "exit ") {
+		return false
+	}
+	code := strings.TrimSpace(strings.TrimPrefix(text, "exit "))
+	if before, _, found := strings.Cut(code, ":"); found {
+		code = strings.TrimSpace(before)
+	}
+	parsed, err := strconv.Atoi(code)
+	return err == nil && parsed == 0
 }
 
 func (s *Service) load(ctx context.Context, workflowID string) (Plan, error) {

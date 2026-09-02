@@ -331,4 +331,14 @@ CREATE TABLE direct_delivery_inspections (
     delivery_id TEXT PRIMARY KEY REFERENCES direct_delivery_traces(id),
     revision INTEGER NOT NULL CHECK(revision > 0)
 );
+`}, {Version: 9, Name: "causal dependency consumption", SQL: `
+CREATE TABLE unit_dependency_consumptions (
+    workflow_id TEXT NOT NULL REFERENCES workflows(id),
+    consumer_unit_id TEXT NOT NULL,
+    producer_unit_id TEXT NOT NULL,
+    scenario_id TEXT NOT NULL,
+    PRIMARY KEY(workflow_id, consumer_unit_id, producer_unit_id, scenario_id),
+    FOREIGN KEY(workflow_id, consumer_unit_id) REFERENCES work_units(workflow_id, id),
+    FOREIGN KEY(workflow_id, producer_unit_id) REFERENCES work_units(workflow_id, id)
+);
 `}}

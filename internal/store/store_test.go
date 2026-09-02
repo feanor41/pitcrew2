@@ -322,6 +322,38 @@ func TestMigrationV6AddsBoundedCoordinationFoundationsWithoutRewritingV5(t *test
 	}
 }
 
+func TestMigrationV9PreservesV8WorkflowGraphWithoutInventingCausality(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	legacy := openStoreAtMigration(t, root, 8)
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-v8',7,'implementing','preserve','created','updated')`,
+		`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES('wu-v8','wf-v8','legacy','internal','[]','[]',3,2,'pending',1)`,
+		`INSERT INTO plans(workflow_id,summary,scope,max_parallel_units,body) VALUES('wf-v8','legacy','internal',1,'{"summary":"legacy","scope":"internal","work_units":[],"max_parallel_units":1}')`,
+	} {
+		if _, err := legacy.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = legacy.Close()
+	migrated, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var preserved string
+	if err = migrated.DB().QueryRowContext(ctx, `SELECT w.revision||':'||w.state||':'||u.description||':'||u.estimated_changed_lines FROM workflows w JOIN work_units u ON u.workflow_id=w.id WHERE w.id='wf-v8'`).Scan(&preserved); err != nil {
+		t.Fatal(err)
+	}
+	var causalRows int
+	if err = migrated.DB().QueryRowContext(ctx, `SELECT count(*) FROM unit_dependency_consumptions`).Scan(&causalRows); err != nil {
+		t.Fatal(err)
+	}
+	if preserved != "7:implementing:legacy:3" || causalRows != 0 {
+		t.Fatalf("v8 migration changed graph or invented causality: preserved=%q causal=%d", preserved, causalRows)
+	}
+}
+
 func TestMigrationV6FoundationsBindReferencedRecords(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

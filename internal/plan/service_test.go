@@ -89,6 +89,35 @@ func TestHistoricalPlanLoadProjectsDefaultWithoutRewritingBody(t *testing.T) {
 	}
 }
 
+func TestHistoricalOrderingOnlyPlanRetainsDoneDependencyReadiness(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	const workflowID = "wf-historical-ready"
+	producer, consumer := "wu-historical-producer", "wu-historical-consumer"
+	body := `{"summary":"legacy","scope":"internal","work_units":[{"id":"` + producer + `","description":"producer","scope":"internal/a","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"` + consumer + `","description":"consumer","scope":"internal/b","areas":[],"depends_on":["` + producer + `"],"estimated_changed_lines":1,"estimated_review_minutes":1}],"max_parallel_units":1}`
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES(?,1,'implementing','goal','now','now')`, []any{workflowID}},
+		{`INSERT INTO plans(workflow_id,summary,scope,max_parallel_units,body) VALUES(?,'legacy','internal',1,?)`, []any{workflowID, body}},
+		{`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,?,'producer','internal/a','[]','[]',1,1,'done',1)`, []any{producer, workflowID}},
+		{`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,?,'consumer','internal/b','[]',?,1,1,'pending',1)`, []any{consumer, workflowID, `["` + producer + `"]`}},
+	} {
+		if _, err = s.DB().ExecContext(ctx, statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ready, err := NewService(s, time.Now).Ready(ctx, workflowID)
+	if err != nil || len(ready) != 1 || ready[0].ID != consumer {
+		t.Fatalf("historical readiness = %#v, %v", ready, err)
+	}
+}
+
 func TestCoverageSubmissionRequiresStructuredSpecificationAndPersistsPairs(t *testing.T) {
 	ctx := context.Background()
 	s, err := store.Open(ctx, t.TempDir())
@@ -323,4 +352,127 @@ func TestReadyIgnoresReviewAuthority(t *testing.T) {
 	if len(ready) != 1 || ready[0].ID != unitID {
 		t.Fatalf("review authority changed readiness: %#v", ready)
 	}
+}
+
+func TestCausalDependencySubmissionPersistsExactProducerSelectors(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	const workflowID = "wf-000000000000000000000185"
+	_, _ = s.DB().ExecContext(ctx, `INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES(?,1,'designing','goal','now','now')`, workflowID)
+	artifact, _ := s.DB().ExecContext(ctx, `INSERT INTO artifacts(workflow_id,kind,content,actor,accepted_revision,recorded_at) VALUES(?,'specification','structured','specifier',1,'now')`, workflowID)
+	artifactID, _ := artifact.LastInsertId()
+	for _, row := range [][3]string{{"requirement", "REQ-DEP", ""}, {"scenario", "SCN-PRODUCED", "REQ-DEP"}, {"scenario", "SCN-CONSUMER", "REQ-DEP"}} {
+		var parent any
+		if row[2] != "" {
+			parent = row[2]
+		}
+		_, _ = s.DB().ExecContext(ctx, `INSERT INTO normative_entries(workflow_id,artifact_id,phase,entry_kind,stable_id,parent_id,operation,body_json) VALUES(?,?,?,?,?,?,'add','{}')`, workflowID, artifactID, "specification", row[0], row[1], parent)
+	}
+	p := validPlan()
+	p.Units[0].Coverage = []Coverage{{RequirementID: "REQ-DEP", ScenarioIDs: []string{"SCN-PRODUCED"}}}
+	p.Units[1].Coverage = []Coverage{{RequirementID: "REQ-DEP", ScenarioIDs: []string{"SCN-CONSUMER"}}}
+	p.Units[1].DependsOn = []string{p.Units[0].ID}
+	p.Units[1].DependencyConsumptions = []DependencyConsumption{{ProducerUnitID: p.Units[0].ID, ScenarioIDs: []string{"SCN-PRODUCED"}}}
+	invalid := p
+	invalid.Units = append([]WorkUnit(nil), p.Units...)
+	invalid.Units[1].DependencyConsumptions = nil
+	if _, err = NewService(s, time.Now).Submit(ctx, workflowID, 1, "planner", invalid); err == nil {
+		t.Fatal("ordering-only submission accepted")
+	}
+	var revision, plans int
+	var state string
+	_ = s.DB().QueryRowContext(ctx, `SELECT revision,state FROM workflows WHERE id=?`, workflowID).Scan(&revision, &state)
+	_ = s.DB().QueryRowContext(ctx, `SELECT count(*) FROM plans WHERE workflow_id=?`, workflowID).Scan(&plans)
+	if revision != 1 || state != "designing" || plans != 0 {
+		t.Fatalf("invalid causal submission mutated workflow: revision=%d state=%s plans=%d", revision, state, plans)
+	}
+	_, _ = s.DB().ExecContext(ctx, `CREATE TRIGGER fail_causal_persist BEFORE INSERT ON unit_dependency_consumptions BEGIN SELECT RAISE(FAIL,'injected persistence failure'); END`)
+	if _, err = NewService(s, time.Now).Submit(ctx, workflowID, 1, "planner", p); err == nil {
+		t.Fatal("injected persistence failure was ignored")
+	}
+	var units, coverage, consumptions int
+	_ = s.DB().QueryRowContext(ctx, `SELECT revision,state FROM workflows WHERE id=?`, workflowID).Scan(&revision, &state)
+	_ = s.DB().QueryRowContext(ctx, `SELECT (SELECT count(*) FROM plans WHERE workflow_id=?),(SELECT count(*) FROM work_units WHERE workflow_id=?),(SELECT count(*) FROM unit_coverage WHERE workflow_id=?),(SELECT count(*) FROM unit_dependency_consumptions WHERE workflow_id=?)`, workflowID, workflowID, workflowID, workflowID).Scan(&plans, &units, &coverage, &consumptions)
+	if revision != 1 || state != "designing" || plans+units+coverage+consumptions != 0 {
+		t.Fatalf("failed persistence was not atomic: revision=%d state=%s rows=%d/%d/%d/%d", revision, state, plans, units, coverage, consumptions)
+	}
+	_, _ = s.DB().ExecContext(ctx, `DROP TRIGGER fail_causal_persist`)
+	if _, err = NewService(s, time.Now).Submit(ctx, workflowID, 1, "planner", p); err != nil {
+		t.Fatal(err)
+	}
+	var producer, scenario string
+	if err = s.DB().QueryRowContext(ctx, `SELECT producer_unit_id,scenario_id FROM unit_dependency_consumptions WHERE workflow_id=? AND consumer_unit_id=?`, workflowID, p.Units[1].ID).Scan(&producer, &scenario); err != nil {
+		t.Fatal(err)
+	}
+	if producer != p.Units[0].ID || scenario != "SCN-PRODUCED" {
+		t.Fatalf("persisted causal selector = %s/%s", producer, scenario)
+	}
+}
+
+func TestReadyRequiresExactPassingCurrentProducerResultForTypedDependency(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	const workflowID = "wf-causal-ready"
+	producer, consumer := "wu-000000000000000000000181", "wu-000000000000000000000182"
+	p := Plan{Summary: "causal", Scope: "internal", MaxParallelUnits: 1, Units: []WorkUnit{
+		{ID: producer, Description: "producer", Scope: "internal/a", Areas: []string{}, State: Done},
+		{ID: consumer, Description: "consumer", Scope: "internal/b", Areas: []string{}, DependsOn: []string{producer}, DependencyConsumptions: []DependencyConsumption{{ProducerUnitID: producer, ScenarioIDs: []string{"SCN-RESULT"}}}},
+	}}
+	body, _ := json.Marshal(p)
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES(?,1,'implementing','goal','now','now')`, []any{workflowID}},
+		{`INSERT INTO plans(workflow_id,summary,scope,max_parallel_units,body) VALUES(?,?,?,?,?)`, []any{workflowID, p.Summary, p.Scope, 1, string(body)}},
+		{`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,?,?,?,?,?,?,?,?,2)`, []any{producer, workflowID, "producer", "internal/a", `[]`, `[]`, 1, 1, Done}},
+		{`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,?,?,?,?,?,?,?,?,1)`, []any{consumer, workflowID, "consumer", "internal/b", `[]`, `["` + producer + `"]`, 1, 1, Pending}},
+		{`INSERT INTO unit_dependency_consumptions(workflow_id,consumer_unit_id,producer_unit_id,scenario_id) VALUES(?,?,?,?)`, []any{workflowID, consumer, producer, "SCN-RESULT"}},
+	}
+	for _, statement := range statements {
+		if _, err = s.DB().ExecContext(ctx, statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertRun := func(id, unit string, revision int, outcome string) {
+		t.Helper()
+		_, err = s.DB().ExecContext(ctx, `INSERT INTO verification_records(id,workflow_id,unit_id,unit_revision,tier,command,outcome,fingerprint,scenario_ids_json,actor,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,'tester','now')`, id, workflowID, unit, revision, "focused", "test", outcome, "fingerprint", `["SCN-RESULT"]`)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertReady := func(want int) {
+		t.Helper()
+		ready, readyErr := NewService(s, time.Now).Ready(ctx, workflowID)
+		if readyErr != nil || len(ready) != want {
+			t.Fatalf("Ready() = %#v, %v; want %d units", ready, readyErr, want)
+		}
+	}
+	insertRun("stale", producer, 1, "exit 0")
+	insertRun("wrong-producer", consumer, 1, "exit 0")
+	assertReady(0)
+	const foreignWorkflow, foreignUnit = "wf-foreign-ready", "wu-foreign-producer"
+	_, _ = s.DB().ExecContext(ctx, `INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES(?,1,'implementing','foreign','now','now')`, foreignWorkflow)
+	_, _ = s.DB().ExecContext(ctx, `INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES(?,?,'foreign','internal/foreign','[]','[]',1,1,'done',2)`, foreignUnit, foreignWorkflow)
+	_, _ = s.DB().ExecContext(ctx, `INSERT INTO verification_records(id,workflow_id,unit_id,unit_revision,tier,command,outcome,fingerprint,scenario_ids_json,actor,recorded_at) VALUES('foreign-result',?,?,2,'focused','test','exit 0','fingerprint','["SCN-RESULT"]','tester','now')`, foreignWorkflow, foreignUnit)
+	_, _ = s.DB().ExecContext(ctx, `INSERT INTO evidence(workflow_id,unit_id,revision,actor,red_command,red_outcome,green_command,green_outcome,refactor_summary,validation_command,validation_outcome,changed_paths,recorded_at) VALUES(?,?,2,'tester','red','exit 1','green','exit 0','','all','exit 0','internal','now')`, foreignWorkflow, foreignUnit)
+	assertReady(0)
+	_, _ = s.DB().ExecContext(ctx, `INSERT INTO verification_records(id,workflow_id,unit_id,unit_revision,tier,command,outcome,fingerprint,scenario_ids_json,actor,recorded_at) VALUES('malformed',?,?,2,'focused','test','exit 0','fingerprint','not-json','tester','now')`, workflowID, producer)
+	assertReady(0)
+	insertRun("current", producer, 2, "exit 1")
+	assertReady(0)
+	_, _ = s.DB().ExecContext(ctx, `UPDATE verification_records SET outcome='exit 0' WHERE id='current'`)
+	assertReady(0)
+	_, _ = s.DB().ExecContext(ctx, `INSERT INTO evidence(workflow_id,unit_id,revision,actor,red_command,red_outcome,green_command,green_outcome,refactor_summary,validation_command,validation_outcome,changed_paths,recorded_at) VALUES(?,?,2,'tester','red','exit 1','green','exit 0','','all','exit 0','internal','now')`, workflowID, producer)
+	assertReady(1)
+	_, _ = s.DB().ExecContext(ctx, `UPDATE work_units SET revision=3 WHERE id=?`, producer)
+	assertReady(0)
 }
