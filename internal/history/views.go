@@ -96,6 +96,7 @@ func (s *Service) coordination(ctx context.Context, wf Workflow) (Coordination, 
 	}
 	for id, unit := range units {
 		unit.status.Status, unit.status.Reason = classify(unit, states, ready[id], s.now())
+		units[id] = unit
 		if unit.status.Status == "Ready" {
 			result.Ready = append(result.Ready, unit.status)
 		}
@@ -110,6 +111,10 @@ func (s *Service) coordination(ctx context.Context, wf Workflow) (Coordination, 
 				}
 			}
 		}
+	}
+	if completion := completionCandidate(units, result.Current); completion != nil {
+		result.Current = completion
+		result.NextAction = "workflow unit-complete"
 	}
 	sort.Slice(result.Ready, func(i, j int) bool { return result.Ready[i].ID < result.Ready[j].ID })
 	projected, err := correction.Project(ctx, s.db, wf.ID, result.NextAction)

@@ -86,10 +86,10 @@ func TestAgentBriefDynamicContextsAreBoundedAndRoleLocal(t *testing.T) {
 			}
 		}
 	}
-	if phase["next_action"] != "return to aion" || unit["next_action"] != "return to aion" || reviewer["next_action"] != "workflow unit-review" || aggregate["next_action"] != "workflow complete" {
+	if phase["next_action"] != "return to aion" || unit["next_action"] != "return to aion" || reviewer["next_action"] != "return to aion" || aggregate["next_action"] != "workflow complete" {
 		t.Fatalf("role-local actions: phase=%v unit=%v reviewer=%v aggregate=%v", phase["next_action"], unit["next_action"], reviewer["next_action"], aggregate["next_action"])
 	}
-	if len(stringSlice(phase["allowed_actions"])) != 0 || len(stringSlice(unit["allowed_actions"])) != 0 || strings.Join(stringSlice(reviewer["allowed_actions"]), ",") != "workflow unit-review" || strings.Join(stringSlice(aggregate["allowed_actions"]), ",") != "workflow complete" {
+	if len(stringSlice(phase["allowed_actions"])) != 0 || len(stringSlice(unit["allowed_actions"])) != 0 || len(stringSlice(reviewer["allowed_actions"])) != 0 || strings.Join(stringSlice(aggregate["allowed_actions"]), ",") != "workflow complete" {
 		t.Fatalf("dynamic authorities: phase=%v unit=%v reviewer=%v aggregate=%v", phase["allowed_actions"], unit["allowed_actions"], reviewer["allowed_actions"], aggregate["allowed_actions"])
 	}
 	unitJSON, reviewerJSON, aggregateJSON := mustJSON(unit), mustJSON(reviewer), mustJSON(aggregate)

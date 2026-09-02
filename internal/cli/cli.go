@@ -1014,7 +1014,15 @@ func runReady(args []string, deps Dependencies) int {
 		if err != nil {
 			return err
 		}
-		return writeSuccess(deps, map[string]any{"units": units}, "workflow claim-unit")
+		projected, projectionErr := history.New(s, deps.Now).Project(context.Background(), values.one("--workflow-id"), history.ViewCoordination, "")
+		if projectionErr != nil {
+			return projectionErr
+		}
+		next := projected.Coordination.NextAction
+		if next == "workflow list-ready-units" && len(units) != 0 {
+			next = "workflow claim-unit"
+		}
+		return writeSuccess(deps, map[string]any{"units": units}, next)
 	})
 }
 func runBeginImplementation(args []string, deps Dependencies) int {
