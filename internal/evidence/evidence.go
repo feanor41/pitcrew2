@@ -694,10 +694,21 @@ func (s *Service) enforceChangeBudget(ctx context.Context, tx *sql.Tx, wfID, uni
 	}
 	if stage == "completion" {
 		var evidenceDigest, reviewedDigest string
-		if err = tx.QueryRowContext(ctx, `SELECT result_digest,coalesce(reviewed_digest,'') FROM unit_change_measurements WHERE workflow_id=? AND unit_id=? AND unit_revision=? AND stage='evidence'`, wfID, unitID, revision).Scan(&evidenceDigest, &reviewedDigest); err != nil || reviewedDigest == "" || reviewedDigest != evidenceDigest {
+		if err = tx.QueryRowContext(ctx, `SELECT result_digest,coalesce(reviewed_digest,'') FROM unit_change_measurements WHERE workflow_id=? AND unit_id=? AND unit_revision=? AND stage='evidence'`, wfID, unitID, revision).Scan(&evidenceDigest, &reviewedDigest); err != nil {
 			return errors.New("changed-line evidence has not been approved for completion")
 		}
-		if measurement.ResultDigest != reviewedDigest {
+		expectedDigest := evidenceDigest
+		var reviews int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews WHERE workflow_id=? AND unit_id=? AND revision=?`, wfID, unitID, revision).Scan(&reviews); err != nil {
+			return err
+		}
+		if reviews != 0 {
+			if reviewedDigest == "" || reviewedDigest != evidenceDigest {
+				return errors.New("changed-line evidence has not been approved for completion")
+			}
+			expectedDigest = reviewedDigest
+		}
+		if measurement.ResultDigest != expectedDigest {
 			return errors.New("repository changed after review; record new evidence and review")
 		}
 	}
