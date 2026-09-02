@@ -3,12 +3,14 @@ package handles
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,6 +20,73 @@ import (
 
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
+
+func TestImplementationClaimCapturesOneCleanScopedBaselineAndReusesIt(t *testing.T) {
+	m, s, clock, wfID, unitID := testManager(t)
+	checkout := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", checkout}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	run("init", "--quiet")
+	run("config", "user.email", "pitcrew@example.test")
+	run("config", "user.name", "PitCrew Test")
+	if err := os.Mkdir(filepath.Join(checkout, "internal"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "internal", "base.txt"), []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "--quiet", "-m", "base")
+	if err := os.WriteFile(filepath.Join(checkout, "outside.txt"), []byte("allowed dirt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE work_units SET areas='[]' WHERE workflow_id=? AND id=?`, wfID, unitID); err != nil {
+		t.Fatal(err)
+	}
+	m.WithProjectRoot(checkout)
+	if err := os.WriteFile(filepath.Join(checkout, "internal", "dirty.txt"), []byte("dirty\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "dirty")); err == nil || !strings.Contains(err.Error(), "must be clean") {
+		t.Fatalf("dirty claim error=%v", err)
+	}
+	var claims, baselines int
+	_ = s.DB().QueryRow(`SELECT count(*) FROM handles WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&claims)
+	_ = s.DB().QueryRow(`SELECT count(*) FROM unit_change_baselines WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&baselines)
+	if claims != 0 || baselines != 0 {
+		t.Fatalf("dirty claim mutated state: claims=%d baselines=%d", claims, baselines)
+	}
+	m.entropy = rand.Reader
+	if err := os.Remove(filepath.Join(checkout, "internal", "dirty.txt")); err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.Issue(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var baseRevision, scopesJSON string
+	if err = s.DB().QueryRow(`SELECT base_revision,scopes_json FROM unit_change_baselines WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&baseRevision, &scopesJSON); err != nil {
+		t.Fatal(err)
+	}
+	if scopesJSON != `["internal"]` {
+		t.Fatalf("scopes=%s", scopesJSON)
+	}
+	clock.advance(16 * time.Minute)
+	if _, err = m.Use(context.Background(), first.Path, "implementer", TDD); !errors.Is(err, ErrExpired) {
+		t.Fatalf("expire before recovery: %v", err)
+	}
+	if _, err = m.Recover(context.Background(), wfID, unitID, "implementer", filepath.Join(t.TempDir(), "second")); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = s.DB().QueryRow(`SELECT count(*) FROM unit_change_baselines WHERE workflow_id=? AND unit_id=? AND base_revision=?`, wfID, unitID, baseRevision).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("baseline count=%d err=%v", count, err)
+	}
+}
 
 func TestIssueWritesOpaqueIntentHandleWithStrictOwnershipAndModes(t *testing.T) {
 	m, db, clock, wfID, unitID := testManager(t)
