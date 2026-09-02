@@ -112,6 +112,9 @@ func (s *Service) coordination(ctx context.Context, wf Workflow) (Coordination, 
 			}
 		}
 	}
+	if result.Current != nil && result.Current.Status == "Reviewing" {
+		result.NextAction = "workflow handoff-review"
+	}
 	if completion := completionCandidate(units, result.Current); completion != nil {
 		result.Current = completion
 		result.NextAction = "workflow unit-complete"

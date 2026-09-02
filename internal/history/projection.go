@@ -117,6 +117,9 @@ func (s *Service) project(ctx context.Context, detail *Detail) error {
 		}
 		detail.Synopsis.Total++
 	}
+	if detail.Synopsis.Current != nil && detail.Synopsis.Current.Status == "Reviewing" {
+		detail.Synopsis.NextAction = "workflow handoff-review"
+	}
 	if completion := completionCandidate(units, detail.Synopsis.Current); completion != nil {
 		detail.Synopsis.Current = completion
 		detail.Synopsis.NextAction = "workflow unit-complete"
@@ -197,12 +200,12 @@ func classify(unit unitFact, states map[string]string, ready bool, now time.Time
 		return "Unknown", ""
 	case unit.state == "done":
 		return "Done", ""
+	case unit.state == "reviewing":
+		return "Reviewing", ""
 	case plan.ClaimActive(unit.claim, now):
 		return "Claimed", ""
 	case unit.state == "pending" && unit.correction != nil:
 		return "Correction", unit.correction.reason
-	case unit.state == "reviewing":
-		return "Reviewing", ""
 	case unit.claim.State != "" && !unit.claimReleasedCurrent:
 		return "Recovery", "Latest claim expired"
 	case blockedBy(unit.deps, states):
