@@ -1134,7 +1134,7 @@ func runClaim(command string, args []string, deps Dependencies) int {
 		return fail(deps, err, err.Error())
 	}
 	return withStore(deps, func(s *store.Store) error {
-		manager := handles.New(s, deps.Now, deps.Entropy)
+		manager := handles.New(s, deps.Now, deps.Entropy).WithProjectRoot(deps.ProjectRoot)
 		var result handles.IssueResult
 		var err error
 		if command == "recover-review" {
@@ -1147,7 +1147,7 @@ func runClaim(command string, args []string, deps Dependencies) int {
 			result, err = manager.IssueAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
 		}
 		if err != nil {
-			return err
+			return boundedChangeGateError(err)
 		}
 		data := map[string]any{}
 		if result.Secret != "" {
@@ -1213,7 +1213,7 @@ func runRecoverAggregate(args []string, deps Dependencies) int {
 		}
 	}
 	return withStore(deps, func(s *store.Store) error {
-		manager := handles.New(s, deps.Now, deps.Entropy)
+		manager := handles.New(s, deps.Now, deps.Entropy).WithProjectRoot(deps.ProjectRoot)
 		type outputHandle struct {
 			UnitID       string `json:"unit_id"`
 			UnitRevision int64  `json:"unit_revision"`
@@ -1224,13 +1224,13 @@ func runRecoverAggregate(args []string, deps Dependencies) int {
 		if values.one("--unit-id") != "" {
 			issued, issueErr := manager.RecoverAggregateAt(context.Background(), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), values.one("--handle-dir"))
 			if issueErr != nil {
-				return issueErr
+				return boundedChangeGateError(issueErr)
 			}
 			output = append(output, outputHandle{values.one("--unit-id"), issued.UnitRevision, values.one("--actor"), issued.Path})
 		} else {
 			batch, issueErr := manager.RecoverAggregateBatchAt(context.Background(), values.one("--workflow-id"), revision, values.one("--actor"), values.one("--handle-dir"), request)
 			if issueErr != nil {
-				return issueErr
+				return boundedChangeGateError(issueErr)
 			}
 			actors, units := map[string]string{}, []string{}
 			for _, assignment := range request.Assignments {
@@ -1273,11 +1273,11 @@ func runUnitTDD(args []string, deps Dependencies) int {
 	return withStore(deps, func(s *store.Store) error {
 		manager := handles.New(s, deps.Now, deps.Entropy)
 		ctx := context.Background()
-		service := evidence.New(s, deps.Now)
-		if _, err := manager.UseForMutation(ctx, values.one("--claim-handle"), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), handles.TDD, func(tx *sql.Tx, _ handles.Handle) error {
-			return service.RecordTDDAsTx(ctx, tx, values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), input)
+		service := evidence.New(s, deps.Now).WithChangeEnforcement()
+		if _, err := manager.UseForMutation(ctx, values.one("--claim-handle"), values.one("--workflow-id"), values.one("--unit-id"), revision, values.one("--actor"), handles.TDD, func(tx *sql.Tx, handle handles.Handle) error {
+			return service.RecordTDDWithClaimAsTx(ctx, tx, values.one("--workflow-id"), values.one("--unit-id"), handle.ClaimID, revision, values.one("--actor"), input)
 		}); err != nil {
-			return err
+			return boundedChangeGateError(err)
 		}
 		return writeSuccess(deps, map[string]any{"unit_id": values.one("--unit-id"), "unit_revision": revision, "state": "reviewing"}, "workflow handoff-review")
 	})
@@ -1340,10 +1340,17 @@ func runUnitComplete(args []string, deps Dependencies) int {
 			return err
 		}
 		service := evidence.New(s, deps.Now)
+		var baselineCount int
+		if err = s.DB().QueryRowContext(ctx, `SELECT count(*) FROM unit_change_baselines WHERE workflow_id=? AND unit_id=?`, wf.ID, values.one("--unit-id")).Scan(&baselineCount); err != nil {
+			return err
+		}
+		if baselineCount != 0 {
+			service.WithChangeEnforcement()
+		}
 		if _, err = manager.UseForMutation(ctx, values.one("--claim-handle"), wf.ID, values.one("--unit-id"), revision, values.one("--actor"), handles.Complete, func(tx *sql.Tx, handle handles.Handle) error {
 			return service.CompleteUnitWithClaimTx(ctx, tx, wf.ID, values.one("--unit-id"), handle.ClaimID, revision, wf.Revision, values.one("--actor"))
 		}); err != nil {
-			return err
+			return boundedChangeGateError(err)
 		}
 		wf, err = workflow.New(s, deps.Now).Get(ctx, wf.ID)
 		if err != nil {
@@ -1463,6 +1470,29 @@ func exactLegacyAcknowledged(s *store.Store, projectID, candidateSetID string) (
 	}
 	return acknowledged != 0, nil
 }
+
+// boundedChangeGateError keeps repository and handle implementation details out
+// of public command failures while preserving actionable budget/state reasons.
+func boundedChangeGateError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "changed-line budget exceeded"),
+		strings.Contains(message, "unit scope must be clean"),
+		strings.Contains(message, "baseline no longer matches"),
+		strings.Contains(message, "baseline is unavailable"),
+		strings.Contains(message, "changed-line evidence has not been approved"),
+		strings.Contains(message, "repository changed after review"):
+		return fmt.Errorf("%w: %s", ErrState, message)
+	case strings.Contains(message, "measure changed lines"), strings.Contains(message, "different checkout"):
+		return fmt.Errorf("%w: changed-line measurement could not be captured; retry after the repository is stable", ErrState)
+	default:
+		return err
+	}
+}
+
 func writeSuccess(deps Dependencies, data any, next string) error {
 	return envelope.WriteSuccess(deps.Stdout, data, nil, next)
 }

@@ -42,11 +42,35 @@ type UnitReview struct {
 	RecordedAt string `json:"recorded_at"`
 }
 
+type ChangeBaseline struct {
+	BaseRevision   string          `json:"base_revision"`
+	BaselineDigest string          `json:"baseline_digest"`
+	Scopes         json.RawMessage `json:"scopes"`
+	AcceptedBudget int             `json:"accepted_budget"`
+	RecordedAt     string          `json:"recorded_at"`
+}
+
+type ChangeMeasurement struct {
+	Revision       int64  `json:"revision"`
+	Stage          string `json:"stage"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	ChangedLines   int    `json:"changed_lines"`
+	AcceptedBudget int    `json:"accepted_budget"`
+	BaseRevision   string `json:"base_revision"`
+	BaselineDigest string `json:"baseline_digest"`
+	ResultDigest   string `json:"result_digest"`
+	ReviewedDigest string `json:"reviewed_digest,omitempty"`
+	RecordedAt     string `json:"recorded_at"`
+}
+
 type UnitProjection struct {
-	Definition           UnitDefinition `json:"definition"`
-	Evidence             *UnitEvidence  `json:"evidence,omitempty"`
-	Review               *UnitReview    `json:"review,omitempty"`
-	ClaimReleasedCurrent bool           `json:"-"`
+	Definition           UnitDefinition      `json:"definition"`
+	Evidence             *UnitEvidence       `json:"evidence,omitempty"`
+	Review               *UnitReview         `json:"review,omitempty"`
+	ChangeBaseline       *ChangeBaseline     `json:"change_baseline,omitempty"`
+	ChangeMeasurements   []ChangeMeasurement `json:"change_measurements,omitempty"`
+	ClaimReleasedCurrent bool                `json:"-"`
 }
 
 type PlanProjection struct {

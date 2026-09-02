@@ -54,6 +54,31 @@ func (s *Service) unitProjection(ctx context.Context, workflowID, unitID string)
 	} else if err != sql.ErrNoRows {
 		return UnitProjection{}, err
 	}
+	var baseline ChangeBaseline
+	var scopesJSON string
+	err = s.db.QueryRowContext(ctx, `SELECT base_revision,baseline_digest,scopes_json,accepted_budget,recorded_at FROM unit_change_baselines WHERE workflow_id=? AND unit_id=?`, workflowID, unitID).
+		Scan(&baseline.BaseRevision, &baseline.BaselineDigest, &scopesJSON, &baseline.AcceptedBudget, &baseline.RecordedAt)
+	if err == nil {
+		baseline.Scopes = json.RawMessage(scopesJSON)
+		unit.ChangeBaseline = &baseline
+	} else if err != sql.ErrNoRows {
+		return UnitProjection{}, err
+	}
+	measurements, err := s.db.QueryContext(ctx, `SELECT unit_revision,stage,additions,deletions,changed_lines,accepted_budget,base_revision,baseline_digest,result_digest,coalesce(reviewed_digest,''),recorded_at FROM unit_change_measurements WHERE workflow_id=? AND unit_id=? ORDER BY unit_revision,stage`, workflowID, unitID)
+	if err != nil {
+		return UnitProjection{}, err
+	}
+	for measurements.Next() {
+		var measurement ChangeMeasurement
+		if err = measurements.Scan(&measurement.Revision, &measurement.Stage, &measurement.Additions, &measurement.Deletions, &measurement.ChangedLines, &measurement.AcceptedBudget, &measurement.BaseRevision, &measurement.BaselineDigest, &measurement.ResultDigest, &measurement.ReviewedDigest, &measurement.RecordedAt); err != nil {
+			measurements.Close()
+			return UnitProjection{}, err
+		}
+		unit.ChangeMeasurements = append(unit.ChangeMeasurements, measurement)
+	}
+	if err = measurements.Close(); err != nil {
+		return UnitProjection{}, err
+	}
 	var releases int
 	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM artifacts a
 		JOIN activities released ON released.workflow_id=a.workflow_id AND released.action='unit_claim_released' AND released.subject_kind='artifact' AND released.subject_id=CAST(a.id AS TEXT)

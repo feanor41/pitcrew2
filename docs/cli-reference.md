@@ -487,6 +487,10 @@ repository-relative, comma-separated prefixes without globs. Structured units
 also require current `focused` and `affected_package` verification runs and one
 successful scenario result for every covered scenario; results reference a
 current run that names that scenario.
+For a claimed implementation unit, PitCrew also records the immutable accepted
+scope/budget baseline and the measured additions, deletions, total, and digest.
+The bounded `workflow show --view unit` projection exposes those identities but
+never a checkout path, handle, claim ID, or secret.
 
 `workflow unit-review` accepts
 `{"verdict":"approved|corrections","summary":"...","findings":"...","plan_impact":"inside|outside"}`.
@@ -1120,7 +1124,7 @@ All five commands remain local and perform no network work.
 **Purpose:** Claim a ready unit for implementation.
 **Syntax:** `pitcrew workflow claim-unit --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <actor> --handle-dir <dir> [--print-claim-handle-secret-once]`
 **Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
-**Preconditions:** Pending unit, dependencies done, capacity available.
+**Preconditions:** Pending unit, dependencies done, capacity available, and a clean accepted scope at first capture. Recovery reuses that baseline.
 **Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
 **Success:** Opaque implementation handle path, or a one-time debug secret only when the explicit boolean switch is present.
 **Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
@@ -1185,7 +1189,7 @@ All five commands remain local and perform no network work.
 **Purpose:** Consume implementation authority to record valid TDD evidence.
 **Syntax:** `pitcrew workflow unit-tdd --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <actor> --claim-handle <path> --input-file <path>`
 **Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
-**Preconditions:** Active matching implementation handle and pending unit revision.
+**Preconditions:** Active matching implementation handle, pending unit revision, and measured changes within the accepted budget.
 **Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
 **Success:** Persisted: reviewing; next is review handoff.
 **Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.
@@ -1208,10 +1212,10 @@ All five commands remain local and perform no network work.
 <!-- cli-docs:profile:workflow-unit-complete:start -->
 <a id="workflow-unit-complete"></a>
 #### `pitcrew workflow unit-complete`
-**Purpose:** Consume implementation authority after approval and mark done.
+**Purpose:** Consume implementation authority after valid evidence and mark done.
 **Syntax:** `pitcrew workflow unit-complete --workflow-id wf-<24hex> --unit-id wu-<24hex> --revision <n> --actor <actor> --claim-handle <path>`
 **Caller and behavior:** The coordinator invokes aggregate commands; the assigned implementer or independent reviewer invokes authority-bound unit commands.
-**Preconditions:** Reviewing unit with an approved review at the same revision.
+**Preconditions:** Reviewing unit with unchanged in-budget evidence at the same revision. Review is selective; when one exists it must approve that exact evidence digest.
 **Inputs:** Positive revisions are CAS expectations; actors are persisted identity labels; any input file uses the strict JSON contract.
 **Success:** Done unit; the last unit also advances the aggregate.
 **Failures and recovery:** Exit 4 means inspect the exact workflow/unit once; exit 5 means obtain a valid fresh handle rather than reusing authority.

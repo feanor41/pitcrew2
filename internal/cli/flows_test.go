@@ -41,10 +41,25 @@ func TestArtifactPlanUnitReviewAndCompletionLifecycle(t *testing.T) {
 	if info, err := os.Stat(handlePath); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("handle=%v %v", info, err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "feature"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "feature", "change.txt"), []byte("one\ntwo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	tddFile := writeInput(t, root, "tdd.json", `{"red_command":"go test -run X","red_outcome":"exit 1","green_command":"go test -run X","green_outcome":"exit 0","refactor_summary":"clean","validation_command":"go test ./...","validation_outcome":"exit 0","changed_paths":"internal/feature"}`)
 	tddResult := mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handlePath, "--input-file", tddFile))
 	if !strings.Contains(string(tddResult), `"next_action":"workflow handoff-review"`) {
 		t.Fatalf("TDD next action=%s", tddResult)
+	}
+	unitProjection := mustOK(t, runAt(t, root, "workflow", "show", "--workflow-id", wfID, "--view", "unit", "--unit-id", unitID))
+	for _, want := range []string{`"change_baseline"`, `"accepted_budget":100`, `"additions":2`, `"deletions":0`, `"changed_lines":2`, `"base_revision"`, `"baseline_digest"`, `"result_digest"`} {
+		if !strings.Contains(string(unitProjection), want) {
+			t.Fatalf("unit projection omits %s: %s", want, unitProjection)
+		}
+	}
+	if strings.Contains(string(unitProjection), root) || strings.Contains(string(unitProjection), handlePath) || strings.Contains(string(unitProjection), "claim_id") {
+		t.Fatalf("unit projection leaked private authority: %s", unitProjection)
 	}
 	reviewHandlePath := handoffReview(t, root, wfID, unitID, "reviewer")
 	reviewFile := writeInput(t, root, "review.json", `{"verdict":"approved","summary":"good","findings":""}`)
@@ -152,6 +167,39 @@ func TestReleaseUnitClaimRestoresReadyFlowWithoutLeakingAuthority(t *testing.T) 
 	allowed := strings.Join(stringSlice(claimed["context"].(map[string]any)["allowed_actions"]), ",")
 	if claimed["next_action"] != "workflow unit-tdd" || allowed != "workflow unit-tdd,workflow release-unit-claim" {
 		t.Fatalf("reclaimed authority=%#v", claimed)
+	}
+}
+
+func TestUnitTDDRejectsOverBudgetChangesWithoutLeakingOrBypass(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, _ := setupImplementingUnit(t, root)
+	claim := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--handle-dir", filepath.Join(root, "handles")))
+	handlePath := stringField(t, claim, "handle_path")
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "over-budget.txt"), []byte("one\ntwo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input := writeInput(t, root, "over-budget-tdd.json", `{"red_command":"red","red_outcome":"exit 1","green_command":"green","green_outcome":"exit 0","refactor_summary":"","validation_command":"all","validation_outcome":"exit 0","changed_paths":"internal"}`)
+	failed := runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handlePath, "--input-file", input)
+	if failed.code != 3 || !strings.Contains(failed.stderr, "measured 2, accepted 1") || strings.Contains(failed.stderr, root) || strings.Contains(failed.stderr, handlePath) {
+		t.Fatalf("over-budget failure=%#v", failed)
+	}
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var evidenceRows, measurementRows int
+	if err = s.DB().QueryRow(`SELECT count(*) FROM evidence WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&evidenceRows); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB().QueryRow(`SELECT count(*) FROM unit_change_measurements WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&measurementRows); err != nil {
+		t.Fatal(err)
+	}
+	if evidenceRows != 0 || measurementRows != 0 {
+		t.Fatalf("over-budget command persisted evidence=%d measurement=%d", evidenceRows, measurementRows)
 	}
 }
 
