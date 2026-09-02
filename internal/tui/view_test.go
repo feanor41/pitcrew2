@@ -215,7 +215,7 @@ func TestViewHomeUsesSharedBorderedHeaderAndExactActions(t *testing.T) {
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	got := model.View().Content
 	plain := ansi.Strip(got)
-	for _, identity := range []string{"PitCrew2", "Control Plane", "v0.24.0"} {
+	for _, identity := range []string{"PitCrew2", "Control Plane", "v0.24.1"} {
 		if !strings.Contains(plain, identity) {
 			t.Fatalf("home header missing %q:\n%s", identity, got)
 		}
@@ -259,7 +259,7 @@ func TestViewSharedHeaderIsBoundedAtSupportedWidths(t *testing.T) {
 				}
 			}
 			plain := ansi.Strip(header)
-			if !strings.Contains(plain, "PitCrew2") || !strings.Contains(plain, "Control Plane") || !strings.Contains(plain, "v0.24.0") {
+			if !strings.Contains(plain, "PitCrew2") || !strings.Contains(plain, "Control Plane") || !strings.Contains(plain, "v0.24.1") {
 				t.Fatalf("width %d screen %v header identity incomplete:\n%s", width, screen, header)
 			}
 		}
@@ -601,12 +601,12 @@ func TestViewStatesAndResize(t *testing.T) {
 			model, _ := test.model.Update(tea.WindowSizeMsg{Width: width, Height: height})
 			got := model.View().Content
 			plain := ansi.Strip(got)
-			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.24.0"} {
+			for _, identity := range []string{"PitCrew2", "Control Plane", "v0.24.1"} {
 				if !strings.Contains(got, identity) {
 					t.Fatalf("view missing identity %q:\n%s", identity, got)
 				}
 			}
-			if !strings.Contains(got, flight.version.Render("v0.24.0")) {
+			if !strings.Contains(got, flight.version.Render("v0.24.1")) {
 				t.Fatalf("view lacks version accent:\n%s", got)
 			}
 			for _, want := range test.want {
@@ -832,7 +832,7 @@ func TestViewCompactIdentityAcrossLayouts(t *testing.T) {
 	for _, size := range []tea.WindowSizeMsg{{Width: 112, Height: 28}, {Width: 60, Height: 16}, {Width: 42, Height: 10}} {
 		model, _ := workflowViewModel().Update(size)
 		got := model.View().Content
-		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.24.0")) {
+		if !strings.Contains(got, "PitCrew2") || !strings.Contains(got, "Control Plane") || !strings.Contains(got, flight.version.Render("v0.24.1")) {
 			t.Fatalf("%dx%d missing accessible identity or version accent:\n%s", size.Width, size.Height, got)
 		}
 		if strings.Contains(got, "╔═╗") {
