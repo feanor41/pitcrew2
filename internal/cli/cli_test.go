@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -373,7 +374,27 @@ type result struct {
 func runCLI(t *testing.T, args ...string) result { return runAt(t, t.TempDir(), args...) }
 func runAt(t *testing.T, root string, args ...string) result {
 	t.Helper()
+	if requiresChangeRepository(args) {
+		ensureChangeRepository(t, root)
+	}
 	var stdout, stderr bytes.Buffer
 	code := Run(args, Dependencies{Stdout: &stdout, Stderr: &stderr, ProjectRoot: root, Now: func() time.Time { return time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC) }})
 	return result{code, stdout.String(), stderr.String()}
+}
+
+func requiresChangeRepository(args []string) bool {
+	return len(args) >= 2 && args[0] == "workflow" && (args[1] == "claim-unit" || args[1] == "recover-unit-claim" || args[1] == "recover-aggregate")
+}
+
+func ensureChangeRepository(t *testing.T, root string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
+		return
+	}
+	for _, args := range [][]string{{"init", "--quiet"}, {"config", "user.email", "pitcrew@example.test"}, {"config", "user.name", "PitCrew Test"}, {"commit", "--quiet", "--allow-empty", "-m", "base"}} {
+		command := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
 }
