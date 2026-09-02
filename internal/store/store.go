@@ -341,4 +341,37 @@ CREATE TABLE unit_dependency_consumptions (
     FOREIGN KEY(workflow_id, consumer_unit_id) REFERENCES work_units(workflow_id, id),
     FOREIGN KEY(workflow_id, producer_unit_id) REFERENCES work_units(workflow_id, id)
 );
+`}, {Version: 10, Name: "clean unit baselines and reviewed measurements", SQL: `
+CREATE TABLE unit_change_baselines (
+    workflow_id TEXT NOT NULL,
+    unit_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    checkout_root TEXT NOT NULL,
+    base_revision TEXT NOT NULL,
+    baseline_digest TEXT NOT NULL,
+    scopes_json TEXT NOT NULL CHECK(json_valid(scopes_json) AND json_type(scopes_json)='array'),
+    scope_digest TEXT NOT NULL,
+    accepted_budget INTEGER NOT NULL CHECK(accepted_budget >= 0),
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY(workflow_id, unit_id),
+    FOREIGN KEY(workflow_id, unit_id) REFERENCES work_units(workflow_id, id)
+);
+CREATE TABLE unit_change_measurements (
+    workflow_id TEXT NOT NULL,
+    unit_id TEXT NOT NULL,
+    unit_revision INTEGER NOT NULL,
+    stage TEXT NOT NULL CHECK(stage IN ('evidence','completion')),
+    additions INTEGER NOT NULL CHECK(additions >= 0),
+    deletions INTEGER NOT NULL CHECK(deletions >= 0),
+    changed_lines INTEGER NOT NULL CHECK(changed_lines = additions + deletions),
+    accepted_budget INTEGER NOT NULL CHECK(accepted_budget >= 0),
+    claim_id TEXT NOT NULL REFERENCES handles(claim_id),
+    base_revision TEXT NOT NULL,
+    baseline_digest TEXT NOT NULL,
+    result_digest TEXT NOT NULL,
+    reviewed_digest TEXT,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY(workflow_id, unit_id, unit_revision, stage),
+    FOREIGN KEY(workflow_id, unit_id) REFERENCES work_units(workflow_id, id)
+);
 `}}

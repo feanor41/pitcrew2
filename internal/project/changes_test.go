@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -37,6 +38,39 @@ func TestMeasureChangedLinesCountsTrackedCommittedAndUntrackedText(t *testing.T)
 	}
 	if measurement.ChangedLines != 5 || measurement.ResultDigest == "" {
 		t.Fatalf("measurement = %#v, want 5 changed lines and an audit digest", measurement)
+	}
+}
+
+func TestMeasureChangedLinesDigestIsScoped(t *testing.T) {
+	checkout := initRepository(t)
+	baseline, err := project.CaptureChangeBaseline(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := project.MeasureChangedLines(baseline, []string{"tracked.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(checkout, "outside.txt"), []byte("outside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := project.MeasureChangedLines(baseline, []string{"tracked.txt"})
+	if err != nil || second != first {
+		t.Fatalf("outside-scope dirt changed measurement: first=%#v second=%#v err=%v", first, second, err)
+	}
+	if err = os.WriteFile(filepath.Join(checkout, "tracked.txt"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	third, err := project.MeasureChangedLines(baseline, []string{"tracked.txt"})
+	if err != nil || third.ResultDigest == first.ResultDigest {
+		t.Fatalf("scoped edit did not change digest: first=%#v third=%#v err=%v", first, third, err)
+	}
+}
+
+func TestNormalizeChangeScopesRemovesDuplicatesAndCoveredChildren(t *testing.T) {
+	scopes, err := project.NormalizeChangeScopes([]string{"a/z", "a-", "a", "a/z"})
+	if err != nil || !reflect.DeepEqual(scopes, []string{"a", "a-"}) {
+		t.Fatalf("scopes=%v err=%v", scopes, err)
 	}
 }
 

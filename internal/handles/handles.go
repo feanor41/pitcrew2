@@ -19,6 +19,7 @@ import (
 	"github.com/fmazzalomo/pitcrew/internal/activity"
 	"github.com/fmazzalomo/pitcrew/internal/correction"
 	"github.com/fmazzalomo/pitcrew/internal/ids"
+	"github.com/fmazzalomo/pitcrew/internal/project"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 )
 
@@ -115,14 +116,17 @@ type AggregateRecoveryResult struct {
 }
 
 type Manager struct {
-	db      *sql.DB
-	now     func() time.Time
-	entropy io.Reader
+	db          *sql.DB
+	now         func() time.Time
+	entropy     io.Reader
+	projectRoot string
 }
 
 func New(s *store.Store, now func() time.Time, entropy io.Reader) *Manager {
 	return &Manager{db: s.DB(), now: now, entropy: entropy}
 }
+
+func (m *Manager) WithProjectRoot(root string) *Manager { m.projectRoot = root; return m }
 
 func (m *Manager) Issue(ctx context.Context, workflowID, unitID, actor, dir string) (IssueResult, error) {
 	return m.IssueForPurpose(ctx, workflowID, unitID, actor, dir, PurposeImplementation)
@@ -751,6 +755,56 @@ func (m *Manager) issue(ctx context.Context, workflowID, unitID string, expected
 	generation++
 	if _, err = tx.ExecContext(ctx, `INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES(?,?,?,?,?,?,?,?,?,?)`, claimID, workflowID, unitID, issuedState, h.SecretHash, actor, h.IssuedAt, h.ExpiresAt, generation, purpose); err != nil {
 		return IssueResult{}, err
+	}
+	if purpose == PurposeImplementation && m.projectRoot != "" {
+		var baseline project.ChangeBaseline
+		var unitScope, areasJSON, scopesJSON, storedScopes, storedScopeDigest string
+		var accepted, storedBudget int
+		if err = tx.QueryRowContext(ctx, `SELECT scope,areas,estimated_changed_lines FROM work_units WHERE workflow_id=? AND id=?`, workflowID, unitID).Scan(&unitScope, &areasJSON, &accepted); err != nil {
+			return IssueResult{}, err
+		}
+		var areas []string
+		if err = json.Unmarshal([]byte(areasJSON), &areas); err != nil {
+			return IssueResult{}, ErrInvalidState
+		}
+		scopes, normalizeErr := project.NormalizeChangeScopes(append([]string{unitScope}, areas...))
+		if normalizeErr != nil {
+			return IssueResult{}, ErrInvalidState
+		}
+		scopesBytes, _ := json.Marshal(scopes)
+		scopesJSON = string(scopesBytes)
+		digest := sha256.Sum256(scopesBytes)
+		scopeDigest := hex.EncodeToString(digest[:])
+		err = tx.QueryRowContext(ctx, `SELECT project_id,checkout_root,base_revision,baseline_digest,scopes_json,scope_digest,accepted_budget FROM unit_change_baselines WHERE workflow_id=? AND unit_id=?`, workflowID, unitID).
+			Scan(&baseline.ProjectID, &baseline.CheckoutRoot, &baseline.BaseRevision, &baseline.ResultDigest, &storedScopes, &storedScopeDigest, &storedBudget)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return IssueResult{}, err
+		}
+		if err == nil && (storedScopes != scopesJSON || storedBudget != accepted || storedScopeDigest != scopeDigest) {
+			return IssueResult{}, errors.New("unit change baseline no longer matches accepted scope and budget; replan the unit")
+		}
+		if err == nil {
+			resolved, resolveErr := project.Resolve(m.projectRoot)
+			if resolveErr != nil || resolved.ID != baseline.ProjectID || resolved.CheckoutRoot != baseline.CheckoutRoot {
+				return IssueResult{}, errors.New("unit change baseline belongs to a different checkout; replan the unit")
+			}
+		}
+		if baseline.ProjectID == "" {
+			baseline, err = project.CaptureChangeBaseline(m.projectRoot)
+			if err != nil {
+				return IssueResult{}, err
+			}
+			measurement, measureErr := project.MeasureChangedLines(baseline, scopes)
+			if measureErr != nil {
+				return IssueResult{}, measureErr
+			}
+			if measurement.ChangedLines != 0 {
+				return IssueResult{}, errors.New("unit scope must be clean when the baseline is captured")
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO unit_change_baselines(workflow_id,unit_id,project_id,checkout_root,base_revision,baseline_digest,scopes_json,scope_digest,accepted_budget,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, workflowID, unitID, baseline.ProjectID, baseline.CheckoutRoot, baseline.BaseRevision, baseline.ResultDigest, scopesJSON, scopeDigest, accepted, ids.FormatTime(issued)); err != nil {
+				return IssueResult{}, err
+			}
+		}
 	}
 	if action == "" {
 		action = activity.UnitClaimed

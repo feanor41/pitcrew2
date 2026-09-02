@@ -3,7 +3,9 @@ package evidence
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,11 +114,13 @@ type AggregateOutcome struct {
 	NextAction string `json:"next_action"`
 }
 type Service struct {
-	db  *sql.DB
-	now func() time.Time
+	db             *sql.DB
+	now            func() time.Time
+	enforceChanges bool
 }
 
 func New(s *store.Store, now func() time.Time) *Service { return &Service{db: s.DB(), now: now} }
+func (s *Service) WithChangeEnforcement() *Service      { s.enforceChanges = true; return s }
 
 func (r TDDRecord) Validate() error {
 	if r.present != nil {
@@ -272,6 +276,14 @@ func (s *Service) RecordTDDAs(ctx context.Context, wfID, unitID string, revision
 }
 
 func (s *Service) RecordTDDAsTx(ctx context.Context, tx *sql.Tx, wfID, unitID string, revision int64, actor string, r TDDRecord) error {
+	return s.recordTDDAsTx(ctx, tx, wfID, unitID, "", revision, actor, r)
+}
+
+func (s *Service) RecordTDDWithClaimAsTx(ctx context.Context, tx *sql.Tx, wfID, unitID, claimID string, revision int64, actor string, r TDDRecord) error {
+	return s.recordTDDAsTx(ctx, tx, wfID, unitID, claimID, revision, actor, r)
+}
+
+func (s *Service) recordTDDAsTx(ctx context.Context, tx *sql.Tx, wfID, unitID, claimID string, revision int64, actor string, r TDDRecord) error {
 	if err := r.Validate(); err != nil {
 		return err
 	}
@@ -286,6 +298,11 @@ func (s *Service) RecordTDDAsTx(ctx context.Context, tx *sql.Tx, wfID, unitID st
 	}
 	if state != "pending" {
 		return fmt.Errorf("%w: current state %s; expected pending", ErrInvalidState, state)
+	}
+	if claimID != "" {
+		if err = s.enforceChangeBudget(ctx, tx, wfID, unitID, claimID, revision, "evidence"); err != nil {
+			return err
+		}
 	}
 	covered, err := loadCoveredScenarios(ctx, tx, wfID, unitID)
 	if err != nil {
@@ -519,6 +536,11 @@ func (s *Service) RecordReviewTx(ctx context.Context, tx *sql.Tx, r Review) (Rev
 	if err != nil {
 		return ReviewOutcome{}, err
 	}
+	if r.Verdict == Approved {
+		if _, err = tx.ExecContext(ctx, `UPDATE unit_change_measurements SET reviewed_digest=result_digest WHERE workflow_id=? AND unit_id=? AND unit_revision=? AND stage='evidence'`, r.WorkflowID, r.UnitID, r.Revision); err != nil {
+			return ReviewOutcome{}, err
+		}
+	}
 	outcome := ReviewOutcome{NextRevision: r.Revision, PlanRevisionRequired: r.PlanImpact == Outside}
 	if r.Verdict == Corrections {
 		result, updateErr := tx.ExecContext(ctx, `UPDATE work_units SET state='pending',revision=revision+1 WHERE id=? AND revision=?`, r.UnitID, r.Revision)
@@ -580,6 +602,11 @@ func (s *Service) completeUnitTx(ctx context.Context, tx *sql.Tx, wfID, unitID, 
 	if state != "reviewing" {
 		return fmt.Errorf("%w: current state %s; expected reviewing", ErrInvalidState, state)
 	}
+	if s.enforceChanges {
+		if err = s.enforceChangeBudget(ctx, tx, wfID, unitID, claimID, unitRevision, "completion"); err != nil {
+			return err
+		}
+	}
 	if claimID != "" {
 		result, updateErr := tx.ExecContext(ctx, `UPDATE handles SET state='revoked' WHERE claim_id=? AND workflow_id=? AND unit_id=? AND state='active'`, claimID, wfID, unitID)
 		if updateErr != nil {
@@ -629,6 +656,53 @@ func (s *Service) completeUnitTx(ctx context.Context, tx *sql.Tx, wfID, unitID, 
 		}
 	}
 	return activity.AppendTx(ctx, tx, activity.New(wfID, unitID, activity.UnitCompleted, actor, now, activity.UnitSubject(unitID)))
+}
+
+func (s *Service) enforceChangeBudget(ctx context.Context, tx *sql.Tx, wfID, unitID, claimID string, revision int64, stage string) error {
+	var baseline project.ChangeBaseline
+	var unitScope, areasJSON, storedScopes, scopeDigest string
+	var accepted, storedBudget int
+	err := tx.QueryRowContext(ctx, `SELECT b.project_id,b.checkout_root,b.base_revision,b.baseline_digest,b.scopes_json,b.scope_digest,b.accepted_budget,u.scope,u.areas,u.estimated_changed_lines
+		FROM unit_change_baselines b JOIN work_units u ON u.workflow_id=b.workflow_id AND u.id=b.unit_id
+		WHERE b.workflow_id=? AND b.unit_id=?`, wfID, unitID).
+		Scan(&baseline.ProjectID, &baseline.CheckoutRoot, &baseline.BaseRevision, &baseline.ResultDigest, &storedScopes, &scopeDigest, &storedBudget, &unitScope, &areasJSON, &accepted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("changed-line baseline is unavailable; recover or reimplement the unit")
+	}
+	if err != nil {
+		return err
+	}
+	var areas []string
+	if err = json.Unmarshal([]byte(areasJSON), &areas); err != nil {
+		return errors.New("changed-line scope is invalid; replan the unit")
+	}
+	scopes, normalizeErr := project.NormalizeChangeScopes(append([]string{unitScope}, areas...))
+	if normalizeErr != nil {
+		return errors.New("changed-line scope is invalid; replan the unit")
+	}
+	scopesBytes, _ := json.Marshal(scopes)
+	digest := sha256.Sum256(scopesBytes)
+	if storedScopes != string(scopesBytes) || scopeDigest != hex.EncodeToString(digest[:]) || storedBudget != accepted {
+		return errors.New("changed-line baseline no longer matches accepted scope and budget; replan the unit")
+	}
+	measurement, err := project.MeasureChangedLines(baseline, scopes)
+	if err != nil {
+		return err
+	}
+	if measurement.ChangedLines > accepted {
+		return fmt.Errorf("changed-line budget exceeded: measured %d, accepted %d; split or replan the unit", measurement.ChangedLines, accepted)
+	}
+	if stage == "completion" {
+		var evidenceDigest, reviewedDigest string
+		if err = tx.QueryRowContext(ctx, `SELECT result_digest,coalesce(reviewed_digest,'') FROM unit_change_measurements WHERE workflow_id=? AND unit_id=? AND unit_revision=? AND stage='evidence'`, wfID, unitID, revision).Scan(&evidenceDigest, &reviewedDigest); err != nil || reviewedDigest == "" || reviewedDigest != evidenceDigest {
+			return errors.New("changed-line evidence has not been approved for completion")
+		}
+		if measurement.ResultDigest != reviewedDigest {
+			return errors.New("repository changed after review; record new evidence and review")
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO unit_change_measurements(workflow_id,unit_id,unit_revision,stage,additions,deletions,changed_lines,accepted_budget,claim_id,base_revision,baseline_digest,result_digest,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, wfID, unitID, revision, stage, measurement.Additions, measurement.Deletions, measurement.ChangedLines, accepted, claimID, baseline.BaseRevision, baseline.ResultDigest, measurement.ResultDigest, ids.FormatTime(s.now()))
+	return err
 }
 
 func (s *Service) CompleteAggregate(ctx context.Context, wfID string, revision int64, review AggregateReview) (AggregateOutcome, error) {

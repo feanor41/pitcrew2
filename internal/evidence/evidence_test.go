@@ -2,17 +2,100 @@ package evidence
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fmazzalomo/pitcrew/internal/project"
 	"github.com/fmazzalomo/pitcrew/internal/store"
 	"github.com/fmazzalomo/pitcrew/internal/workflow"
 )
+
+func TestReviewedChangeDigestMustMatchCompletion(t *testing.T) {
+	svc, db, wfID, unitID := evidenceService(t)
+	checkout := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", checkout}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	run("init", "--quiet")
+	run("config", "user.email", "pitcrew@example.test")
+	run("config", "user.name", "PitCrew Test")
+	if err := os.Mkdir(filepath.Join(checkout, "internal"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "internal", "base.txt"), []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "--quiet", "-m", "base")
+	baseline, err := project.CaptureChangeBaseline(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	areas := `["internal"]`
+	scopeDigest := sha256.Sum256([]byte(areas))
+	claimID := "claim-reviewed-digest"
+	if _, err = db.Exec(`UPDATE work_units SET areas=?,estimated_changed_lines=2 WHERE workflow_id=? AND id=?`, areas, wfID, unitID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES(?,?,?,?,?,?,?,?,?,?)`, claimID, wfID, unitID, "active", "hash", "implementer", "issued", "expires", 1, "implementation"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO unit_change_baselines(workflow_id,unit_id,project_id,checkout_root,base_revision,baseline_digest,scopes_json,scope_digest,accepted_budget,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, wfID, unitID, baseline.ProjectID, baseline.CheckoutRoot, baseline.BaseRevision, baseline.ResultDigest, areas, fmt.Sprintf("%x", scopeDigest), 2, "now"); err != nil {
+		t.Fatal(err)
+	}
+	reviewed := []byte("one\ntwo\n")
+	if err = os.WriteFile(filepath.Join(checkout, "internal", "new.txt"), reviewed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tx, _ := db.Begin()
+	if err = svc.RecordTDDWithClaimAsTx(context.Background(), tx, wfID, unitID, claimID, 1, "implementer", validTDD()); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var additions, deletions, total int
+	var baseRevision, baselineDigest string
+	if err = db.QueryRow(`SELECT additions,deletions,changed_lines,base_revision,baseline_digest FROM unit_change_measurements WHERE workflow_id=? AND unit_id=? AND unit_revision=1 AND stage='evidence'`, wfID, unitID).Scan(&additions, &deletions, &total, &baseRevision, &baselineDigest); err != nil {
+		t.Fatal(err)
+	}
+	if additions != 2 || deletions != 0 || total != 2 || baseRevision != baseline.BaseRevision || baselineDigest != baseline.ResultDigest {
+		t.Fatalf("persisted measurement=(%d,%d,%d,%q,%q)", additions, deletions, total, baseRevision, baselineDigest)
+	}
+	if _, err = svc.RecordReview(context.Background(), Review{WorkflowID: wfID, UnitID: unitID, Revision: 1, Actor: "reviewer", Verdict: Approved, Summary: "approved"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(checkout, "internal", "new.txt"), []byte("changed\ntext\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.WithChangeEnforcement().CompleteUnitWithClaim(context.Background(), wfID, unitID, claimID, 1, 1, "implementer"); err == nil || !strings.Contains(err.Error(), "changed after review") {
+		t.Fatalf("post-review change error=%v", err)
+	}
+	if err = os.WriteFile(filepath.Join(checkout, "internal", "new.txt"), reviewed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.CompleteUnitWithClaim(context.Background(), wfID, unitID, claimID, 1, 1, "implementer"); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	var completionMeasurements int
+	_ = db.QueryRow(`SELECT state FROM work_units WHERE workflow_id=? AND id=?`, wfID, unitID).Scan(&state)
+	_ = db.QueryRow(`SELECT count(*) FROM unit_change_measurements WHERE workflow_id=? AND unit_id=? AND unit_revision=1 AND stage='completion'`, wfID, unitID).Scan(&completionMeasurements)
+	if state != "done" || completionMeasurements != 1 {
+		t.Fatalf("completion state=%s measurements=%d", state, completionMeasurements)
+	}
+}
 
 func TestTDDRecordJSONUsesTheEvidenceContract(t *testing.T) {
 	encoded, err := json.Marshal(validTDD())
