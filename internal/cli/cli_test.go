@@ -313,7 +313,7 @@ func TestWorkflowNewAndShowUseEnvelopeAndProjectLocalStore(t *testing.T) {
 
 func TestVersionIsAGlobalFlag(t *testing.T) {
 	result := runCLI(t, "--version")
-	if result.code != 0 || result.stdout != "pitcrew 0.24.1\n" || result.stderr != "" {
+	if result.code != 0 || result.stdout != "pitcrew 0.24.2\n" || result.stderr != "" {
 		t.Fatalf("version=%#v", result)
 	}
 }
