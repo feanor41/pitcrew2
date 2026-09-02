@@ -232,6 +232,38 @@ func TestPreservedFailureResultChainConvergesAfterApprovedReview(t *testing.T) {
 	}
 }
 
+func TestAionHandsReviewingUnitToIndependentReviewerAfterTDD(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, implementationHandle := setupStructuredReviewingUnit(t, root)
+
+	aion := fullBrief(t, root, "aion", "--workflow-id", wfID)
+	context := aion["context"].(map[string]any)
+	current := context["coordination"].(map[string]any)["current"].(map[string]any)
+	if aion["next_action"] != "workflow handoff-review" || strings.Join(stringSlice(context["allowed_actions"]), ",") != "workflow handoff-review" || current["unit_id"] != unitID || current["status"] != "Reviewing" {
+		t.Fatalf("Aion did not receive post-TDD review handoff authority: %#v", aion)
+	}
+	ready := runAt(t, root, "workflow", "list-ready-units", "--workflow-id", wfID)
+	if ready.code != 0 || !strings.Contains(ready.stdout, `"next_action":"workflow handoff-review"`) {
+		t.Fatalf("ready-unit seam hid review handoff: %#v", ready)
+	}
+
+	reviewHandle := handoffReview(t, root, wfID, unitID, "reviewer")
+	reviewer := fullBrief(t, root, "pc2-reviewer", "--workflow-id", wfID, "--unit-id", unitID)
+	if reviewer["next_action"] != "workflow unit-review" {
+		t.Fatalf("reviewer did not receive current review authority: %#v", reviewer)
+	}
+	review := writeInput(t, root, "approved-handoff-review.json", `{"verdict":"approved","summary":"handoff converged","findings":""}`)
+	mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewHandle, "--input-file", review))
+	implementer := fullBrief(t, root, "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID)
+	if implementer["next_action"] != "workflow unit-complete" {
+		t.Fatalf("approved review did not return completion to implementer: %#v", implementer)
+	}
+	completed := runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", implementationHandle)
+	if completed.code != 0 || !strings.Contains(completed.stdout, `"state":"done"`) {
+		t.Fatalf("review handoff chain did not complete: %#v", completed)
+	}
+}
+
 func setupStructuredReviewingUnit(t *testing.T, root string) (string, string, string) {
 	t.Helper()
 	wfID, unitID, _ := setupImplementingUnit(t, root)
