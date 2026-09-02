@@ -142,6 +142,117 @@ func TestAgentBriefUnitAuthorityRejectsDependencyTerminalAndPathLeakage(t *testi
 	}
 }
 
+func TestPreservedFailureResultChainConvergesAfterApprovedReview(t *testing.T) {
+	root := t.TempDir()
+	wfID, unitID, implementationHandle := setupStructuredReviewingUnit(t, root)
+	reviewHandle := handoffReview(t, root, wfID, unitID, "reviewer")
+	review := writeInput(t, root, "approved-review.json", `{"verdict":"approved","summary":"current result approved","findings":""}`)
+	mustOK(t, runAt(t, root, "workflow", "unit-review", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "reviewer", "--claim-handle", reviewHandle, "--input-file", review))
+	progress := writeInput(t, root, "stale-progress.json", `{"status":"advanced","summary":"review still pending","next_action":"workflow unit-review"}`)
+	mustOK(t, runAt(t, root, "workflow", "progress", "--workflow-id", wfID, "--revision", "7", "--actor", "aion", "--input-file", progress))
+
+	secondUnit := "wu-000000000000000000000002"
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreviewedUnit := "wu-000000000000000000000000"
+	planBody := `{"summary":"preserved result chain","scope":"internal","max_parallel_units":3,"work_units":[{"id":"` + unreviewedUnit + `","description":"unreviewed sibling","scope":"internal/unreviewed","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1},{"id":"` + unitID + `","description":"reviewed unit","scope":"internal/reviewed","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1,"coverage":[{"requirement_id":"REQ-184","scenario_ids":["SCN-184"]}]},{"id":"` + secondUnit + `","description":"ready sibling","scope":"internal/ready","areas":[],"depends_on":[],"estimated_changed_lines":1,"estimated_review_minutes":1}]}`
+	if _, err = s.DB().Exec(`UPDATE plans SET body=? WHERE workflow_id=?`, planBody, wfID); err == nil {
+		_, err = s.DB().Exec(`INSERT INTO work_units VALUES(?,?,?,'internal/ready','[]','[]',1,1,'pending',NULL,0,1)`, secondUnit, wfID, "ready sibling")
+	}
+	if err == nil {
+		_, err = s.DB().Exec(`INSERT INTO work_units VALUES(?,?,?,'internal/unreviewed','[]','[]',1,1,'reviewing',NULL,0,1)`, unreviewedUnit, wfID, "unreviewed sibling")
+	}
+	if closeErr := s.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, result := range map[string]result{
+		"coordination": runAt(t, root, "workflow", "show", "--workflow-id", wfID, "--view", "coordination"),
+		"audit":        runAt(t, root, "workflow", "show", "--workflow-id", wfID),
+		"delivery":     runAt(t, root, "delivery", "show", "--delivery-id", wfID),
+		"active":       runAt(t, root, "delivery", "active"),
+		"ready units":  runAt(t, root, "workflow", "list-ready-units", "--workflow-id", wfID),
+	} {
+		if result.code != 0 || !strings.Contains(result.stdout, `"next_action":"workflow unit-complete"`) {
+			t.Fatalf("%s did not project durable completion over stale progress: %#v", name, result)
+		}
+	}
+	coordination := runAt(t, root, "workflow", "show", "--workflow-id", wfID, "--view", "coordination")
+	var coordinationDocument struct {
+		Data struct {
+			Coordination struct {
+				Current struct{ ID, Status string } `json:"current"`
+			} `json:"coordination"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(coordination.stdout), &coordinationDocument); err != nil || coordinationDocument.Data.Coordination.Current.ID != unitID || coordinationDocument.Data.Coordination.Current.Status != "Reviewing" {
+		t.Fatalf("coordination selected malformed or non-completable current unit: %s", coordination.stdout)
+	}
+	audit := runAt(t, root, "workflow", "show", "--workflow-id", wfID)
+	if !strings.Contains(audit.stdout, "review still pending") || !strings.Contains(audit.stdout, `"next_action":"workflow unit-complete"`) {
+		t.Fatalf("stale progress was not visibly demoted beneath durable authority: %#v", audit)
+	}
+	aion := fullBrief(t, root, "aion", "--workflow-id", wfID)
+	aionContext := aion["context"].(map[string]any)
+	if aion["next_action"] != "handoff to pc2-implementer" || len(stringSlice(aionContext["allowed_actions"])) != 0 {
+		t.Fatalf("Aion did not project role-local completion handoff: %#v", aion)
+	}
+	aionCurrent := aionContext["coordination"].(map[string]any)["current"].(map[string]any)
+	if aionCurrent["unit_id"] != unitID || aionCurrent["status"] != "Reviewing" {
+		t.Fatalf("Aion received malformed completion target: %#v", aionCurrent)
+	}
+	reviewer := fullBrief(t, root, "pc2-reviewer", "--workflow-id", wfID, "--unit-id", unitID)
+	reviewerContext := reviewer["context"].(map[string]any)
+	if reviewer["next_action"] != "return to aion" || len(stringSlice(reviewerContext["allowed_actions"])) != 0 {
+		t.Fatalf("approved current review was reauthorized: %#v", reviewer)
+	}
+	reviewerJSON, _ := json.Marshal(reviewer)
+	if !strings.Contains(string(reviewerJSON), `"scenario_id":"SCN-184"`) || !strings.Contains(string(reviewerJSON), `"status":"passed"`) {
+		t.Fatalf("review projection lost accepted scenario evidence: %s", reviewerJSON)
+	}
+
+	implementer := fullBrief(t, root, "pc2-implementer", "--workflow-id", wfID, "--unit-id", unitID)
+	implementerContext := implementer["context"].(map[string]any)
+	if implementer["next_action"] != "workflow unit-complete" || strings.Join(stringSlice(implementerContext["allowed_actions"]), ",") != "workflow unit-complete" {
+		t.Fatalf("approved current review did not converge on completion: %#v", implementer)
+	}
+
+	completed := runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", implementationHandle)
+	if completed.code != 0 || !strings.Contains(completed.stdout, `"state":"done"`) || !strings.Contains(completed.stdout, `"next_action":"workflow list-ready-units"`) {
+		t.Fatalf("authoritative completion did not advance once: %#v", completed)
+	}
+	repeated := runAt(t, root, "workflow", "unit-complete", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", implementationHandle)
+	if repeated.code != 5 || repeated.stdout != "" {
+		t.Fatalf("consumed completion authority was reusable: %#v", repeated)
+	}
+}
+
+func setupStructuredReviewingUnit(t *testing.T, root string) (string, string, string) {
+	t.Helper()
+	wfID, unitID, _ := setupImplementingUnit(t, root)
+	s, err := store.Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.DB().Exec(`INSERT INTO unit_coverage(workflow_id,unit_id,requirement_id,scenario_id) VALUES(?,?,?,?)`, wfID, unitID, "REQ-184", "SCN-184")
+	if closeErr := s.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := mustOK(t, runAt(t, root, "workflow", "claim-unit", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--handle-dir", filepath.Join(root, "handles")))
+	handle := stringField(t, claim, "handle_path")
+	tdd := writeInput(t, root, "structured-reviewing-tdd.json", `{"red_command":"go test -run Preserved","red_outcome":"exit 1","green_command":"go test -run Preserved","green_outcome":"exit 0","refactor_summary":"","validation_command":"go test ./...","validation_outcome":"exit 0","changed_paths":"internal","verification_runs":[{"id":"focused-184","tier":"focused","command":"go test -run Preserved","outcome":"exit 0","repository_fingerprint":"fingerprint-184","scenario_ids":["SCN-184"]},{"id":"package-184","tier":"affected_package","command":"go test ./internal/cli","outcome":"exit 0","repository_fingerprint":"fingerprint-184","scenario_ids":["SCN-184"]}],"scenario_results":[{"scenario_id":"SCN-184","outcome":"exit 0","verification_id":"focused-184"}]}`)
+	mustOK(t, runAt(t, root, "workflow", "unit-tdd", "--workflow-id", wfID, "--unit-id", unitID, "--revision", "1", "--actor", "implementer", "--claim-handle", handle, "--input-file", tdd))
+	return wfID, unitID, handle
+}
+
 func fullBrief(t *testing.T, root, role string, contextArgs ...string) map[string]any {
 	t.Helper()
 	args := append(append([]string{"agent", "brief", "--role", role}, contextArgs...), "--json")

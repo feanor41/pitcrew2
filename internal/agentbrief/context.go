@@ -80,6 +80,9 @@ func (b Brief) WithCoordination(projection history.Projection) Brief {
 			result.CorrectionAuthority = &CorrectionAuthority{Allowed: source.CorrectionAuthority.Allowed, Used: source.CorrectionAuthority.Used, Authority: source.CorrectionAuthority.Authority}
 		}
 		b.NextAction = source.NextAction
+		if b.NextAction == "workflow unit-complete" {
+			b.NextAction = "handoff to pc2-implementer"
+		}
 	}
 	b.Context = &Context{Kind: "coordination", AllowedActions: allowedActions(b.NextAction), Coordination: result}
 	return b
@@ -140,10 +143,12 @@ func (b Brief) WithUnit(unitProjection, coordination, aggregate history.Projecti
 		if review := unitProjection.Unit.Review; review != nil {
 			unit.Review = &ReviewSummary{Revision: review.Revision, Verdict: closedVerdict(review.Verdict), Summary: sanitizeNarrative(review.Summary), Findings: sanitizeNarrative(review.Findings), PlanImpact: closedPlanImpact(review.PlanImpact)}
 		}
-		b.NextAction = map[bool]string{true: "workflow unit-review", false: "return to aion"}[unitProjection.Workflow.State == "implementing" && definition.State == "reviewing"]
+		b.NextAction = map[bool]string{true: "workflow unit-review", false: "return to aion"}[unitProjection.Workflow.State == "implementing" && definition.State == "reviewing" && unitProjection.Unit.Review == nil]
 	} else {
 		b.NextAction = "return to aion"
-		if unitProjection.Workflow.State == "implementing" && coordination.Coordination != nil && coordination.Coordination.Current != nil && coordination.Coordination.Current.ID == definition.ID {
+		if unitProjection.Workflow.State == "implementing" && definition.State == "reviewing" && unitProjection.Unit.Review != nil && unitProjection.Unit.Review.Verdict == "approved" {
+			b.NextAction = "workflow unit-complete"
+		} else if unitProjection.Workflow.State == "implementing" && coordination.Coordination != nil && coordination.Coordination.Current != nil && coordination.Coordination.Current.ID == definition.ID {
 			switch coordination.Coordination.Current.Status {
 			case "Correction", "Recovery":
 				b.NextAction = "workflow recover-unit-claim"
@@ -244,7 +249,7 @@ func closedPlanImpact(value string) string {
 
 func allowedActions(action string) []string {
 	switch action {
-	case "", "none", "return to aion", "handoff to aion", "await aion context request":
+	case "", "none", "return to aion", "handoff to aion", "handoff to pc2-implementer", "await aion context request":
 		return []string{}
 	default:
 		return []string{action}

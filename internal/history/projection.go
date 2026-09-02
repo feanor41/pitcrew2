@@ -59,6 +59,7 @@ type unitFact struct {
 	deps                 []string
 	claim                plan.ClaimStatus
 	claimReleasedCurrent bool
+	currentReview        string
 	correction           *recordFact
 	unknown              bool
 }
@@ -115,6 +116,10 @@ func (s *Service) project(ctx context.Context, detail *Detail) error {
 			choose(&detail.Synopsis, status, status.Status == "Correction" || status.Status == "Dependency waiting")
 		}
 		detail.Synopsis.Total++
+	}
+	if completion := completionCandidate(units, detail.Synopsis.Current); completion != nil {
+		detail.Synopsis.Current = completion
+		detail.Synopsis.NextAction = "workflow unit-complete"
 	}
 	detail.Synopsis.Planned, detail.Synopsis.PlanNotice, err = s.plannedWork(ctx, detail.Workflow.ID, units)
 	if err != nil {
@@ -249,6 +254,24 @@ func preferred(a, b UnitStatus) bool {
 	ar, br := ranks[a.Status], ranks[b.Status]
 	return ar < br || ar == br && a.ID < b.ID
 }
+
+func completionCandidate(units map[string]unitFact, current *UnitStatus) *UnitStatus {
+	var selected *UnitStatus
+	for _, unit := range units {
+		if unit.state != "reviewing" || unit.currentReview != "approved" {
+			continue
+		}
+		candidate := unit.status
+		candidate.Status, candidate.Reason = "Reviewing", ""
+		if selected == nil || candidate.ID < selected.ID {
+			selected = &candidate
+		}
+	}
+	if selected == nil || current != nil && current.Status == "Correction" && current.ID != selected.ID {
+		return nil
+	}
+	return selected
+}
 func blockedBy(deps []string, states map[string]string) bool {
 	return len(unresolvedDependencies(deps, states)) != 0
 }
@@ -292,7 +315,8 @@ func (s *Service) unitFacts(ctx context.Context, workflowID string) (map[string]
 		claimColumns = `COALESCE(h.state,''),COALESCE(h.expires_at,''),COALESCE(h.claim_generation,0)`
 		claimJoin = ` LEFT JOIN handles h ON h.workflow_id=u.workflow_id AND h.unit_id=u.id` + purposeJoin + ` AND h.claim_generation=(SELECT MAX(h2.claim_generation) FROM handles h2 WHERE h2.workflow_id=u.workflow_id AND h2.unit_id=u.id` + purposeLatest + `)`
 	}
-	query := `SELECT u.id,u.description,u.depends_on,u.state,u.revision,COALESCE(r.verdict,''),COALESCE(r.findings,''),` + claimColumns + `,` + releaseColumn + `
+	query := `SELECT u.id,u.description,u.depends_on,u.state,u.revision,COALESCE(r.verdict,''),COALESCE(r.findings,''),
+		COALESCE((SELECT current.verdict FROM reviews current WHERE current.workflow_id=u.workflow_id AND current.unit_id=u.id AND current.revision=u.revision),''),` + claimColumns + `,` + releaseColumn + `
 		FROM work_units u LEFT JOIN reviews r ON r.workflow_id=u.workflow_id AND r.unit_id=u.id AND r.revision=u.revision-1` + claimJoin + ` WHERE u.workflow_id=? ORDER BY u.rowid`
 	rows, err := s.queryContext(ctx, query, workflowID)
 	if err != nil {
@@ -301,15 +325,15 @@ func (s *Service) unitFacts(ctx context.Context, workflowID string) (map[string]
 	defer rows.Close()
 	result := map[string]unitFact{}
 	for rows.Next() {
-		var id, desc, depsJSON, state, verdict, findings, claimState, expiry string
+		var id, desc, depsJSON, state, verdict, findings, currentReview, claimState, expiry string
 		var rev, generation int64
 		var claimReleasedCurrent bool
-		if err := rows.Scan(&id, &desc, &depsJSON, &state, &rev, &verdict, &findings, &claimState, &expiry, &generation, &claimReleasedCurrent); err != nil {
+		if err := rows.Scan(&id, &desc, &depsJSON, &state, &rev, &verdict, &findings, &currentReview, &claimState, &expiry, &generation, &claimReleasedCurrent); err != nil {
 			return nil, err
 		}
 		var deps []string
 		decodeErr := json.Unmarshal([]byte(depsJSON), &deps)
-		unit := unitFact{status: UnitStatus{ID: id, Description: desc, Attempt: rev, Derived: true}, state: state, deps: deps, claim: plan.ClaimStatus{UnitID: id, State: claimState, Generation: generation}, claimReleasedCurrent: claimReleasedCurrent, unknown: decodeErr != nil}
+		unit := unitFact{status: UnitStatus{ID: id, Description: desc, Attempt: rev, Derived: true}, state: state, deps: deps, claim: plan.ClaimStatus{UnitID: id, State: claimState, Generation: generation}, claimReleasedCurrent: claimReleasedCurrent, currentReview: currentReview, unknown: decodeErr != nil}
 		if expiry != "" {
 			unit.claim.ExpiresAt, err = time.Parse(time.RFC3339Nano, expiry)
 			if err != nil {
