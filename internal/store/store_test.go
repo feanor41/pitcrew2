@@ -354,6 +354,61 @@ func TestMigrationV9PreservesV8WorkflowGraphWithoutInventingCausality(t *testing
 	}
 }
 
+func TestMigrationV10PreservesV9RecordsAndEnforcesChangeMeasurementIdentity(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	legacy := openStoreAtMigration(t, root, 9)
+	for _, statement := range []string{
+		`INSERT INTO workflows(id,revision,state,goal,created_at,updated_at) VALUES('wf-v9',3,'implementing','preserve','created','updated')`,
+		`INSERT INTO work_units(id,workflow_id,description,scope,areas,depends_on,estimated_changed_lines,estimated_review_minutes,state,revision) VALUES('wu-v9','wf-v9','legacy','internal','[]','[]',3,2,'pending',1)`,
+		`INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES('claim-v9','wf-v9','wu-v9','active','secret','actor','issued','expires',1,'implementation')`,
+	} {
+		if _, err := legacy.DB().ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var preserved string
+	if err = migrated.DB().QueryRowContext(ctx, `SELECT w.revision||':'||u.scope||':'||h.actor_identity||':'||h.claim_generation FROM workflows w JOIN work_units u ON u.workflow_id=w.id JOIN handles h ON h.workflow_id=w.id WHERE w.id='wf-v9'`).Scan(&preserved); err != nil {
+		t.Fatal(err)
+	}
+	if preserved != "3:internal:actor:1" {
+		t.Fatalf("legacy identity changed: %q", preserved)
+	}
+	baseline := `INSERT INTO unit_change_baselines(workflow_id,unit_id,project_id,checkout_root,base_revision,baseline_digest,scopes_json,scope_digest,accepted_budget,recorded_at) VALUES('wf-v9','wu-v9','project','/checkout','base','digest','["internal"]','scope-digest',3,'now')`
+	if _, err = migrated.DB().ExecContext(ctx, baseline); err != nil {
+		t.Fatal(err)
+	}
+	measurement := `INSERT INTO unit_change_measurements(workflow_id,unit_id,unit_revision,stage,additions,deletions,changed_lines,accepted_budget,claim_id,base_revision,baseline_digest,result_digest,recorded_at) VALUES('wf-v9','wu-v9',1,'evidence',2,1,3,3,'claim-v9','base','digest','result','now')`
+	if _, err = migrated.DB().ExecContext(ctx, measurement); err != nil {
+		t.Fatal(err)
+	}
+	for name, statement := range map[string]string{
+		"duplicate baseline": baseline,
+		"unknown claim":      strings.Replace(measurement, "'claim-v9'", "'missing'", 1),
+		"invalid total":      strings.Replace(measurement, "2,1,3", "2,1,2", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := migrated.DB().ExecContext(ctx, statement); err == nil {
+				t.Fatal("invalid identity row was accepted")
+			}
+		})
+	}
+	if _, err = migrated.DB().ExecContext(ctx, `DELETE FROM handles WHERE claim_id='claim-v9'`); err == nil {
+		t.Fatal("measurement did not retain its claim foreign key")
+	}
+	if err = migrated.ApplyMigrations(ctx, schemaMigrations); err != nil {
+		t.Fatalf("migration replay was not idempotent: %v", err)
+	}
+}
+
 func TestMigrationV6FoundationsBindReferencedRecords(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

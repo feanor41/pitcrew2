@@ -97,6 +97,67 @@ func TestReviewedChangeDigestMustMatchCompletion(t *testing.T) {
 	}
 }
 
+func TestChangedLineEvidenceRejectsNPlusOneWithoutPersistingFacts(t *testing.T) {
+	svc, db, wfID, unitID := evidenceService(t)
+	checkout := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", checkout}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	run("init", "--quiet")
+	run("config", "user.email", "pitcrew@example.test")
+	run("config", "user.name", "PitCrew Test")
+	if err := os.Mkdir(filepath.Join(checkout, "internal"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "internal", "base.txt"), []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "--quiet", "-m", "base")
+	baseline, err := project.CaptureChangeBaseline(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopes := `["internal"]`
+	scopeDigest := sha256.Sum256([]byte(scopes))
+	claimID := "claim-n-plus-one"
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`UPDATE work_units SET areas=?,estimated_changed_lines=1 WHERE workflow_id=? AND id=?`, []any{`[]`, wfID, unitID}},
+		{`INSERT INTO handles(claim_id,workflow_id,unit_id,state,secret_hash,actor_identity,issued_at,expires_at,claim_generation,purpose) VALUES(?,?,?,?,?,?,?,?,?,?)`, []any{claimID, wfID, unitID, "active", "hash", "implementer", "issued", "expires", 1, "implementation"}},
+		{`INSERT INTO unit_change_baselines(workflow_id,unit_id,project_id,checkout_root,base_revision,baseline_digest,scopes_json,scope_digest,accepted_budget,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, []any{wfID, unitID, baseline.ProjectID, baseline.CheckoutRoot, baseline.BaseRevision, baseline.ResultDigest, scopes, fmt.Sprintf("%x", scopeDigest), 1, "now"}},
+	} {
+		if _, err = db.Exec(statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = os.WriteFile(filepath.Join(checkout, "internal", "new.txt"), []byte("one\ntwo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.RecordTDDWithClaimAsTx(context.Background(), tx, wfID, unitID, claimID, 1, "implementer", validTDD())
+	_ = tx.Rollback()
+	if err == nil || !strings.Contains(err.Error(), "measured 2, accepted 1") {
+		t.Fatalf("N+1 error=%v", err)
+	}
+	var evidenceRows, measurementRows int
+	var state string
+	_ = db.QueryRow(`SELECT count(*) FROM evidence WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&evidenceRows)
+	_ = db.QueryRow(`SELECT count(*) FROM unit_change_measurements WHERE workflow_id=? AND unit_id=?`, wfID, unitID).Scan(&measurementRows)
+	_ = db.QueryRow(`SELECT state FROM work_units WHERE workflow_id=? AND id=?`, wfID, unitID).Scan(&state)
+	if evidenceRows != 0 || measurementRows != 0 || state != "pending" {
+		t.Fatalf("N+1 changed durable state: evidence=%d measurements=%d state=%s", evidenceRows, measurementRows, state)
+	}
+}
+
 func TestTDDRecordJSONUsesTheEvidenceContract(t *testing.T) {
 	encoded, err := json.Marshal(validTDD())
 	if err != nil {
