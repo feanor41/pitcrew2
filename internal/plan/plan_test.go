@@ -219,6 +219,76 @@ func TestReadyUnitsHonorsDependenciesHandlesAndParallelLimit(t *testing.T) {
 	}
 }
 
+func TestValidateTypedDependencyConsumptions(t *testing.T) {
+	p := validPlan()
+	p.Units[1].DependsOn = []string{p.Units[0].ID}
+	p.Units[0].Coverage = []Coverage{{RequirementID: "REQ-DEP", ScenarioIDs: []string{"SCN-DEP-RESULT"}}}
+	p.Units[1].Coverage = []Coverage{{RequirementID: "REQ-DEP", ScenarioIDs: []string{"SCN-CONSUMER"}}}
+	p.Units[1].DependencyConsumptions = []DependencyConsumption{{ProducerUnitID: p.Units[0].ID, ScenarioIDs: []string{"SCN-DEP-RESULT"}}}
+	p = NormalizeForSubmission(p)
+	if err := Validate(p); err != nil {
+		t.Fatalf("valid causal dependency rejected: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*Plan)
+		want string
+	}{
+		{"missing consumption", func(p *Plan) { p.Units[1].DependencyConsumptions = nil }, "missing dependency consumption"},
+		{"empty selector", func(p *Plan) { p.Units[1].DependencyConsumptions[0].ScenarioIDs = nil }, "scenario_ids must not be empty"},
+		{"wrong producer", func(p *Plan) { p.Units[1].DependencyConsumptions[0].ProducerUnitID = p.Units[1].ID }, "self dependency consumption"},
+		{"wrong owner", func(p *Plan) { p.Units[1].DependencyConsumptions[0].ScenarioIDs = []string{"SCN-OTHER"} }, "not assigned to producer"},
+		{"duplicate selector", func(p *Plan) {
+			p.Units[1].DependencyConsumptions[0].ScenarioIDs = []string{"SCN-DEP-RESULT", "SCN-DEP-RESULT"}
+		}, "duplicate dependency selector"},
+		{"duplicate group", func(p *Plan) {
+			p.Units[1].DependencyConsumptions = append(p.Units[1].DependencyConsumptions, p.Units[1].DependencyConsumptions[0])
+		}, "duplicate dependency consumption"},
+		{"cycle", func(p *Plan) {
+			p.Units[0].DependsOn = []string{p.Units[1].ID}
+			p.Units[0].DependencyConsumptions = []DependencyConsumption{{ProducerUnitID: p.Units[1].ID, ScenarioIDs: []string{"SCN-CONSUMER"}}}
+		}, "cycle"},
+		{"indirect producer", func(p *Plan) {
+			p.Units = append(p.Units, WorkUnit{ID: "wu-000000000000000000000003", Description: "third", Scope: "internal/third", Areas: []string{"internal/third"}, DependsOn: []string{p.Units[1].ID}, DependencyConsumptions: []DependencyConsumption{{ProducerUnitID: p.Units[0].ID, ScenarioIDs: []string{"SCN-DEP-RESULT"}}}})
+		}, "non-direct producer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidate := p
+			candidate.Units = append([]WorkUnit(nil), p.Units...)
+			candidate.Units[1].DependencyConsumptions = append([]DependencyConsumption(nil), p.Units[1].DependencyConsumptions...)
+			tt.edit(&candidate)
+			candidate = NormalizeForSubmission(candidate)
+			if err := Validate(candidate); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate() error = %v; want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadyRequiresEveryResultFromEveryDirectProducer(t *testing.T) {
+	first, second, consumer := "wu-000000000000000000000001", "wu-000000000000000000000002", "wu-000000000000000000000003"
+	p := NormalizeForSubmission(Plan{Summary: "multi producer", Scope: "internal", MaxParallelUnits: 1, Units: []WorkUnit{
+		{ID: first, State: Done}, {ID: second, State: Done},
+		{ID: consumer, State: Pending, DependsOn: []string{first, second}, DependencyConsumptions: []DependencyConsumption{
+			{ProducerUnitID: first, ScenarioIDs: []string{"SCN-A", "SCN-B"}},
+			{ProducerUnitID: second, ScenarioIDs: []string{"SCN-C"}},
+		}},
+	}})
+	satisfied := map[string]bool{
+		dependencyResultKey(consumer, first, "SCN-A"): true,
+		dependencyResultKey(consumer, first, "SCN-B"): true,
+	}
+	if ready := readyUnits(p, nil, satisfied); len(ready) != 0 {
+		t.Fatalf("consumer ready without every upstream result: %#v", ready)
+	}
+	satisfied[dependencyResultKey(consumer, second, "SCN-C")] = true
+	if ready := readyUnits(p, nil, satisfied); len(ready) != 1 || ready[0].ID != consumer {
+		t.Fatalf("consumer not ready with every upstream result: %#v", ready)
+	}
+}
+
 func validPlan() Plan {
 	return Plan{Summary: "two units", Scope: "internal", MaxParallelUnits: 2, Units: []WorkUnit{
 		{ID: "wu-000000000000000000000001", Description: "first", Scope: "internal/foo", Areas: []string{"internal/foo"}, EstimatedChangedLines: 100, EstimatedReviewMinutes: 20, State: Pending},

@@ -40,7 +40,7 @@ func ActiveClaims(claims []ClaimStatus, now time.Time) map[string]bool {
 }
 
 func ReadyUnitsAt(p Plan, claims []ClaimStatus, now time.Time) []WorkUnit {
-	return ReadyUnits(p, ActiveClaims(claims, now))
+	return readyUnits(p, ActiveClaims(claims, now), nil)
 }
 
 type UnitState string
@@ -84,17 +84,41 @@ func (p *AggregateCorrectionPolicy) UnmarshalJSON(data []byte) error {
 }
 
 type WorkUnit struct {
-	ID                     string              `json:"id"`
-	Description            string              `json:"description"`
-	Scope                  string              `json:"scope"`
-	Areas                  []string            `json:"areas"`
-	DependsOn              []string            `json:"depends_on"`
-	EstimatedChangedLines  int                 `json:"estimated_changed_lines"`
-	EstimatedReviewMinutes int                 `json:"estimated_review_minutes"`
-	Coverage               []Coverage          `json:"coverage,omitempty"`
-	State                  UnitState           `json:"-"`
-	AdmissionException     *AdmissionException `json:"admission_exception,omitempty"`
+	ID                     string                  `json:"id"`
+	Description            string                  `json:"description"`
+	Scope                  string                  `json:"scope"`
+	Areas                  []string                `json:"areas"`
+	DependsOn              []string                `json:"depends_on"`
+	EstimatedChangedLines  int                     `json:"estimated_changed_lines"`
+	EstimatedReviewMinutes int                     `json:"estimated_review_minutes"`
+	Coverage               []Coverage              `json:"coverage,omitempty"`
+	DependencyConsumptions []DependencyConsumption `json:"dependency_consumptions,omitempty"`
+	State                  UnitState               `json:"-"`
+	AdmissionException     *AdmissionException     `json:"admission_exception,omitempty"`
 	present                workUnitPresence
+}
+
+type DependencyConsumption struct {
+	ProducerUnitID string   `json:"producer_unit_id"`
+	ScenarioIDs    []string `json:"scenario_ids"`
+}
+
+func (c *DependencyConsumption) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		ProducerUnitID *string   `json:"producer_unit_id"`
+		ScenarioIDs    *[]string `json:"scenario_ids"`
+	}
+	var value wire
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	if value.ProducerUnitID == nil || value.ScenarioIDs == nil {
+		return fmt.Errorf("dependency consumption requires producer_unit_id and scenario_ids")
+	}
+	c.ProducerUnitID, c.ScenarioIDs = *value.ProducerUnitID, *value.ScenarioIDs
+	return nil
 }
 
 type Coverage struct {
@@ -135,7 +159,7 @@ type OverlapApproval struct {
 	Justification string   `json:"justification"`
 }
 
-type workUnitPresence struct{ id, description, scope, areas, depends, lines, minutes, coverage bool }
+type workUnitPresence struct{ id, description, scope, areas, depends, lines, minutes, coverage, dependencyConsumptions bool }
 type planPresence struct{ summary, scope, units, parallel, aggregateCorrectionPolicy bool }
 
 func (p Plan) HasAggregateCorrectionPolicy() bool { return p.present.aggregateCorrectionPolicy }
@@ -148,20 +172,26 @@ func NormalizeForSubmission(p Plan) Plan {
 		}
 		p.present.aggregateCorrectionPolicy = true
 	}
+	for i := range p.Units {
+		if len(p.Units[i].DependsOn) > 0 || len(p.Units[i].DependencyConsumptions) > 0 {
+			p.Units[i].present.dependencyConsumptions = true
+		}
+	}
 	return p
 }
 
 func (u *WorkUnit) UnmarshalJSON(data []byte) error {
 	type wire struct {
-		ID                     *string             `json:"id"`
-		Description            *string             `json:"description"`
-		Scope                  *string             `json:"scope"`
-		Areas                  *[]string           `json:"areas"`
-		DependsOn              *[]string           `json:"depends_on"`
-		EstimatedChangedLines  *int                `json:"estimated_changed_lines"`
-		EstimatedReviewMinutes *int                `json:"estimated_review_minutes"`
-		Coverage               *[]Coverage         `json:"coverage"`
-		AdmissionException     *AdmissionException `json:"admission_exception"`
+		ID                     *string                  `json:"id"`
+		Description            *string                  `json:"description"`
+		Scope                  *string                  `json:"scope"`
+		Areas                  *[]string                `json:"areas"`
+		DependsOn              *[]string                `json:"depends_on"`
+		EstimatedChangedLines  *int                     `json:"estimated_changed_lines"`
+		EstimatedReviewMinutes *int                     `json:"estimated_review_minutes"`
+		Coverage               *[]Coverage              `json:"coverage"`
+		DependencyConsumptions *[]DependencyConsumption `json:"dependency_consumptions"`
+		AdmissionException     *AdmissionException      `json:"admission_exception"`
 	}
 	var value wire
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -169,7 +199,7 @@ func (u *WorkUnit) UnmarshalJSON(data []byte) error {
 	if err := decoder.Decode(&value); err != nil {
 		return err
 	}
-	u.present = workUnitPresence{value.ID != nil, value.Description != nil, value.Scope != nil, value.Areas != nil, value.DependsOn != nil, value.EstimatedChangedLines != nil, value.EstimatedReviewMinutes != nil, value.Coverage != nil}
+	u.present = workUnitPresence{value.ID != nil, value.Description != nil, value.Scope != nil, value.Areas != nil, value.DependsOn != nil, value.EstimatedChangedLines != nil, value.EstimatedReviewMinutes != nil, value.Coverage != nil, value.DependencyConsumptions != nil}
 	if value.ID != nil {
 		u.ID = *value.ID
 	}
@@ -193,6 +223,9 @@ func (u *WorkUnit) UnmarshalJSON(data []byte) error {
 	}
 	if value.Coverage != nil {
 		u.Coverage = *value.Coverage
+	}
+	if value.DependencyConsumptions != nil {
+		u.DependencyConsumptions = *value.DependencyConsumptions
 	}
 	u.AdmissionException = value.AdmissionException
 	return nil
@@ -364,6 +397,11 @@ func Validate(p Plan) error {
 			}
 		}
 	}
+	for _, unit := range p.Units {
+		if err := validateDependencyConsumptions(unit, byID); err != nil {
+			return err
+		}
+	}
 	if cycle := dependencyCycle(p.Units); cycle != "" {
 		return fmt.Errorf("dependency cycle at %s", cycle)
 	}
@@ -375,6 +413,65 @@ func Validate(p Plan) error {
 		}
 	}
 	return nil
+}
+
+func validateDependencyConsumptions(unit WorkUnit, byID map[string]WorkUnit) error {
+	if !unit.present.dependencyConsumptions {
+		return nil
+	}
+	direct, groups := map[string]bool{}, map[string]bool{}
+	for _, producer := range unit.DependsOn {
+		if producer == unit.ID {
+			return fmt.Errorf("unit %s has self dependency", unit.ID)
+		}
+		if direct[producer] {
+			return fmt.Errorf("unit %s has duplicate dependency %s", unit.ID, producer)
+		}
+		direct[producer] = true
+	}
+	for _, consumption := range unit.DependencyConsumptions {
+		producer := consumption.ProducerUnitID
+		if producer == unit.ID {
+			return fmt.Errorf("unit %s has self dependency consumption", unit.ID)
+		}
+		if groups[producer] {
+			return fmt.Errorf("unit %s has duplicate dependency consumption for %s", unit.ID, producer)
+		}
+		groups[producer] = true
+		if !direct[producer] {
+			return fmt.Errorf("unit %s dependency consumption names non-direct producer %s", unit.ID, producer)
+		}
+		if len(consumption.ScenarioIDs) == 0 {
+			return fmt.Errorf("unit %s dependency on %s scenario_ids must not be empty", unit.ID, producer)
+		}
+		seen := map[string]bool{}
+		for _, scenarioID := range consumption.ScenarioIDs {
+			if seen[scenarioID] {
+				return fmt.Errorf("unit %s has duplicate dependency selector %s", unit.ID, scenarioID)
+			}
+			seen[scenarioID] = true
+			if !scenarioAssigned(byID[producer].Coverage, scenarioID) {
+				return fmt.Errorf("unit %s selector %s is not assigned to producer %s", unit.ID, scenarioID, producer)
+			}
+		}
+	}
+	for producer := range direct {
+		if !groups[producer] {
+			return fmt.Errorf("unit %s is missing dependency consumption for %s", unit.ID, producer)
+		}
+	}
+	return nil
+}
+
+func scenarioAssigned(coverage []Coverage, scenarioID string) bool {
+	for _, item := range coverage {
+		for _, assigned := range item.ScenarioIDs {
+			if assigned == scenarioID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func Approve(p Plan, approved []string) error {
@@ -415,6 +512,10 @@ func approvedOverlap(p Plan, a, b string) bool {
 }
 
 func ReadyUnits(p Plan, activeHandles map[string]bool) []WorkUnit {
+	return readyUnits(p, activeHandles, nil)
+}
+
+func readyUnits(p Plan, activeHandles map[string]bool, satisfied map[string]bool) []WorkUnit {
 	states := map[string]UnitState{}
 	active := 0
 	for _, unit := range p.Units {
@@ -439,6 +540,16 @@ func ReadyUnits(p Plan, activeHandles map[string]bool) []WorkUnit {
 				break
 			}
 		}
+		if ok && unit.present.dependencyConsumptions {
+			for _, consumption := range unit.DependencyConsumptions {
+				for _, scenarioID := range consumption.ScenarioIDs {
+					if !satisfied[dependencyResultKey(unit.ID, consumption.ProducerUnitID, scenarioID)] {
+						ok = false
+						break
+					}
+				}
+			}
+		}
 		if ok {
 			ready = append(ready, unit)
 			if len(ready) == limit {
@@ -447,6 +558,10 @@ func ReadyUnits(p Plan, activeHandles map[string]bool) []WorkUnit {
 		}
 	}
 	return ready
+}
+
+func dependencyResultKey(consumer, producer, scenario string) string {
+	return consumer + "\x00" + producer + "\x00" + scenario
 }
 
 func validPrefix(prefix string) error {
